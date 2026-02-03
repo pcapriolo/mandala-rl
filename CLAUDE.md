@@ -87,8 +87,16 @@ pytest tests/
 
 ### Monitoring
 ```bash
+# Start web-based training observer (metrics + game replays)
+python3 scripts/start_observer.py
+
 # View training logs with Tensorboard
 tensorboard --logdir data/logs
+
+# Both together (separate terminals):
+# Terminal 1: python3 scripts/start_observer.py
+# Terminal 2: tensorboard --logdir data/logs
+# Then open: http://localhost:5000 (observer) and http://localhost:6006 (tensorboard)
 ```
 
 ## Architecture

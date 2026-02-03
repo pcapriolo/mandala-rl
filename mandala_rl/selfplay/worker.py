@@ -3,7 +3,8 @@ Self-play worker for generating training games.
 """
 import numpy as np
 import torch
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from pathlib import Path
 from ..game.engine import MandalaGame
 from ..game.state import GameState
 from ..mcts.search import MCTS
@@ -152,3 +153,62 @@ class SelfPlayWorker:
             examples.append((state, policy, value))
 
         return examples
+
+    def play_game_with_replay(self, save_dir: Optional[Path] = None):
+        """
+        Play game and optionally save replay.
+
+        Args:
+            save_dir: Directory to save replay (None = don't save)
+
+        Returns:
+            SelfPlayGame with full history
+        """
+        from ..viewer.replay import GameReplay, state_to_summary, action_id_to_string
+
+        replay = GameReplay() if save_dir else None
+        game_record = SelfPlayGame()
+        state = self.game.get_initial_state()
+        move_count = 0
+
+        while not self.game.is_terminal(state):
+            canonical_state = state.get_canonical_form()
+            temp = self.temperature if move_count < self.temperature_threshold else 0.0
+
+            action_probs, visit_counts = self.mcts.get_action_prob(
+                canonical_state, temperature=temp, add_noise=True
+            )
+
+            game_record.states.append(canonical_state.to_tensor())
+            game_record.policies.append(action_probs)
+            game_record.current_players.append(state.current_player)
+
+            action = np.random.choice(len(action_probs), p=action_probs)
+
+            # Save to replay
+            if replay:
+                replay.add_move(
+                    move_num=move_count + 1,
+                    player=state.current_player,
+                    action_id=int(action),
+                    action_desc=action_id_to_string(int(action)),
+                    state_summary=state_to_summary(state)
+                )
+
+            state = self.game.get_next_state(state, action)
+            move_count += 1
+
+        # Record outcome
+        outcome_p0 = self.game.get_reward(state, player=0)
+        game_record.outcome = outcome_p0
+
+        # Save replay
+        if replay and save_dir:
+            score0 = self.game._calculate_score(state, 0)
+            score1 = self.game._calculate_score(state, 1)
+            winner = 0 if score0 > score1 else (1 if score1 > score0 else None)
+            replay.set_result(score0, score1, winner)
+            replay.metadata = {'iteration': 'training', 'move_count': move_count}
+            replay.save(save_dir)
+
+        return game_record
