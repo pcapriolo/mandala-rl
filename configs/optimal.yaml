@@ -1,0 +1,55 @@
+# Optimal Configuration for Maximum Elo Gain
+# Balances MCTS quality vs iteration speed
+
+# Network Architecture
+network:
+  input_channels: 50
+  num_actions: 30
+  num_res_blocks: 8  # Good capacity without being too slow
+  channels: 96       # Sweet spot for MPS
+
+# MCTS Parameters - Sweet spot for quality vs speed
+mcts:
+  num_simulations: 200  # 4x faster than 800, still strong
+  c_puct: 1.0
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25
+
+# Self-Play Parameters - More games = more diverse data
+selfplay:
+  games_per_iteration: 100  # Maximum diversity
+  temperature: 1.0
+  temperature_threshold: 20  # Balance exploration/exploitation
+
+# Training Parameters
+training:
+  num_iterations: 1000
+  batch_size: 256  # Larger batches = more stable gradients
+  epochs_per_iteration: 10  # Thorough learning from each batch
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  lr_milestones: [100, 200, 400, 600]
+  lr_gamma: 0.1
+  replay_buffer_size: 300000  # Keep more history
+  checkpoint_frequency: 5
+
+# Evaluation Parameters - Frequent feedback
+evaluation:
+  num_games: 100
+  win_threshold: 0.55
+  eval_frequency: 5  # Check progress often
+  eval_num_games: 20  # Statistically significant
+  eval_mcts_simulations: 200  # Match training strength
+
+# Replay Saving
+save_replay_frequency: 10  # Save every 10th game to Observer
+
+# Paths
+paths:
+  checkpoint_dir: data/checkpoints
+  replay_dir: data/replays
+  log_dir: data/logs
+  elo_file: data/elo_ratings.json
+
+device: mps
+seed: 42

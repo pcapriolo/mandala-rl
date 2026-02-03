@@ -1,0 +1,54 @@
+# Fast Training Configuration for Development
+
+# Network Architecture
+network:
+  input_channels: 50
+  num_actions: 30
+  num_res_blocks: 6  # Smaller network
+  channels: 64       # Fewer channels
+
+# MCTS Parameters
+mcts:
+  num_simulations: 100  # Much faster! (8x reduction)
+  c_puct: 1.0
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25
+
+# Self-Play Parameters
+selfplay:
+  games_per_iteration: 50  # Fewer games per iteration
+  temperature: 1.0
+  temperature_threshold: 15  # Faster switch to deterministic
+
+# Training Parameters
+training:
+  num_iterations: 1000
+  batch_size: 128  # Smaller batches
+  epochs_per_iteration: 5  # Fewer epochs
+  learning_rate: 0.002  # Higher LR for faster learning
+  weight_decay: 0.0001
+  lr_milestones: [50, 100, 200]
+  lr_gamma: 0.1
+  replay_buffer_size: 100000  # Smaller buffer
+  checkpoint_frequency: 5  # Save more often
+
+# Evaluation Parameters
+evaluation:
+  num_games: 100
+  win_threshold: 0.55
+  eval_frequency: 5  # Evaluate more often
+  eval_num_games: 10  # Fewer eval games
+  eval_mcts_simulations: 100  # Match training MCTS
+
+# Paths
+paths:
+  checkpoint_dir: data/checkpoints
+  replay_dir: data/replays
+  log_dir: data/logs
+  elo_file: data/elo_ratings.json
+
+# Hardware
+device: mps
+
+# Reproducibility
+seed: 42

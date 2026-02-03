@@ -144,13 +144,19 @@ class Trainer:
     def _generate_selfplay_games(self) -> list:
         """Generate self-play games."""
         num_games = self.config.get('games_per_iteration', 100)
+        replay_dir = Path(self.config.get('replay_dir', 'data/replays'))
+        save_replay_freq = self.config.get('save_replay_frequency', 10)  # Save every Nth game
 
         # Update worker's network to latest
         self.selfplay_worker.network.load_state_dict(self.network.state_dict())
 
         games = []
-        for _ in tqdm(range(num_games), desc="Self-play"):
-            game = self.selfplay_worker.play_game()
+        for i in tqdm(range(num_games), desc="Self-play"):
+            # Save replay for every Nth game
+            if i % save_replay_freq == 0:
+                game = self.selfplay_worker.play_game_with_replay(save_dir=replay_dir)
+            else:
+                game = self.selfplay_worker.play_game()
             games.append(game)
 
         self.total_games += num_games
