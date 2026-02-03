@@ -1,36 +1,70 @@
 """
-Mandala game engine implementing rules and move generation.
+Mandala game engine implementing complete rules.
 """
 import numpy as np
-from typing import List, Tuple, Optional
+import random
+from typing import List, Tuple, Optional, Dict
 from .state import GameState, Card
+
+
+class Action:
+    """Represents a game action."""
+    # Action types
+    BUILD_MOUNTAIN = 0
+    GROW_FIELD = 1
+    DISCARD = 2
+
+    def __init__(self, action_type: int, card_indices: List[int], target: int):
+        """
+        Args:
+            action_type: BUILD_MOUNTAIN, GROW_FIELD, or DISCARD
+            card_indices: Indices of cards in hand to play
+            target: For BUILD_MOUNTAIN/GROW_FIELD: mandala index (0 or 1)
+                   For DISCARD: ignored
+        """
+        self.action_type = action_type
+        self.card_indices = card_indices  # Indices in current player's hand
+        self.target = target  # Mandala index
+
+    def __repr__(self):
+        types = ["BUILD_MOUNTAIN", "GROW_FIELD", "DISCARD"]
+        return f"Action({types[self.action_type]}, cards={self.card_indices}, target={self.target})"
 
 
 class MandalaGame:
     """
-    Game engine for Mandala.
+    Complete Mandala game engine.
 
-    Handles:
-    - Move generation
-    - Move validation
-    - State transitions
-    - Terminal state detection
-    - Scoring
+    Implements all rules from the official rulebook.
     """
 
-    # Mountain completion thresholds by card count
-    MOUNTAIN_THRESHOLD = 6
+    MAX_HAND_SIZE = 8
+    NUM_COLORS = 6
+    CARDS_PER_COLOR = 18
+
+    def __init__(self, seed: Optional[int] = None):
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
 
     def get_initial_state(self) -> GameState:
-        """Set up a new game with dealt cards."""
+        """Set up a new game according to official rules."""
         state = GameState()
-        # Deal initial hands (typically 6 cards each)
-        np.random.shuffle(state.deck)
-        state.player_hands = (
-            state.deck[:6].copy(),
-            state.deck[6:12].copy()
-        )
-        state.deck = state.deck[12:]
+
+        # Create and shuffle deck
+        state.deck = state._create_deck()
+        random.shuffle(state.deck)
+
+        # Deal 2 cards to each Mountain
+        state.mountains[0] = [state.deck.pop(), state.deck.pop()]
+        state.mountains[1] = [state.deck.pop(), state.deck.pop()]
+
+        # Each player: 6 cards in hand, 2 cards in Cup
+        for player in range(2):
+            state.hands[player] = [state.deck.pop() for _ in range(6)]
+            state.cups[player] = [state.deck.pop() for _ in range(2)]
+
+        state.current_player = 0
         return state
 
     def get_valid_moves(self, state: GameState) -> np.ndarray:
@@ -38,66 +72,281 @@ class MandalaGame:
         Get binary mask of valid moves.
 
         Move encoding:
-        - Play card i to mountain j: move_id = i * 3 + j
-        - Collect from field/river: separate indices
+        - Actions 0-11: BUILD_MOUNTAIN (6 colors × 2 mandalas)
+        - Actions 12-23: GROW_FIELD (6 colors × 2 mandalas)
+        - Actions 24-29: DISCARD (6 colors)
+        Total: 30 action types
 
         Returns:
-            np.ndarray: Binary mask of shape (num_possible_moves,)
+            np.ndarray: Binary mask of shape (30,)
         """
-        num_cards_in_hand = len(state.player_hands[state.current_player])
-        num_mountains = 3
+        valid = np.zeros(30, dtype=np.float32)
 
-        # TODO: Implement full move generation
-        # For now, allow playing any card to any mountain
-        valid_moves = np.zeros(num_cards_in_hand * num_mountains + 10, dtype=np.float32)
+        if state.game_over:
+            return valid
 
-        if not state.game_over:
-            # Allow playing any card in hand to any mountain
-            for card_idx in range(num_cards_in_hand):
-                for mountain_idx in range(num_mountains):
-                    move_id = card_idx * num_mountains + mountain_idx
-                    valid_moves[move_id] = 1.0
+        hand = state.hands[state.current_player]
+        if not hand:
+            return valid
 
-        return valid_moves
+        hand_colors = {}
+        for idx, card in enumerate(hand):
+            if card.color not in hand_colors:
+                hand_colors[card.color] = []
+            hand_colors[card.color].append(idx)
 
-    def get_next_state(self, state: GameState, action: int) -> GameState:
+        # BUILD_MOUNTAIN actions (play 1 card to mountain)
+        for color in hand_colors:
+            for mandala_idx in range(2):
+                if self._can_play_to_mountain(state, color, mandala_idx):
+                    action_id = color * 2 + mandala_idx
+                    valid[action_id] = 1.0
+
+        # GROW_FIELD actions (play 1+ cards of same color to field)
+        for color in hand_colors:
+            # Can only play if have at least 1 card but not all cards
+            # (must keep at least 1 card in hand)
+            if len(hand_colors[color]) < len(hand):
+                for mandala_idx in range(2):
+                    if self._can_play_to_field(state, color, mandala_idx, state.current_player):
+                        action_id = 12 + color * 2 + mandala_idx
+                        valid[action_id] = 1.0
+
+        # DISCARD actions (always valid for any color in hand)
+        for color in hand_colors:
+            action_id = 24 + color
+            valid[action_id] = 1.0
+
+        return valid
+
+    def _can_play_to_mountain(self, state: GameState, color: int, mandala_idx: int) -> bool:
+        """Check if color can be played to Mountain (Rule of Color)."""
+        # Color cannot already be in either Field of this Mandala
+        colors_in_fields = set()
+        colors_in_fields.update(c.color for c in state.fields[mandala_idx][0])
+        colors_in_fields.update(c.color for c in state.fields[mandala_idx][1])
+        return color not in colors_in_fields
+
+    def _can_play_to_field(self, state: GameState, color: int, mandala_idx: int, player: int) -> bool:
+        """Check if color can be played to Field (Rule of Color)."""
+        # Color cannot be in Mountain or opponent's Field
+        colors_in_mountain = {c.color for c in state.mountains[mandala_idx]}
+        opponent = 1 - player
+        colors_in_opp_field = {c.color for c in state.fields[mandala_idx][opponent]}
+
+        return color not in colors_in_mountain and color not in colors_in_opp_field
+
+    def get_next_state(self, state: GameState, action_id: int) -> GameState:
         """
-        Apply action to state and return new state.
+        Apply action and return new state.
 
-        Args:
-            state: Current game state
-            action: Move index
-
-        Returns:
-            GameState: New state after move
+        Action encoding:
+        - 0-11: BUILD_MOUNTAIN (color * 2 + mandala)
+        - 12-23: GROW_FIELD (12 + color * 2 + mandala)
+        - 24-29: DISCARD (24 + color)
         """
         new_state = state.copy()
+        player = state.current_player
+        hand = new_state.hands[player]
 
-        # TODO: Implement full move execution
-        # Decode action, apply it, check for mountain completion, etc.
+        completed_mandala = None
+
+        if action_id < 12:
+            # BUILD_MOUNTAIN
+            color = action_id // 2
+            mandala_idx = action_id % 2
+
+            # Find and remove one card of this color from hand
+            for i, card in enumerate(hand):
+                if card.color == color:
+                    card_to_play = hand.pop(i)
+                    break
+
+            # Add to mountain
+            new_state.mountains[mandala_idx].append(card_to_play)
+
+            # Draw up to 3 cards (max hand size 8)
+            cards_to_draw = min(3, self.MAX_HAND_SIZE - len(hand))
+            for _ in range(cards_to_draw):
+                if new_state.deck:
+                    new_state.hands[player].append(new_state.deck.pop())
+
+            # Check if mandala completed
+            if new_state.is_mandala_complete(mandala_idx):
+                completed_mandala = mandala_idx
+
+        elif action_id < 24:
+            # GROW_FIELD
+            action_id -= 12
+            color = action_id // 2
+            mandala_idx = action_id % 2
+
+            # Remove all cards of this color from hand (but keep at least 1 card total)
+            cards_to_play = []
+            remaining = []
+            for card in hand:
+                if card.color == color:
+                    cards_to_play.append(card)
+                else:
+                    remaining.append(card)
+
+            # If this would empty hand, only play all but one
+            if not remaining:
+                remaining.append(cards_to_play.pop())
+
+            new_state.hands[player] = remaining
+
+            # Add to field
+            new_state.fields[mandala_idx][player].extend(cards_to_play)
+
+            # No drawing for GROW_FIELD action
+
+            # Check if mandala completed
+            if new_state.is_mandala_complete(mandala_idx):
+                completed_mandala = mandala_idx
+
+        else:
+            # DISCARD
+            color = action_id - 24
+
+            # Remove all cards of this color from hand
+            cards_to_discard = []
+            remaining = []
+            for card in hand:
+                if card.color == color:
+                    cards_to_discard.append(card)
+                else:
+                    remaining.append(card)
+
+            new_state.hands[player] = remaining
+            new_state.discard.extend(cards_to_discard)
+
+            # Draw equal number of cards
+            for _ in range(len(cards_to_discard)):
+                if new_state.deck:
+                    new_state.hands[player].append(new_state.deck.pop())
+
+        # Handle completed Mandala
+        if completed_mandala is not None:
+            new_state = self._destroy_mandala(new_state, completed_mandala)
+
+            # Check if game should end
+            if self._should_game_end(new_state):
+                new_state.game_over = True
+                return new_state
+
+            # Refill mountain with 2 cards
+            if new_state.deck:
+                new_state.mountains[completed_mandala].append(new_state.deck.pop())
+            if new_state.deck:
+                new_state.mountains[completed_mandala].append(new_state.deck.pop())
 
         # Switch player
-        new_state.current_player = 1 - state.current_player
-
-        # Check if game is over
-        if self.is_terminal(new_state):
-            new_state.game_over = True
+        new_state.current_player = 1 - player
 
         return new_state
 
+    def _destroy_mandala(self, state: GameState, mandala_idx: int) -> GameState:
+        """
+        Handle Mandala completion: players claim cards from Mountain.
+
+        Returns modified state.
+        """
+        # Determine who chooses first
+        field_counts = [
+            len(state.fields[mandala_idx][0]),
+            len(state.fields[mandala_idx][1])
+        ]
+
+        if field_counts[0] > field_counts[1]:
+            first_player = 0
+        elif field_counts[1] > field_counts[0]:
+            first_player = 1
+        else:
+            # Tie: player who did NOT play last card chooses first
+            # (current_player just played, so other player chooses first)
+            first_player = 1 - state.current_player
+
+        # Get colors available in mountain
+        mountain_colors = {}
+        for card in state.mountains[mandala_idx]:
+            if card.color not in mountain_colors:
+                mountain_colors[card.color] = []
+            mountain_colors[card.color].append(card)
+
+        # Players alternate claiming colors
+        current_claimer = first_player
+        colors_to_claim = list(mountain_colors.keys())
+
+        # Deterministic claiming order (sorted by color for reproducibility)
+        colors_to_claim.sort()
+
+        for color in colors_to_claim:
+            cards = mountain_colors[color]
+
+            # Check if player has cards in field (if not, discard all)
+            if field_counts[current_claimer] == 0:
+                state.discard.extend(cards)
+            else:
+                # Check if color already in River
+                river_colors = state.get_colors_in_river(current_claimer)
+
+                if color in river_colors:
+                    # Color already in River: all cards go to Cup
+                    state.cups[current_claimer].extend(cards)
+                else:
+                    # New color: 1 card to River, rest to Cup
+                    if cards:
+                        state.rivers[current_claimer].append(cards[0])
+                        if len(cards) > 1:
+                            state.cups[current_claimer].extend(cards[1:])
+
+            # Alternate claimer
+            current_claimer = 1 - current_claimer
+
+        # Discard all cards from both Fields
+        state.discard.extend(state.fields[mandala_idx][0])
+        state.discard.extend(state.fields[mandala_idx][1])
+        state.fields[mandala_idx][0] = []
+        state.fields[mandala_idx][1] = []
+
+        # Clear mountain
+        state.mountains[mandala_idx] = []
+
+        return state
+
+    def _should_game_end(self, state: GameState) -> bool:
+        """Check if game should end."""
+        # End if someone has 6 colors in River
+        if len(state.rivers[0]) >= 6 or len(state.rivers[1]) >= 6:
+            return True
+
+        # End if deck is empty and already reshuffled
+        if not state.deck and state.deck_reshuffled:
+            return True
+
+        # If deck is empty but not reshuffled, reshuffle discard
+        if not state.deck and not state.deck_reshuffled:
+            state.deck = state.discard.copy()
+            state.discard = []
+            random.shuffle(state.deck)
+            state.deck_reshuffled = True
+            return False
+
+        return False
+
     def is_terminal(self, state: GameState) -> bool:
         """Check if game has ended."""
-        # Game ends when all cards are scored
-        total_scored = len(state.cups[0]) + len(state.cups[1])
-        return total_scored == 36 or state.game_over
+        return state.game_over or self._should_game_end(state)
 
     def get_reward(self, state: GameState, player: int) -> float:
         """
         Get reward for player in terminal state.
 
-        Args:
-            state: Terminal game state
-            player: Player index (0 or 1)
+        Scoring:
+        - Each card in Cup scores points based on matching River position
+        - River position 1 = 1pt, position 2 = 2pt, ..., position 6 = 6pt
+        - Cards with no matching River color = 0pts
 
         Returns:
             float: 1.0 for win, -1.0 for loss, 0.0 for draw
@@ -105,33 +354,103 @@ class MandalaGame:
         if not self.is_terminal(state):
             return 0.0
 
-        # Score is sum of card values in cups
-        score_0 = sum(card.value for card in state.cups[0])
-        score_1 = sum(card.value for card in state.cups[1])
+        scores = [self._calculate_score(state, 0), self._calculate_score(state, 1)]
 
-        if score_0 > score_1:
-            return 1.0 if player == 0 else -1.0
-        elif score_1 > score_0:
-            return 1.0 if player == 1 else -1.0
+        if scores[player] > scores[1 - player]:
+            return 1.0
+        elif scores[player] < scores[1 - player]:
+            return -1.0
         else:
-            return 0.0
+            # Tiebreaker: fewer cards in Cup wins
+            if len(state.cups[player]) < len(state.cups[1 - player]):
+                return 1.0
+            elif len(state.cups[player]) > len(state.cups[1 - player]):
+                return -1.0
+            else:
+                return 0.0
 
-    def get_symmetries(self, state: GameState, policy: np.ndarray) -> List[Tuple[GameState, np.ndarray]]:
-        """
-        Get symmetrically equivalent states for data augmentation.
+    def _calculate_score(self, state: GameState, player: int) -> int:
+        """Calculate score for a player."""
+        score = 0
+        river = state.rivers[player]
+        cup = state.cups[player]
 
-        For Mandala, symmetries are limited (card colors are distinct).
-        May include perspective flip.
-        """
-        # TODO: Implement if useful symmetries exist
-        return [(state, policy)]
+        # Create color -> position mapping (position determines value)
+        color_values = {}
+        for position, card in enumerate(river):
+            color_values[card.color] = position + 1  # 1-indexed
+
+        # Score each card in Cup
+        for card in cup:
+            if card.color in color_values:
+                score += color_values[card.color]
+
+        return score
 
     def state_to_string(self, state: GameState) -> str:
         """Convert state to human-readable string."""
         lines = []
+        lines.append(f"{'='*60}")
         lines.append(f"Player {state.current_player}'s turn")
-        lines.append(f"Hands: P0={len(state.player_hands[0])}, P1={len(state.player_hands[1])}")
-        lines.append(f"Mountains: L={len(state.mountains[0])}, C={len(state.mountains[1])}, R={len(state.mountains[2])}")
-        lines.append(f"River: {len(state.river)} cards")
-        lines.append(f"Cups: P0={len(state.cups[0])}, P1={len(state.cups[1])}")
+        lines.append(f"{'='*60}")
+
+        for player in range(2):
+            lines.append(f"\nPlayer {player}:")
+            lines.append(f"  Hand: {len(state.hands[player])} cards - {[str(c) for c in state.hands[player]]}")
+            lines.append(f"  River: {[str(c) for c in state.rivers[player]]} ({len(state.rivers[player])}/6)")
+            lines.append(f"  Cup: {len(state.cups[player])} cards")
+
+        lines.append(f"\nMandalas:")
+        for i in range(2):
+            colors_present = state.get_colors_in_mandala(i)
+            lines.append(f"  Mandala {i}: {len(colors_present)}/6 colors")
+            lines.append(f"    Mountain: {[str(c) for c in state.mountains[i]]} ({len(state.mountains[i])} cards)")
+            lines.append(f"    Field P0: {[str(c) for c in state.fields[i][0]]} ({len(state.fields[i][0])} cards)")
+            lines.append(f"    Field P1: {[str(c) for c in state.fields[i][1]]} ({len(state.fields[i][1])} cards)")
+
+        lines.append(f"\nDeck: {len(state.deck)} cards, Discard: {len(state.discard)} cards")
+        lines.append(f"Deck reshuffled: {state.deck_reshuffled}")
+
+        if state.game_over:
+            lines.append(f"\n{'='*60}")
+            lines.append("GAME OVER")
+            score0 = self._calculate_score(state, 0)
+            score1 = self._calculate_score(state, 1)
+            lines.append(f"Player 0: {score0} points")
+            lines.append(f"Player 1: {score1} points")
+            if score0 > score1:
+                lines.append("Winner: Player 0")
+            elif score1 > score0:
+                lines.append("Winner: Player 1")
+            else:
+                lines.append("Draw!")
+
         return "\n".join(lines)
+
+    def get_symmetries(self, state: GameState, policy: np.ndarray) -> List[Tuple[GameState, np.ndarray]]:
+        """
+        Get symmetrically equivalent states.
+
+        For Mandala, there's mandala swap symmetry (left <-> right).
+        """
+        symmetries = [(state, policy)]
+
+        # Swap mandalas
+        sym_state = state.copy()
+        sym_state.mountains = [sym_state.mountains[1], sym_state.mountains[0]]
+        sym_state.fields = [sym_state.fields[1], sym_state.fields[0]]
+
+        # Swap policy for mandala-specific actions
+        sym_policy = policy.copy()
+        # BUILD_MOUNTAIN: swap mandala index
+        for color in range(6):
+            sym_policy[color * 2], sym_policy[color * 2 + 1] = policy[color * 2 + 1], policy[color * 2]
+        # GROW_FIELD: swap mandala index
+        for color in range(6):
+            sym_policy[12 + color * 2], sym_policy[12 + color * 2 + 1] = \
+                policy[12 + color * 2 + 1], policy[12 + color * 2]
+        # DISCARD: no change needed
+
+        symmetries.append((sym_state, sym_policy))
+
+        return symmetries

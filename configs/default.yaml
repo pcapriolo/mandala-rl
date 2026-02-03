@@ -3,7 +3,7 @@
 # Network Architecture
 network:
   input_channels: 50
-  num_actions: 256
+  num_actions: 30  # 12 BUILD_MOUNTAIN + 12 GROW_FIELD + 6 DISCARD
   num_res_blocks: 10
   channels: 128
 
