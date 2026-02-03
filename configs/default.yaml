@@ -1,0 +1,52 @@
+# Mandala RL Training Configuration
+
+# Network Architecture
+network:
+  input_channels: 50
+  num_actions: 256
+  num_res_blocks: 10
+  channels: 128
+
+# MCTS Parameters
+mcts:
+  num_simulations: 800
+  c_puct: 1.0
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25
+
+# Self-Play Parameters
+selfplay:
+  games_per_iteration: 100
+  temperature: 1.0
+  temperature_threshold: 30  # Switch to deterministic play after this move
+
+# Training Parameters
+training:
+  num_iterations: 1000
+  batch_size: 256
+  epochs_per_iteration: 10
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  lr_milestones: [100, 200, 300, 500, 700]
+  lr_gamma: 0.1
+  replay_buffer_size: 500000
+  checkpoint_frequency: 10  # Save checkpoint every N iterations
+
+# Evaluation Parameters
+evaluation:
+  num_games: 100
+  win_threshold: 0.55  # Win rate threshold to consider improvement
+  eval_frequency: 10  # Evaluate every N iterations
+
+# Paths
+paths:
+  checkpoint_dir: data/checkpoints
+  replay_dir: data/replays
+  log_dir: data/logs
+  elo_file: data/elo_ratings.json
+
+# Hardware
+device: mps  # Use 'mps' for Apple Silicon, 'cuda' for NVIDIA GPU, 'cpu' for CPU
+
+# Reproducibility
+seed: 42

@@ -1,0 +1,31 @@
+# Data and checkpoints
+data/replays/*
+data/checkpoints/*
+data/logs/*
+!data/replays/.gitkeep
+!data/checkpoints/.gitkeep
+!data/logs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

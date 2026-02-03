@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mandala-rl"
+version = "0.1.0"
+description = "AlphaZero-style self-play RL for Mandala board game"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65.0",
+    "tensorboard>=2.13.0",
+    "scipy>=1.10.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["mandala_rl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
