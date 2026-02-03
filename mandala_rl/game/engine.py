@@ -157,10 +157,14 @@ class MandalaGame:
             mandala_idx = action_id % 2
 
             # Find and remove one card of this color from hand
+            card_to_play = None
             for i, card in enumerate(hand):
                 if card.color == color:
                     card_to_play = hand.pop(i)
                     break
+
+            if card_to_play is None:
+                raise ValueError(f"Invalid action: no card of color {color} in hand")
 
             # Add to mountain
             new_state.mountains[mandala_idx].append(card_to_play)
