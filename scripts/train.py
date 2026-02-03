@@ -87,9 +87,19 @@ def main():
         'replay_buffer_size': config['training']['replay_buffer_size'],
         'checkpoint_frequency': config['training']['checkpoint_frequency'],
 
+        # Evaluation
+        'eval_frequency': config['evaluation']['eval_frequency'],
+        'eval_num_games': config['evaluation']['eval_num_games'],
+        'eval_mcts_simulations': config['evaluation']['eval_mcts_simulations'],
+
+        # Network architecture (for evaluation)
+        'num_res_blocks': network_config['num_res_blocks'],
+        'channels': network_config['channels'],
+
         # Paths
         'checkpoint_dir': config['paths']['checkpoint_dir'],
         'log_dir': config['paths']['log_dir'],
+        'elo_file': config['paths']['elo_file'],
     }
 
     # Create trainer

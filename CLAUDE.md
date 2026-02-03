@@ -255,6 +255,27 @@ Key hyperparameters:
 - **ResNet blocks**: 10 (model capacity)
 - **Channels**: 128 (representational power)
 
+## Automatic Elo Evaluation
+
+The training loop includes automatic Elo evaluation:
+
+**How it works:**
+- Every 10 iterations (configurable via `eval_frequency`)
+- Current model plays 20 games vs previous checkpoint
+- Elo ratings updated based on results
+- Logged to Tensorboard: `Evaluation/CurrentElo`, `Evaluation/WinRate`
+- Saved to `data/elo_ratings.json`
+
+**What to watch:**
+- Elo should increase over training (newer > older)
+- Win rate >50% means improving
+- Tensorboard shows live Elo curve
+
+**View Elo ratings:**
+```bash
+cat data/elo_ratings.json | python3 -m json.tool
+```
+
 ## Known TODOs
 
 These areas need implementation:
