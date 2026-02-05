@@ -26,6 +26,9 @@ def generate_games_batch(
     mcts_simulations: int,
     num_res_blocks: int,
     channels: int,
+    temperature: float,
+    temperature_threshold: int,
+    c_puct: float,
     worker_id: int
 ) -> List[Dict[str, Any]]:
     """
@@ -73,9 +76,9 @@ def generate_games_batch(
         game=game,
         network=network,
         mcts_simulations=mcts_simulations,
-        temperature=1.0,
-        temperature_threshold=30,
-        c_puct=1.0,
+        temperature=temperature,
+        temperature_threshold=temperature_threshold,
+        c_puct=c_puct,
         device='cpu'
     )
 
@@ -150,7 +153,12 @@ def distributed_selfplay_webhook(
     num_workers: int = 10,
     mcts_simulations: int = 800,
     num_res_blocks: int = 8,
-    channels: int = 96
+    channels: int = 96,
+    temperature: float = 1.0,
+    temperature_threshold: int = 30,
+    c_puct: float = 1.0,
+    input_channels: int = 50,
+    num_actions: int = 30
 ) -> Dict[str, Any]:
     """
     Distributed self-play workflow - webhook friendly.
@@ -188,6 +196,9 @@ def distributed_selfplay_webhook(
             mcts_simulations=mcts_simulations,
             num_res_blocks=num_res_blocks,
             channels=channels,
+            temperature=temperature,
+            temperature_threshold=temperature_threshold,
+            c_puct=c_puct,
             worker_id=i
         )
         game_batches.append(batch)
