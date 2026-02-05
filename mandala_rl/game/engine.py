@@ -164,6 +164,14 @@ class MandalaGame:
                     break
 
             if card_to_play is None:
+                # Debug: log the state when invalid action occurs
+                hand_colors = [c.color for c in hand]
+                print(f"\n=== INVALID ACTION DEBUG ===")
+                print(f"Attempted action: BUILD_MOUNTAIN color={color}, mandala={mandala_idx}")
+                print(f"Current player: {player}")
+                print(f"Hand colors: {hand_colors}")
+                print(f"Hand size: {len(hand)}")
+                print(f"===========================\n")
                 raise ValueError(f"Invalid action: no card of color {color} in hand")
 
             # Add to mountain
@@ -172,6 +180,7 @@ class MandalaGame:
             # Draw up to 3 cards (max hand size 8)
             cards_to_draw = min(3, self.MAX_HAND_SIZE - len(hand))
             for _ in range(cards_to_draw):
+                self._check_and_reshuffle_deck(new_state)
                 if new_state.deck:
                     new_state.hands[player].append(new_state.deck.pop())
 
@@ -227,6 +236,7 @@ class MandalaGame:
 
             # Draw equal number of cards
             for _ in range(len(cards_to_discard)):
+                self._check_and_reshuffle_deck(new_state)
                 if new_state.deck:
                     new_state.hands[player].append(new_state.deck.pop())
 
@@ -240,8 +250,10 @@ class MandalaGame:
                 return new_state
 
             # Refill mountain with 2 cards
+            self._check_and_reshuffle_deck(new_state)
             if new_state.deck:
                 new_state.mountains[completed_mandala].append(new_state.deck.pop())
+            self._check_and_reshuffle_deck(new_state)
             if new_state.deck:
                 new_state.mountains[completed_mandala].append(new_state.deck.pop())
 
@@ -319,23 +331,39 @@ class MandalaGame:
 
         return state
 
+    def _check_and_reshuffle_deck(self, state: GameState):
+        """
+        Check if deck needs reshuffling and handle it.
+
+        Called when trying to draw from an empty deck.
+        Per official rules: When deck is exhausted, reshuffle discard pile once.
+        Game then continues until the next Mandala completion.
+        """
+        if not state.deck and not state.deck_reshuffled and state.discard:
+            # First time deck is exhausted - reshuffle discard pile
+            state.deck = state.discard.copy()
+            state.discard = []
+            # Make shuffle deterministic based on game state for MCTS
+            shuffle_seed = hash(state) & 0x7FFFFFFF
+            random.Random(shuffle_seed).shuffle(state.deck)
+            state.deck_reshuffled = True
+            # Set flag: game will end after NEXT Mandala completion
+            state.game_ends_next_mandala = True
+
     def _should_game_end(self, state: GameState) -> bool:
-        """Check if game should end."""
+        """
+        Check if game should end.
+
+        Called after Mandala destruction to check end conditions.
+        """
         # End if someone has 6 colors in River
         if len(state.rivers[0]) >= 6 or len(state.rivers[1]) >= 6:
             return True
 
-        # End if deck is empty and already reshuffled
-        if not state.deck and state.deck_reshuffled:
+        # CRITICAL: End if game_ends_next_mandala flag is set
+        # This is set when deck is exhausted, and game ends after NEXT Mandala completion
+        if state.game_ends_next_mandala:
             return True
-
-        # If deck is empty but not reshuffled, reshuffle discard
-        if not state.deck and not state.deck_reshuffled:
-            state.deck = state.discard.copy()
-            state.discard = []
-            random.shuffle(state.deck)
-            state.deck_reshuffled = True
-            return False
 
         return False
 

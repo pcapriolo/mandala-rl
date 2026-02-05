@@ -98,8 +98,12 @@ def main():
 
         # Paths
         'checkpoint_dir': config['paths']['checkpoint_dir'],
+        'replay_dir': config['paths']['replay_dir'],
         'log_dir': config['paths']['log_dir'],
         'elo_file': config['paths']['elo_file'],
+
+        # Replay saving
+        'save_replay_frequency': config.get('save_replay_frequency', 10),
     }
 
     # Create trainer
@@ -111,13 +115,21 @@ def main():
     )
     print("Created trainer")
 
-    # Resume from checkpoint if specified
+    # Resume from checkpoint if specified or if latest exists
     if args.resume:
         checkpoint_path = Path(args.resume)
         if checkpoint_path.exists():
             trainer.load_checkpoint(checkpoint_path)
         else:
             print(f"Warning: Checkpoint {args.resume} not found, starting from scratch")
+    else:
+        # Auto-resume from latest checkpoint if it exists
+        latest_checkpoint = Path(config['paths']['checkpoint_dir']) / 'model_latest.pt'
+        if latest_checkpoint.exists():
+            print(f"Found existing checkpoint, resuming training...")
+            trainer.load_checkpoint(latest_checkpoint)
+        else:
+            print("No checkpoint found, starting from scratch")
 
     # Train
     num_iterations = args.iterations or config['training']['num_iterations']

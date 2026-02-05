@@ -126,6 +126,10 @@ class Trainer:
             self._add_to_replay_buffer(games)
             print(f"Replay buffer size: {len(self.replay_buffer)}")
 
+            # Save checkpoint after self-play (before training) to preserve games
+            print("Saving checkpoint after self-play...")
+            self._save_checkpoint()
+
             # 3. Train network
             print("\n[3/3] Training network...")
             self._train_network()
@@ -189,10 +193,10 @@ class Trainer:
             # Sample batch
             states, policies, values = self.replay_buffer.sample(batch_size)
 
-            # Convert to tensors
-            states = torch.from_numpy(states).to(self.device)
-            policies = torch.from_numpy(policies).to(self.device)
-            values = torch.from_numpy(values).to(self.device)
+            # Convert to tensors (float32 for MPS compatibility)
+            states = torch.from_numpy(states.astype(np.float32)).to(self.device)
+            policies = torch.from_numpy(policies.astype(np.float32)).to(self.device)
+            values = torch.from_numpy(values.astype(np.float32)).to(self.device)
 
             # Forward pass
             total_loss, policy_loss, value_loss = self.network.get_loss(
@@ -219,7 +223,7 @@ class Trainer:
                       f"Value: {value_loss.item():.4f}")
 
     def _save_checkpoint(self):
-        """Save network checkpoint."""
+        """Save network checkpoint and replay buffer."""
         checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -229,6 +233,7 @@ class Trainer:
             'model_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
+            'replay_buffer': self.replay_buffer.get_all_data(),  # Save all training data
         }
 
         # Save latest
@@ -238,17 +243,22 @@ class Trainer:
         if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
             torch.save(checkpoint, checkpoint_dir / f'model_iter_{self.iteration}.pt')
 
-        print(f"Saved checkpoint to {checkpoint_dir}")
+        print(f"Saved checkpoint to {checkpoint_dir} (iteration {self.iteration}, buffer size: {len(self.replay_buffer)})")
 
     def load_checkpoint(self, filepath: Path):
-        """Load training checkpoint."""
-        checkpoint = torch.load(filepath, map_location=self.device)
+        """Load training checkpoint and replay buffer."""
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
         self.network.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.iteration = checkpoint['iteration']
         self.total_games = checkpoint['total_games']
+
+        # Restore replay buffer if present
+        if 'replay_buffer' in checkpoint:
+            self.replay_buffer.load_data(checkpoint['replay_buffer'])
+            print(f"Restored replay buffer with {len(self.replay_buffer)} examples")
 
         print(f"Loaded checkpoint from {filepath}")
         print(f"Resuming from iteration {self.iteration}")

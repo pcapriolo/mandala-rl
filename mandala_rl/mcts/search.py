@@ -66,7 +66,7 @@ class MCTS:
             policy = (1 - self.dirichlet_epsilon) * policy + self.dirichlet_epsilon * noise
 
         # Expand root
-        root.expand(policy, valid_moves)
+        root.expand(policy, valid_moves, state_hash=hash(state))
 
         # Run simulations
         for _ in range(self.num_simulations):
@@ -96,6 +96,18 @@ class MCTS:
         # Selection: traverse to leaf
         while not node.is_leaf() and not self.game.is_terminal(state):
             action, node = node.select_child(self.c_puct)
+            # Debug: check if action is valid for current state
+            valid_now = self.game.get_valid_moves(state)
+            if valid_now[action] == 0:
+                print(f"\n=== MCTS TREE MISMATCH ===")
+                print(f"Action {action} was stored in tree but is now invalid!")
+                print(f"State hash when expanded: {getattr(node, 'expansion_state_hash', 'unknown')}")
+                print(f"State hash now: {hash(state)}")
+                print(f"Current player: {state.current_player}")
+                hand = state.hands[state.current_player]
+                print(f"Hand: {[c.color for c in hand]}")
+                print(f"Valid moves now: {np.where(valid_now > 0)[0]}")
+                print(f"==========================\n")
             state = self.game.get_next_state(state, action)
             search_path.append(node)
 
@@ -107,8 +119,11 @@ class MCTS:
             # Leaf node: expand and evaluate with network
             canonical_state = state.get_canonical_form()
             policy, value = self.network(canonical_state)
-            valid_moves = self.game.get_valid_moves(canonical_state)
-            node.expand(policy, valid_moves)
+            # CRITICAL: Use valid moves from NON-canonical state
+            # Actions will be applied to non-canonical states during traversal
+            # so children must be valid for the actual traversal state
+            valid_moves = self.game.get_valid_moves(state)
+            node.expand(policy, valid_moves, state_hash=hash(state))
 
         # Backup
         node.backup(value)

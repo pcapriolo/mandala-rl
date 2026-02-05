@@ -64,6 +64,7 @@ class GameState:
         self.current_player: int = 0  # 0 or 1
         self.game_over: bool = False
         self.deck_reshuffled: bool = False  # Track if we've reshuffled once
+        self.game_ends_next_mandala: bool = False  # Game ends after next Mandala completion
 
     def _create_deck(self) -> List[Card]:
         """Create a standard Mandala deck: 18 cards per color."""
@@ -85,6 +86,7 @@ class GameState:
         new_state.current_player = self.current_player
         new_state.game_over = self.game_over
         new_state.deck_reshuffled = self.deck_reshuffled
+        new_state.game_ends_next_mandala = self.game_ends_next_mandala
 
         return new_state
 
@@ -158,5 +160,9 @@ class GameState:
             tuple(c.color for c in self.fields[0][1]),
             tuple(c.color for c in self.fields[1][0]),
             tuple(c.color for c in self.fields[1][1]),
-            self.current_player
+            tuple(c.color for c in self.deck),  # Include deck for deterministic shuffling
+            tuple(c.color for c in self.discard),
+            self.current_player,
+            self.deck_reshuffled,
+            self.game_ends_next_mandala
         ))

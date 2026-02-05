@@ -60,5 +60,13 @@ class ReplayBuffer:
             examples = pickle.load(f)
             self.buffer = deque(examples, maxlen=self.max_size)
 
+    def get_all_data(self) -> list:
+        """Get all data for checkpointing."""
+        return list(self.buffer)
+
+    def load_data(self, data: list):
+        """Load data from checkpoint."""
+        self.buffer = deque(data, maxlen=self.max_size)
+
     def __len__(self):
         return len(self.buffer)

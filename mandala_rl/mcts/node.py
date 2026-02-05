@@ -71,14 +71,18 @@ class MCTSNode:
 
         return best_action, best_child
 
-    def expand(self, action_priors: np.ndarray, valid_moves: np.ndarray):
+    def expand(self, action_priors: np.ndarray, valid_moves: np.ndarray, state_hash: int = 0):
         """
         Expand node by adding children for all valid actions.
 
         Args:
             action_priors: Policy network output (prior probabilities)
             valid_moves: Binary mask of valid moves
+            state_hash: Hash of state for debugging
         """
+        # Store state hash for debugging
+        self.expansion_state_hash = state_hash
+
         # Mask invalid moves
         action_priors = action_priors * valid_moves
 

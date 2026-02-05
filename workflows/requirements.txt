@@ -1,0 +1,7 @@
+# Flyte workflow requirements
+flytekit>=1.10.0
+torch>=2.0.0
+numpy>=1.24.0
+
+# Your mandala_rl package should be pip installable
+# Add to your setup.py or pyproject.toml
