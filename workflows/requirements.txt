@@ -5,5 +5,5 @@ numpy>=1.24.0
 pyyaml>=6.0
 tqdm>=4.65.0
 
-# Install mandala_rl directly from GitHub
-git+https://github.com/pcapriolo/mandala-rl.git
+# Install mandala_rl directly from GitHub (specific commit to bust cache)
+git+https://github.com/pcapriolo/mandala-rl.git@8aead10
