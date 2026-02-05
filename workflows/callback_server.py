@@ -36,10 +36,11 @@ def receive_results():
         print(f"Duration: {data.get('durationMs', 0) / 1000:.1f}s")
 
         if status == 'succeeded':
-            # Extract results
-            num_games = outputs.get('num_games', 0)
-            num_examples = outputs.get('num_examples', 0)
-            examples = outputs.get('examples', [])
+            # Extract results (Flyte wraps return value in 'o0')
+            result = outputs.get('o0', outputs)  # Try o0 first, fallback to outputs
+            num_games = result.get('num_games', 0)
+            num_examples = result.get('num_examples', 0)
+            examples = result.get('examples', [])
 
             print(f"\nResults:")
             print(f"  Games generated: {num_games}")
