@@ -132,7 +132,9 @@ class GameState:
     def get_canonical_form(self) -> 'GameState':
         """Return state from current player's perspective."""
         if self.current_player == 0:
-            return self
+            # IMPORTANT: Must return a copy to prevent state corruption
+            # MCTS reuses state objects in tree, so original must not be mutated
+            return self.copy()
 
         # Swap player perspectives
         state = self.copy()
