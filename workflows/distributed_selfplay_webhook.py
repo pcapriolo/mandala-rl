@@ -132,8 +132,8 @@ def aggregate_games(
             value = outcome if player == 0 else -outcome
 
             all_examples.append({
-                'state': state,
-                'policy': policy,
+                'state': state.tolist() if hasattr(state, 'tolist') else state,
+                'policy': policy.tolist() if hasattr(policy, 'tolist') else policy,
                 'value': float(value)
             })
 
