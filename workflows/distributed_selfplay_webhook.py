@@ -148,7 +148,9 @@ def distributed_selfplay_webhook(
     checkpoint_url: str,
     total_games: int = 100,
     num_workers: int = 10,
-    config: Dict[str, int] = {}
+    mcts_simulations: int = 800,
+    num_res_blocks: int = 8,
+    channels: int = 96
 ) -> Dict[str, Any]:
     """
     Distributed self-play workflow - webhook friendly.
@@ -157,18 +159,13 @@ def distributed_selfplay_webhook(
         checkpoint_url: HTTP URL to checkpoint file
         total_games: Total games to generate
         num_workers: Number of parallel workers
-        config: Configuration dict with:
-            - mcts_simulations (default: 800)
-            - num_res_blocks (default: 8)
-            - channels (default: 96)
+        mcts_simulations: MCTS simulations per move
+        num_res_blocks: Network depth
+        channels: Network width
 
     Returns:
         Dict with training examples and statistics
     """
-    # Extract config with defaults
-    mcts_simulations = config.get('mcts_simulations', 800)
-    num_res_blocks = config.get('num_res_blocks', 8)
-    channels = config.get('channels', 96)
 
     print(f"Starting distributed self-play:")
     print(f"  Checkpoint: {checkpoint_url}")
