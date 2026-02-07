@@ -270,9 +270,8 @@ class Trainer:
         checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
         current_model_id = f"iter_{self.iteration}"
 
-        # Find previous checkpoint to compare against
-        eval_freq = self.config.get('eval_frequency', 10)
-        prev_iteration = self.iteration - eval_freq
+        # Find previous checkpoint to compare against (always compare against iteration - 1)
+        prev_iteration = self.iteration - 1
         prev_checkpoint = checkpoint_dir / f'model_iter_{prev_iteration}.pt'
 
         if not prev_checkpoint.exists():

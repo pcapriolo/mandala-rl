@@ -30,13 +30,13 @@ training:
   lr_milestones: [100, 200, 300, 500, 700]
   lr_gamma: 0.1
   replay_buffer_size: 500000
-  checkpoint_frequency: 10  # Save checkpoint every N iterations
+  checkpoint_frequency: 1  # Save checkpoint every N iterations
 
 # Evaluation Parameters
 evaluation:
   num_games: 100
   win_threshold: 0.55  # Win rate threshold to consider improvement
-  eval_frequency: 10  # Evaluate every N iterations
+  eval_frequency: 1  # Evaluate every N iterations (1 = every iteration)
   eval_num_games: 20  # Games to play during training evaluation (fewer for speed)
   eval_mcts_simulations: 400  # MCTS sims for evaluation (fewer for speed)
 
@@ -49,6 +49,9 @@ paths:
 
 # Hardware
 device: mps  # Use 'mps' for Apple Silicon, 'cuda' for NVIDIA GPU, 'cpu' for CPU
+
+# Replay saving
+save_replay_frequency: 1  # Save every game (1 = all, 10 = every 10th)
 
 # Reproducibility
 seed: 42
