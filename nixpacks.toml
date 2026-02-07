@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python310"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["pip install -e ."]
+
+[start]
+cmd = "python scripts/play_vs_ai_web.py --port $PORT --host 0.0.0.0 --simulations 200"

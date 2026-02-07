@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human vs AI - Mandala</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .game-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #38a169;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .game-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .info-card {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-card h3 {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .info-card .value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .game-board {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .player-area {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 15px;
+            border: 3px solid transparent;
+        }
+
+        .player-area.active {
+            border-color: #667eea;
+            background: #edf2f7;
+        }
+
+        .player-area.human {
+            border-color: #48bb78;
+        }
+
+        .player-title {
+            font-size: 1.4em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+
+        .hand, .river, .cup {
+            margin-bottom: 15px;
+        }
+
+        .label {
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .cards {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            min-height: 40px;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .card {
+            font-size: 2em;
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: scale(1.2);
+        }
+
+        .mandalas {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .mandala {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 20px;
+            border-radius: 15px;
+            color: white;
+        }
+
+        .mandala h3 {
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .mountain, .field {
+            background: rgba(255,255,255,0.2);
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .moves-panel {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .moves-panel h3 {
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+
+        .move-button {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+            font-size: 1em;
+        }
+
+        .move-button:hover {
+            border-color: #667eea;
+            background: #edf2f7;
+            transform: translateX(5px);
+        }
+
+        .ai-thinking {
+            background: #fef5e7;
+            padding: 20px;
+            border-radius: 15px;
+            border-left: 4px solid #f39c12;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .ai-thinking.show {
+            display: block;
+        }
+
+        .ai-move-info {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .game-over {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .game-over.show {
+            display: flex;
+        }
+
+        .game-over-content {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 500px;
+        }
+
+        .game-over-content h2 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+        }
+
+        .game-over-content .winner {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .scores {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+        }
+
+        .score-box {
+            text-align: center;
+        }
+
+        .score-box .player {
+            font-size: 1.1em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .score-box .score {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .status-info {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+
+        .status-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status-error {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,0.1);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s linear infinite;
+        }
+
+        select {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            font-weight: 600;
+            color: #2d3748;
+            transition: all 0.3s;
+        }
+
+        select:hover {
+            border-color: #5568d3;
+            background: #edf2f7;
+        }
+
+        .checkpoint-info {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 6px 12px;
+            background: #f7fafc;
+            border-radius: 6px;
+            font-size: 0.9em;
+            color: #4a5568;
+        }
+
+        .main-header {
+            text-align: center;
+            font-size: 3em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-header">PLAY MANDALA</div>
+        <h1>👤 Human vs AI 🤖</h1>
+        <div class="subtitle" id="modelInfo">Loading model...</div>
+
+        <div class="game-controls">
+            <select id="checkpointSelect" onchange="reloadWithCheckpoint()" title="Select AI checkpoint">
+                <option value="">Loading checkpoints...</option>
+            </select>
+            <button class="btn-primary" onclick="newGame(0)">New Game (Play as Player 0)</button>
+            <button class="btn-primary" onclick="newGame(1)">New Game (Play as Player 1)</button>
+        </div>
+
+        <div id="statusMessage"></div>
+
+        <div class="game-info">
+            <div class="info-card">
+                <h3>Move #</h3>
+                <div class="value" id="moveCount">-</div>
+            </div>
+            <div class="info-card">
+                <h3>Current Player</h3>
+                <div class="value" id="currentPlayer">-</div>
+            </div>
+            <div class="info-card">
+                <h3>Deck</h3>
+                <div class="value" id="deckSize">-</div>
+            </div>
+            <div class="info-card">
+                <h3>Your Role</h3>
+                <div class="value" id="humanPlayer">-</div>
+            </div>
+        </div>
+
+        <div class="ai-thinking" id="aiThinking">
+            <strong>🤖 AI is thinking...</strong> <span class="spinner"></span>
+        </div>
+
+        <div class="game-board">
+            <div class="player-area" id="player0Area">
+                <div class="player-title">Player 0</div>
+                <div class="hand">
+                    <div class="label">Hand:</div>
+                    <div class="cards" id="hand0"></div>
+                </div>
+                <div class="river">
+                    <div class="label">River (Scoring):</div>
+                    <div class="cards" id="river0"></div>
+                </div>
+                <div class="cup">
+                    <div class="label">Cup:</div>
+                    <div class="value" id="cup0">0 cards</div>
+                </div>
+            </div>
+
+            <div class="player-area" id="player1Area">
+                <div class="player-title">Player 1</div>
+                <div class="hand">
+                    <div class="label">Hand:</div>
+                    <div class="cards" id="hand1"></div>
+                </div>
+                <div class="river">
+                    <div class="label">River (Scoring):</div>
+                    <div class="cards" id="river1"></div>
+                </div>
+                <div class="cup">
+                    <div class="label">Cup:</div>
+                    <div class="value" id="cup1">0 cards</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mandalas">
+            <div class="mandala">
+                <h3>Mandala 0 (<span id="mandala0Colors">0</span>/6 colors)</h3>
+                <div class="mountain">
+                    <div class="label">Mountain:</div>
+                    <div class="cards" id="mountain0"></div>
+                </div>
+                <div class="field">
+                    <div class="label">Field P0:</div>
+                    <div class="cards" id="field0_0"></div>
+                </div>
+                <div class="field">
+                    <div class="label">Field P1:</div>
+                    <div class="cards" id="field0_1"></div>
+                </div>
+            </div>
+
+            <div class="mandala">
+                <h3>Mandala 1 (<span id="mandala1Colors">0</span>/6 colors)</h3>
+                <div class="mountain">
+                    <div class="label">Mountain:</div>
+                    <div class="cards" id="mountain1"></div>
+                </div>
+                <div class="field">
+                    <div class="label">Field P0:</div>
+                    <div class="cards" id="field1_0"></div>
+                </div>
+                <div class="field">
+                    <div class="label">Field P1:</div>
+                    <div class="cards" id="field1_1"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="moves-panel" id="movesPanel" style="display: none;">
+            <h3>Your Move:</h3>
+            <div id="movesList"></div>
+        </div>
+    </div>
+
+    <div class="game-over" id="gameOver">
+        <div class="game-over-content">
+            <h2 id="gameOverTitle">Game Over!</h2>
+            <div class="winner" id="winnerText"></div>
+            <div class="scores">
+                <div class="score-box">
+                    <div class="player">Player 0</div>
+                    <div class="score" id="finalScore0">0</div>
+                </div>
+                <div class="score-box">
+                    <div class="player">Player 1</div>
+                    <div class="score" id="finalScore1">0</div>
+                </div>
+            </div>
+            <button class="btn-primary" onclick="closeGameOver()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        let currentState = null;
+
+        async function init() {
+            await updateState();
+        }
+
+        async function newGame(humanPlayer) {
+            try {
+                const response = await fetch('/api/new_game', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ human_player: humanPlayer })
+                });
+                currentState = await response.json();
+                displayState();
+                document.getElementById('saveBtn').disabled = false;
+                showStatus('New game started! You are Player ' + humanPlayer, 'success');
+            } catch (error) {
+                showStatus('Error starting game: ' + error, 'error');
+            }
+        }
+
+        async function updateState() {
+            try {
+                const response = await fetch('/api/state');
+                currentState = await response.json();
+                displayState();
+            } catch (error) {
+                console.error('Error updating state:', error);
+            }
+        }
+
+        function displayState() {
+            if (!currentState || !currentState.state) return;
+
+            const state = currentState.state;
+            const modelInfo = currentState.model_info;
+
+            // Update model info
+            document.getElementById('modelInfo').textContent =
+                `Model: Iteration ${modelInfo.iteration}, ${modelInfo.total_games} games trained`;
+
+            // Update game info
+            document.getElementById('moveCount').textContent = currentState.move_count;
+            document.getElementById('currentPlayer').textContent = `Player ${currentState.current_player}`;
+            document.getElementById('deckSize').textContent = `${state.deck_size} cards`;
+            document.getElementById('humanPlayer').textContent = `Player ${currentState.human_player}`;
+
+            // Update player areas
+            displayCards('hand0', state.hands.player0);
+            displayCards('hand1', state.hands.player1);
+            displayCards('river0', state.rivers.player0);
+            displayCards('river1', state.rivers.player1);
+            document.getElementById('cup0').textContent = `${state.cups.player0} cards`;
+            document.getElementById('cup1').textContent = `${state.cups.player1} cards`;
+
+            // Highlight active player
+            document.getElementById('player0Area').classList.toggle('active', currentState.current_player === 0);
+            document.getElementById('player1Area').classList.toggle('active', currentState.current_player === 1);
+
+            // Highlight human player
+            document.getElementById('player0Area').classList.toggle('human', currentState.human_player === 0);
+            document.getElementById('player1Area').classList.toggle('human', currentState.human_player === 1);
+
+            // Update mandalas
+            for (let i = 0; i < 2; i++) {
+                const mandala = state.mandalas[i];
+                displayCards(`mountain${i}`, mandala.mountain);
+                displayCards(`field${i}_0`, mandala.field_p0);
+                displayCards(`field${i}_1`, mandala.field_p1);
+                document.getElementById(`mandala${i}Colors`).textContent = mandala.colors;
+            }
+
+            // Show moves if it's human's turn
+            if (currentState.current_player === currentState.human_player && !currentState.is_terminal) {
+                displayMoves(currentState.valid_moves);
+            } else {
+                document.getElementById('movesPanel').style.display = 'none';
+            }
+
+            // Handle game over
+            if (currentState.is_terminal) {
+                showGameOver();
+            }
+
+            // Auto-play AI move if it's AI's turn
+            if (currentState.current_player !== currentState.human_player && !currentState.is_terminal) {
+                setTimeout(playAIMove, 1000);
+            }
+        }
+
+        function displayCards(elementId, cards) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = cards.map(card => `<span class="card">${card}</span>`).join('');
+        }
+
+        function displayMoves(moves) {
+            const panel = document.getElementById('movesPanel');
+            const list = document.getElementById('movesList');
+
+            list.innerHTML = moves.map(([action, description]) =>
+                `<button class="move-button" onclick="makeMove(${action})">${description}</button>`
+            ).join('');
+
+            panel.style.display = 'block';
+        }
+
+        async function makeMove(action) {
+            try {
+                showStatus('Making move...', 'info');
+                const response = await fetch('/api/move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action })
+                });
+                currentState = await response.json();
+                displayState();
+                clearStatus();
+            } catch (error) {
+                showStatus('Error making move: ' + error, 'error');
+            }
+        }
+
+        async function playAIMove() {
+            try {
+                document.getElementById('aiThinking').classList.add('show');
+                const response = await fetch('/api/ai_move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                document.getElementById('aiThinking').classList.remove('show');
+
+                if (result.ai_decision) {
+                    showStatus('AI played: ' + result.ai_decision.description, 'info');
+                }
+
+                currentState = result;
+                displayState();
+
+                setTimeout(clearStatus, 3000);
+            } catch (error) {
+                document.getElementById('aiThinking').classList.remove('show');
+                showStatus('Error getting AI move: ' + error, 'error');
+            }
+        }
+
+        async function saveGame() {
+            try {
+                const response = await fetch('/api/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showStatus(`Game saved to ${result.filename}! (${result.moves} moves)`, 'success');
+                } else {
+                    showStatus('Error: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error saving game: ' + error, 'error');
+            }
+        }
+
+        async function showGameOver() {
+            const gameOver = document.getElementById('gameOver');
+            const winner = currentState.winner;
+            const scores = currentState.scores;
+
+            document.getElementById('finalScore0').textContent = scores.player0;
+            document.getElementById('finalScore1').textContent = scores.player1;
+
+            if (winner === currentState.human_player) {
+                document.getElementById('gameOverTitle').textContent = '🎉 You Win! 🎉';
+                document.getElementById('winnerText').textContent = 'Congratulations! You beat the AI!';
+            } else if (winner === -1) {
+                document.getElementById('gameOverTitle').textContent = '🤝 Draw! 🤝';
+                document.getElementById('winnerText').textContent = 'The game ended in a tie!';
+            } else {
+                document.getElementById('gameOverTitle').textContent = '🤖 AI Wins! 🤖';
+                document.getElementById('winnerText').textContent = 'Better luck next time!';
+            }
+
+            // Auto-save the game for training data
+            await saveGame();
+
+            gameOver.classList.add('show');
+        }
+
+        function closeGameOver() {
+            document.getElementById('gameOver').classList.remove('show');
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.innerHTML = `<div class="status-message status-${type}">${message}</div>`;
+        }
+
+        function clearStatus() {
+            document.getElementById('statusMessage').innerHTML = '';
+        }
+
+        async function loadCheckpoints() {
+            try {
+                const response = await fetch('/api/checkpoints');
+                const checkpoints = await response.json();
+
+                const select = document.getElementById('checkpointSelect');
+                select.innerHTML = '<option value="">Select a different checkpoint...</option>';
+
+                checkpoints.forEach((cp, index) => {
+                    const option = document.createElement('option');
+                    option.value = cp.name;
+                    option.textContent = `${cp.name} (Iter: ${cp.iteration}, Games: ${cp.total_games})`;
+
+                    // Mark current checkpoint as selected
+                    if (currentState && currentState.model_info && cp.name === currentState.model_info.checkpoint) {
+                        option.selected = true;
+                    } else if (index === 0 && !currentState) {
+                        option.selected = true;
+                    }
+
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading checkpoints:', error);
+            }
+        }
+
+        async function reloadWithCheckpoint() {
+            const select = document.getElementById('checkpointSelect');
+            const checkpoint = select.value;
+
+            if (!checkpoint) return;
+
+            try {
+                showStatus('Loading checkpoint: ' + checkpoint, 'info');
+
+                const response = await fetch('/api/load_checkpoint', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ checkpoint })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showStatus(`Loaded checkpoint! Iteration: ${result.iteration}, Games: ${result.total_games}`, 'success');
+                    await updateState();
+                    setTimeout(clearStatus, 3000);
+                } else {
+                    showStatus('Error: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Error loading checkpoint: ' + error, 'error');
+            }
+        }
+
+        // Initialize on load
+        async function initAll() {
+            await updateState();
+            await loadCheckpoints();
+        }
+
+        initAll();
+    </script>
+</body>
+</html>

@@ -5,6 +5,8 @@ data/logs/*
 !data/replays/.gitkeep
 !data/checkpoints/.gitkeep
 !data/logs/.gitkeep
+# Allow lightweight checkpoint for deployment
+!data/checkpoints/model_latest_lightweight.pt
 
 # Python
 __pycache__/
