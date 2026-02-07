@@ -6,6 +6,7 @@ Receives training examples from distributed self-play and saves them locally.
 from flask import Flask, request, jsonify
 import json
 import pickle
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +28,13 @@ def receive_results():
 
         execution_id = data.get('executionId', 'unknown')
         status = data.get('status', 'unknown')
-        outputs = data.get('outputs', {})
+
+        # Try new format first (workflowOutputs), fall back to old format (outputs)
+        workflow_outputs = data.get('workflowOutputs')
+        if workflow_outputs is None:
+            # Old format: outputs might be a dict with workflow results
+            outputs = data.get('outputs', {})
+            workflow_outputs = outputs if isinstance(outputs, dict) and 'num_games' in outputs else {}
 
         print(f"Execution ID: {execution_id}")
         print(f"Status: {status}")
@@ -36,10 +43,46 @@ def receive_results():
         print(f"Duration: {data.get('durationMs', 0) / 1000:.1f}s")
 
         if status == 'succeeded':
-            # Extract results (outputs contains workflow return value directly)
-            num_games = outputs.get('num_games', 0)
-            num_examples = outputs.get('num_examples', 0)
-            examples = outputs.get('examples', [])
+            # Check if workflowOutputs contains a FlyteFile URL
+            if 'run_distributed_selfplay' in workflow_outputs:
+                flyte_file = workflow_outputs['run_distributed_selfplay']
+                file_url = flyte_file.get('url')
+
+                if file_url:
+                    print(f"\nDownloading FlyteFile from: {file_url[:80]}...")
+                    import requests
+                    response = requests.get(file_url, timeout=30)
+                    response.raise_for_status()
+
+                    # Load pickle data
+                    import io
+                    examples_data = pickle.loads(response.content)
+                    num_examples = len(examples_data)
+
+                    # Save directly as pickle (already in correct format)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    result_file = RESULTS_DIR / f"examples_{execution_id}_{timestamp}.pkl"
+
+                    with open(result_file, 'wb') as f:
+                        pickle.dump(examples_data, f)
+
+                    print(f"  Downloaded {num_examples} examples")
+                    print(f"  Saved to: {result_file}")
+
+                    # Also save callback JSON
+                    json_file = RESULTS_DIR / f"callback_{execution_id}_{timestamp}.json"
+                    with open(json_file, 'w') as f:
+                        json.dump(data, f, indent=2)
+
+                    print(f"  Saved callback to: {json_file}")
+                    print("="*60 + "\n")
+
+                    return jsonify({"status": "received"}), 200
+
+            # Fall back to old format (direct examples in workflowOutputs)
+            num_games = workflow_outputs.get('num_games', 0)
+            num_examples = workflow_outputs.get('num_examples', 0)
+            examples = workflow_outputs.get('examples', [])
 
             print(f"\nResults:")
             print(f"  Games generated: {num_games}")
@@ -104,13 +147,16 @@ def health():
 
 
 if __name__ == '__main__':
+    import os
+    port = int(os.environ.get('PORT', 5001))
+
     print("Starting callback server...")
     print(f"Results will be saved to: {RESULTS_DIR}")
     print("\nEndpoints:")
     print("  POST /callback/results - Receive workflow results")
     print("  GET  /health          - Health check")
-    print("\nListening on http://localhost:5000")
-    print("Use ngrok to expose: ngrok http 5000")
+    print(f"\nListening on http://localhost:{port}")
+    print(f"Use ngrok to expose: ngrok http {port}")
     print()
 
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=True)

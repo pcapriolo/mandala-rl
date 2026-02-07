@@ -77,6 +77,56 @@ python3 scripts/play_game.py --seed 42
 python3 scripts/play_game.py --interactive
 ```
 
+### Human vs AI Play
+
+**🌐 Web Interface (Recommended)**
+```bash
+# Start web server with latest checkpoint
+python3 scripts/play_vs_ai_web.py
+
+# Use specific checkpoint
+python3 scripts/play_vs_ai_web.py --checkpoint data/checkpoints/model_iter_50.pt
+
+# Faster AI (fewer simulations)
+python3 scripts/play_vs_ai_web.py --simulations 200
+
+# Custom port
+python3 scripts/play_vs_ai_web.py --port 5001
+```
+Then open http://localhost:5001 in your browser!
+
+**💻 Terminal Interface**
+```bash
+# List available checkpoints
+python3 scripts/play_vs_ai.py --list
+
+# Play against latest checkpoint (you are Player 0)
+python3 scripts/play_vs_ai.py
+
+# Play against specific checkpoint
+python3 scripts/play_vs_ai.py --checkpoint data/checkpoints/model_iter_50.pt
+
+# Play as Player 1 (AI plays first)
+python3 scripts/play_vs_ai.py --player 1
+
+# Show MCTS statistics (see what AI is thinking)
+python3 scripts/play_vs_ai.py --show-stats
+
+# Save game for training data
+python3 scripts/play_vs_ai.py --save
+
+# Faster AI (fewer simulations)
+python3 scripts/play_vs_ai.py --simulations 400
+```
+
+**Why Human Play Matters:**
+- **Validation**: Test if the bot makes sensible moves and plays at expected strength
+- **Training Data**: Human expert games can be added to replay buffer to improve bot
+- **Debugging**: Catch edge cases and rule violations
+- **Fun**: Actually play the game you're training!
+
+Saved games go to `data/human_games/` and can be loaded into replay buffer for training.
+
 ### Testing
 ```bash
 # Run tests
