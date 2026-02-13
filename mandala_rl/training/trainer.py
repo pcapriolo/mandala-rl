@@ -148,10 +148,6 @@ class Trainer:
             self._add_to_replay_buffer(games)
             print(f"Replay buffer size: {len(self.replay_buffer)}")
 
-            # Save checkpoint after self-play (before training) to preserve games
-            print("Saving checkpoint after self-play...")
-            self._save_checkpoint()
-
             # 3. Train network
             print("\n[3/3] Training network...")
             self._train_network()
@@ -163,6 +159,9 @@ class Trainer:
             eval_freq = self.config.get('eval_frequency', 10)
             if self.iteration > 0 and self.iteration % eval_freq == 0:
                 self._evaluate_checkpoint()
+
+            # 6. Clean up disk
+            self._cleanup_checkpoints()
 
             # Step scheduler
             self.scheduler.step()
@@ -290,7 +289,8 @@ class Trainer:
         """Save network checkpoint and replay buffer.
 
         Args:
-            suffix: Optional suffix for checkpoint filename (e.g., '_game500')
+            suffix: Optional suffix for checkpoint filename (e.g., '_game500').
+                    Game-level checkpoints are lightweight (no replay buffer).
         """
         checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -304,23 +304,48 @@ class Trainer:
             'scheduler_state_dict': self.scheduler.state_dict(),
         }
 
-        # Only save replay buffer in model_latest (for resume), not periodic checkpoints
-        latest_checkpoint = dict(checkpoint)
-        latest_checkpoint['replay_buffer'] = self.replay_buffer.get_all_data()
-        torch.save(latest_checkpoint, checkpoint_dir / 'model_latest.pt')
-
-        # Save periodic checkpoint (lightweight, no replay buffer)
-        if self.iteration % self.config.get('checkpoint_frequency', 10) == 0 and not suffix:
-            torch.save(checkpoint, checkpoint_dir / f'model_iter_{self.iteration}.pt')
-
-        # Save game-level checkpoint if suffix provided (lightweight)
         if suffix:
+            # Game-level checkpoint: lightweight only (no replay buffer, no model_latest)
             torch.save(checkpoint, checkpoint_dir / f'model_latest{suffix}.pt')
+        else:
+            # Full checkpoint: save model_latest with replay buffer for resume
+            latest_checkpoint = dict(checkpoint)
+            latest_checkpoint['replay_buffer'] = self.replay_buffer.get_all_data()
+            torch.save(latest_checkpoint, checkpoint_dir / 'model_latest.pt')
+
+            # Save periodic iteration checkpoint (lightweight, no replay buffer)
+            if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
+                torch.save(checkpoint, checkpoint_dir / f'model_iter_{self.iteration}.pt')
 
         status = f"iteration {self.iteration}"
         if self.games_in_current_iteration > 0:
             status += f", game {self.games_in_current_iteration}/{self.config.get('games_per_iteration', 100)}"
         print(f"Saved checkpoint to {checkpoint_dir} ({status}, buffer: {len(self.replay_buffer)})")
+
+    def _cleanup_checkpoints(self):
+        """Remove stale checkpoints to prevent disk from filling up."""
+        checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
+        if not checkpoint_dir.exists():
+            return
+
+        # 1. Delete all game-level checkpoints (only useful during mid-iteration resume)
+        game_checkpoints = list(checkpoint_dir.glob('model_latest_game*.pt'))
+        for f in game_checkpoints:
+            f.unlink()
+        if game_checkpoints:
+            print(f"Cleaned up {len(game_checkpoints)} game-level checkpoints")
+
+        # 2. Prune old iteration checkpoints, keep last 20
+        keep_last = 20
+        iter_checkpoints = sorted(
+            checkpoint_dir.glob('model_iter_*.pt'),
+            key=lambda f: int(f.stem.split('_')[-1])
+        )
+        if len(iter_checkpoints) > keep_last:
+            to_delete = iter_checkpoints[:-keep_last]
+            for f in to_delete:
+                f.unlink()
+            print(f"Pruned {len(to_delete)} old iteration checkpoints")
 
     def load_checkpoint(self, filepath: Path):
         """Load training checkpoint and replay buffer."""
