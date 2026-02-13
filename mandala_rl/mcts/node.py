@@ -56,8 +56,8 @@ class MCTSNode:
         sqrt_total = np.sqrt(total_visits)
 
         for action, child in self.children.items():
-            # Q value (exploitation)
-            q_value = child.get_value()
+            # Q value from parent's perspective (child stores own perspective, so negate)
+            q_value = -child.get_value()
 
             # U value (exploration)
             u_value = c_puct * child.prior * sqrt_total / (1 + child.visit_count)
@@ -91,8 +91,12 @@ class MCTSNode:
         if prob_sum > 0:
             action_priors = action_priors / prob_sum
         else:
-            # Uniform over valid moves
-            action_priors = valid_moves / np.sum(valid_moves)
+            # Uniform over valid moves (if any exist)
+            valid_sum = np.sum(valid_moves)
+            if valid_sum > 0:
+                action_priors = valid_moves / valid_sum
+            else:
+                return  # No valid moves - terminal state
 
         # Create child nodes
         for action in range(len(action_priors)):

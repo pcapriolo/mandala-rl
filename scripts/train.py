@@ -16,7 +16,6 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mandala_rl.game.engine import MandalaGame
 from mandala_rl.network.model import MandalaNet
 from mandala_rl.training.trainer import Trainer
 
@@ -36,6 +35,9 @@ def main():
                       help='Path to checkpoint to resume from')
     parser.add_argument('--iterations', type=int, default=None,
                       help='Override number of iterations')
+    parser.add_argument('--game', type=str, default='mandala',
+                      choices=['mandala', 'lost_cities'],
+                      help='Game to train (default: mandala)')
     args = parser.parse_args()
 
     # Load config
@@ -55,8 +57,14 @@ def main():
     print(f"Using device: {device}")
 
     # Create game
-    game = MandalaGame()
-    print("Created Mandala game engine")
+    if args.game == 'mandala':
+        from mandala_rl.game.engine import MandalaGame
+        game = MandalaGame()
+        print("Created Mandala game engine")
+    elif args.game == 'lost_cities':
+        from lost_cities.game.engine import LostCitiesGame
+        game = LostCitiesGame()
+        print("Created Lost Cities game engine")
 
     # Create network
     network_config = config['network']
@@ -76,8 +84,9 @@ def main():
         'temperature': config['selfplay']['temperature'],
         'temperature_threshold': config['selfplay']['temperature_threshold'],
 
-        # Training
+        # Self-play
         'games_per_iteration': config['selfplay']['games_per_iteration'],
+        'parallel_games': config['selfplay'].get('parallel_games', 8),
         'batch_size': config['training']['batch_size'],
         'epochs_per_iteration': config['training']['epochs_per_iteration'],
         'learning_rate': config['training']['learning_rate'],
@@ -93,6 +102,8 @@ def main():
         'eval_mcts_simulations': config['evaluation']['eval_mcts_simulations'],
 
         # Network architecture (for evaluation)
+        'input_channels': network_config['input_channels'],
+        'num_actions': network_config['num_actions'],
         'num_res_blocks': network_config['num_res_blocks'],
         'channels': network_config['channels'],
 

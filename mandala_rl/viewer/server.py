@@ -9,12 +9,13 @@ import yaml
 class TrainingObserver:
     """Web server for observing training progress."""
 
-    def __init__(self, data_dir: Path, config_path: Path = None):
+    def __init__(self, data_dir: Path, config_path: Path = None, game_name: str = "Mandala"):
         self.data_dir = Path(data_dir)
         self.replays_dir = self.data_dir / 'replays'
         self.checkpoints_dir = self.data_dir / 'checkpoints'
         self.logs_dir = self.data_dir / 'logs'
         self.config_path = config_path
+        self.game_name = game_name
 
         self.app = Flask(__name__,
                         template_folder=str(Path(__file__).parent / 'templates'),
@@ -28,7 +29,7 @@ class TrainingObserver:
         @self.app.route('/')
         def index():
             """Main dashboard."""
-            return render_template('index.html')
+            return render_template('index.html', game_name=self.game_name)
 
         @self.app.route('/api/status')
         def api_status():
@@ -88,7 +89,7 @@ class TrainingObserver:
     def run(self, host='127.0.0.1', port=5000, debug=False):
         """Start the web server."""
         print(f"\n{'='*60}")
-        print("🌐 Mandala Training Observer")
+        print(f"🌐 {self.game_name} Training Observer")
         print(f"{'='*60}")
         print(f"Dashboard: http://{host}:{port}")
         print(f"Tensorboard: http://{host}:6006 (start separately)")

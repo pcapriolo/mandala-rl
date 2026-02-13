@@ -74,7 +74,7 @@ class WebGameManager:
 
         # Create network wrapper for MCTS
         def network_fn(state):
-            state_tensor = state.to_tensor().unsqueeze(0).to(self.device)
+            state_tensor = torch.from_numpy(state.to_tensor()).unsqueeze(0).to(self.device)
             with torch.no_grad():
                 policy_logits, value = self.model(state_tensor)
                 policy = torch.softmax(policy_logits, dim=1).cpu().numpy()[0]
@@ -110,12 +110,21 @@ class WebGameManager:
         valid_moves = self.engine.get_valid_moves(self.state)
         valid_actions = [(i, self.action_to_string(i)) for i, valid in enumerate(valid_moves) if valid]
 
+        # Debug: Log valid moves for human player
+        if self.state.current_player == self.human_player and not self.engine.is_terminal(self.state):
+            hand_colors = [card.color for card in self.state.hands[self.human_player]]
+            print(f"\n👤 Human Player Valid Moves:")
+            print(f"   Hand colors: {hand_colors}")
+            print(f"   Valid actions: {[i for i, v in enumerate(valid_moves) if v]}")
+            print(f"   Descriptions: {[desc for _, desc in valid_actions]}")
+
         is_terminal = self.engine.is_terminal(self.state)
         winner = None
         scores = None
 
         if is_terminal:
-            p0_score, p1_score = self.engine.get_scores(self.state)
+            p0_score = self.engine._calculate_score(self.state, 0)
+            p1_score = self.engine._calculate_score(self.state, 1)
             scores = {'player0': p0_score, 'player1': p1_score}
             if p0_score > p1_score:
                 winner = 0
@@ -181,6 +190,10 @@ class WebGameManager:
 
     def action_to_string(self, action):
         """Convert action ID to string."""
+        # Validate action range
+        if action < 0 or action >= 30:
+            return f"Invalid action: {action}"
+
         color_names = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White']
         color_emojis = ['🔴', '🟢', '🟣', '🟠', '🟡', '⚪']
 
@@ -204,12 +217,22 @@ class WebGameManager:
 
         # Validate move
         valid_moves = self.engine.get_valid_moves(self.state)
+
+        # Debug: Log move validation
+        hand_colors = [card.color for card in self.state.hands[self.state.current_player]]
+        print(f"\n🎯 Move Validation:")
+        print(f"   Player {self.state.current_player} attempting action {action}: {self.action_to_string(action)}")
+        print(f"   Hand colors: {hand_colors}")
+        print(f"   Is valid: {bool(valid_moves[action])}")
+
         if not valid_moves[action]:
-            return {'error': 'Invalid move'}
+            error_msg = f'Invalid move: {self.action_to_string(action)} not allowed'
+            print(f"   ❌ {error_msg}")
+            return {'error': error_msg}
 
         # Store state for history
         state_tensor = self.state.to_tensor()
-        policy = torch.zeros(self.engine.get_action_size())
+        policy = torch.zeros(30)  # Mandala has 30 possible actions
         policy[action] = 1.0
 
         self.game_history.append({
@@ -219,6 +242,7 @@ class WebGameManager:
         })
 
         # Execute move
+        print(f"   ✅ Move accepted, executing...")
         self.state = self.engine.get_next_state(self.state, action)
         self.move_count += 1
 
@@ -230,12 +254,17 @@ class WebGameManager:
             return {'error': 'No active game'}
 
         # Run MCTS
-        policy = self.mcts.search(self.state, temperature=0.0, add_noise=False)
+        policy, _ = self.mcts.get_action_prob(self.state, temperature=0.0, add_noise=False)
 
         # Get best action
         valid_moves = self.engine.get_valid_moves(self.state)
         valid_policy = policy * valid_moves
         action = valid_policy.argmax()
+
+        # Debug: Log what the AI chose
+        print(f"\n🤖 AI Move Debug:")
+        print(f"   Chosen action: {action} - {self.action_to_string(action)}")
+        print(f"   Valid moves: {[i for i, v in enumerate(valid_moves) if v]}")
 
         # Get top moves for display
         top_actions = valid_policy.argsort()[-5:][::-1]
@@ -271,7 +300,8 @@ class WebGameManager:
 
         is_terminal = self.engine.is_terminal(self.state)
         if is_terminal:
-            p0_score, p1_score = self.engine.get_scores(self.state)
+            p0_score = self.engine._calculate_score(self.state, 0)
+            p1_score = self.engine._calculate_score(self.state, 1)
             outcome = 1 if p0_score > p1_score else (-1 if p1_score > p0_score else 0)
         else:
             outcome = 0
@@ -354,7 +384,8 @@ def list_checkpoints():
                 'iteration': checkpoint.get('iteration', '?'),
                 'total_games': checkpoint.get('total_games', '?')
             })
-        except:
+        except Exception as e:
+            print(f"Warning: Failed to load checkpoint {cp.name}: {e}")
             checkpoints.append({
                 'name': cp.name,
                 'path': str(cp),
@@ -450,8 +481,9 @@ def main():
     print(f"📊 Model: Iteration {game_manager.iteration}, {game_manager.total_games} games")
     print(f"\nOpen your browser and navigate to: http://localhost:{args.port}")
     print(f"Press Ctrl+C to stop the server\n")
+    print(f"🔄 Auto-reload enabled - server will restart when files change\n")
 
-    app.run(host=args.host, port=args.port, debug=False)
+    app.run(host=args.host, port=args.port, debug=True)
 
 
 if __name__ == '__main__':

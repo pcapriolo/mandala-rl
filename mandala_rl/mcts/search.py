@@ -128,6 +128,43 @@ class MCTS:
         # Backup
         node.backup(value)
 
+    def simulate_to_leaf(self, root: MCTSNode, root_state: GameState):
+        """
+        Phase 1 of split simulation: traverse tree to leaf node.
+
+        Returns leaf info for external batch NN evaluation.
+
+        Returns:
+            (node, state, is_terminal) - leaf node, leaf state, whether terminal
+        """
+        node = root
+        state = root_state.copy()
+
+        # Selection: traverse to leaf
+        while not node.is_leaf() and not self.game.is_terminal(state):
+            action, node = node.select_child(self.c_puct)
+            state = self.game.get_next_state(state, action)
+
+        is_terminal = self.game.is_terminal(state)
+        return node, state, is_terminal
+
+    def expand_and_backup(self, node: MCTSNode, state: GameState,
+                          policy: np.ndarray, value: float, is_terminal: bool):
+        """
+        Phase 2 of split simulation: expand leaf and backup value.
+
+        Args:
+            node: Leaf node from simulate_to_leaf
+            state: Leaf state from simulate_to_leaf
+            policy: NN policy output (or None if terminal)
+            value: NN value output (or game reward if terminal)
+            is_terminal: Whether the leaf is a terminal state
+        """
+        if not is_terminal:
+            valid_moves = self.game.get_valid_moves(state)
+            node.expand(policy, valid_moves, state_hash=hash(state))
+        node.backup(value)
+
     def get_action_prob(
         self,
         state: GameState,

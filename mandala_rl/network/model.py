@@ -140,6 +140,28 @@ class MandalaNet(nn.Module):
 
         return policy, float(value)
 
+    def predict_batch(self, states: list) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Predict policy and value for a batch of states.
+
+        Args:
+            states: List of GameState objects
+
+        Returns:
+            (policies, values) tuple
+                - policies: numpy array of shape (batch, num_actions)
+                - values: numpy array of shape (batch,)
+        """
+        self.eval()
+        with torch.no_grad():
+            tensors = np.stack([s.to_tensor() for s in states]).astype(np.float32)
+            device = next(self.parameters()).device
+            state_batch = torch.from_numpy(tensors).to(device)
+            policy_logits, values = self.forward(state_batch)
+            policies = F.softmax(policy_logits, dim=1).cpu().numpy()
+            values = values.cpu().numpy()[:, 0]
+        return policies, values.astype(np.float64)
+
     def get_loss(
         self,
         states: torch.Tensor,
@@ -165,7 +187,7 @@ class MandalaNet(nn.Module):
         # Value loss (MSE)
         value_loss = F.mse_loss(values.squeeze(), target_values)
 
-        # Total loss
-        total_loss = policy_loss + value_loss
+        # Total loss (weight value loss higher — policy loss ~1.9, value loss ~0.2)
+        total_loss = policy_loss + 5.0 * value_loss
 
         return total_loss, policy_loss, value_loss

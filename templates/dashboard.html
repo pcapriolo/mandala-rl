@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container { text-align: center; }
+        h1 { font-size: 2.5em; margin-bottom: 10px; }
+        p { color: #888; margin-bottom: 40px; }
+        .games { display: flex; gap: 30px; justify-content: center; flex-wrap: wrap; }
+        .game-card {
+            background: #16213e;
+            border: 2px solid #333;
+            border-radius: 16px;
+            padding: 40px 50px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: #eee;
+            min-width: 250px;
+        }
+        .game-card:hover { border-color: #e94560; transform: translateY(-4px); }
+        .game-card h2 { font-size: 1.8em; margin-bottom: 10px; }
+        .game-card .count { color: #888; font-size: 0.95em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Training Dashboard</h1>
+        <p>Select a game to browse training iterations and replay games</p>
+        <div class="games">
+            {% for game in games %}
+            <a class="game-card" href="/{{ game.key }}/">
+                <h2>{{ game.name }}</h2>
+                <div class="count">{{ game.replay_count }} replays</div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

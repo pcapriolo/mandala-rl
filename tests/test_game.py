@@ -10,8 +10,8 @@ def test_initial_state():
     state = game.get_initial_state()
 
     # Check that cards are dealt
-    assert len(state.player_hands[0]) == 6
-    assert len(state.player_hands[1]) == 6
+    assert len(state.hands[0]) == 6
+    assert len(state.hands[1]) == 6
     assert state.current_player == 0
     assert not state.game_over
 
@@ -34,7 +34,7 @@ def test_state_copy():
 
     assert state is not state_copy
     assert state.current_player == state_copy.current_player
-    assert len(state.player_hands[0]) == len(state_copy.player_hands[0])
+    assert len(state.hands[0]) == len(state_copy.hands[0])
 
 
 def test_canonical_form():

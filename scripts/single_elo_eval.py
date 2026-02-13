@@ -90,11 +90,15 @@ def run_evaluation(model1_iter, model2_iter, num_games=20, mcts_sims=400, device
 
     start_time = time.time()
 
-    wins, losses, draws = arena.play_matches(
+    results = arena.play_match(
         model1=model1,
         model2=model2,
         num_games=num_games
     )
+
+    wins = results['model1_wins']
+    losses = results['model2_wins']
+    draws = results['draws']
 
     elapsed = time.time() - start_time
 
@@ -115,18 +119,21 @@ def run_evaluation(model1_iter, model2_iter, num_games=20, mcts_sims=400, device
     print("🏆 ELO UPDATE")
     print("=" * 70)
 
-    old_rating1 = elo.get_rating(f'iter_{model1_iter}')
-    old_rating2 = elo.get_rating(f'iter_{model2_iter}')
+    id1 = f'iter_{model1_iter}'
+    id2 = f'iter_{model2_iter}'
+    old_rating1 = elo.get_rating(id1)
+    old_rating2 = elo.get_rating(id2)
 
-    elo.update_ratings(
-        player1_id=f'iter_{model1_iter}',
-        player2_id=f'iter_{model2_iter}',
-        score1=wins + 0.5 * draws,
-        score2=losses + 0.5 * draws
-    )
+    # Update Elo per-game (not aggregate) for correct rating changes
+    for _ in range(wins):
+        elo.record_match(id1, id2, id1)
+    for _ in range(losses):
+        elo.record_match(id1, id2, id2)
+    for _ in range(draws):
+        elo.record_match(id1, id2, None)
 
-    new_rating1 = elo.get_rating(f'iter_{model1_iter}')
-    new_rating2 = elo.get_rating(f'iter_{model2_iter}')
+    new_rating1 = elo.get_rating(id1)
+    new_rating2 = elo.get_rating(id2)
 
     change1 = new_rating1 - old_rating1
     change2 = new_rating2 - old_rating2

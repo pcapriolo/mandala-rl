@@ -2,7 +2,7 @@
 
 # Network Architecture
 network:
-  input_channels: 50
+  input_channels: 59
   num_actions: 30  # 12 BUILD_MOUNTAIN + 12 GROW_FIELD + 6 DISCARD
   num_res_blocks: 8
   channels: 96
@@ -17,6 +17,7 @@ mcts:
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
+  parallel_games: 8  # Simultaneous games for batched NN inference (1 = sequential)
   temperature: 1.0
   temperature_threshold: 30  # Switch to deterministic play after this move
 
@@ -31,6 +32,7 @@ training:
   lr_gamma: 0.1
   replay_buffer_size: 500000
   checkpoint_frequency: 1  # Save checkpoint every N iterations
+  checkpoint_every_n_games: 10  # Save checkpoint every N games within iteration (for resume)
 
 # Evaluation Parameters
 evaluation:

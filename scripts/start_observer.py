@@ -23,6 +23,8 @@ def main():
                       help='Port to bind to (default: 5000)')
     parser.add_argument('--data-dir', type=str, default='data',
                       help='Data directory (default: data)')
+    parser.add_argument('--game-name', type=str, default='Mandala',
+                      help='Game name for dashboard title (default: Mandala)')
     parser.add_argument('--debug', action='store_true',
                       help='Enable debug mode')
     args = parser.parse_args()
@@ -35,7 +37,7 @@ def main():
     (data_dir / 'logs').mkdir(parents=True, exist_ok=True)
 
     # Start observer
-    observer = TrainingObserver(data_dir=data_dir)
+    observer = TrainingObserver(data_dir=data_dir, game_name=args.game_name)
     observer.run(host=args.host, port=args.port, debug=args.debug)
 
 

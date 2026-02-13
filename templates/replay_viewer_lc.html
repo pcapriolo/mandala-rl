@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lost Cities - Replay Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+        .header { background: #16213e; padding: 15px 20px; }
+        .header h1 { font-size: 1.5em; color: #e94560; }
+        .header p { font-size: 0.85em; color: #888; margin-top: 4px; }
+
+        .container { display: flex; height: calc(100vh - 70px); }
+
+        /* Sidebar */
+        .sidebar { width: 320px; background: #16213e; overflow-y: auto; border-right: 1px solid #333; }
+        .sidebar h2 { font-size: 1em; padding: 12px 15px; background: #0f3460; color: #e94560; }
+
+        .iter-item { padding: 10px 15px; border-bottom: 1px solid #222; cursor: pointer; }
+        .iter-item:hover { background: #1a3a6e; }
+        .iter-item.active { background: #0f3460; border-left: 3px solid #e94560; }
+        .iter-item .name { font-weight: bold; }
+        .iter-item .meta { font-size: 0.8em; color: #888; }
+        .iter-item .elo { color: #f1c40f; font-weight: bold; }
+
+        .game-item { padding: 8px 15px; border-bottom: 1px solid #1a1a2e; cursor: pointer; font-size: 0.85em; }
+        .game-item:hover { background: #1a3a6e; }
+        .game-item.active { background: #0f3460; }
+        .game-item .score { color: #27ae60; }
+        .game-item .winner { color: #f1c40f; }
+
+        /* Main content */
+        .main { flex: 1; padding: 20px; overflow-y: auto; }
+
+        .replay-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .btn-nav { background: #533483; color: white; font-size: 1.1em; }
+        .btn-nav:hover { background: #3e2563; }
+        .btn-nav:disabled { background: #333; cursor: default; }
+
+        .move-info { flex: 1; text-align: center; }
+        .move-info .move-num { font-size: 1.2em; font-weight: bold; color: #e94560; }
+        .move-info .move-desc { font-size: 0.85em; color: #ccc; }
+
+        /* Board display */
+        .board { display: flex; flex-direction: column; gap: 12px; }
+        .player-section { padding: 12px; background: #16213e; border-radius: 8px; }
+        .player-section h3 { font-size: 0.95em; margin-bottom: 8px; color: #e94560; }
+        .player-section.active-player { border: 2px solid #e94560; }
+
+        .exp-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .exp-col { min-width: 100px; }
+        .exp-col .color-name { font-size: 0.75em; font-weight: bold; margin-bottom: 3px; }
+        .exp-cards { display: flex; gap: 2px; flex-wrap: wrap; }
+
+        .mini-card { width: 28px; height: 22px; border-radius: 3px; display: inline-flex; align-items: center;
+            justify-content: center; font-size: 0.7em; font-weight: bold; border: 1px solid rgba(255,255,255,0.15); }
+        .mini-card.color-0 { background: #c0392b; }
+        .mini-card.color-1 { background: #27ae60; }
+        .mini-card.color-2 { background: #2980b9; }
+        .mini-card.color-3 { background: #bdc3c7; color: #333; }
+        .mini-card.color-4 { background: #f1c40f; color: #333; }
+
+        .discard-section { padding: 10px; background: #0f3460; border-radius: 8px; }
+        .discard-section h3 { font-size: 0.9em; margin-bottom: 6px; }
+
+        .game-result { padding: 15px; background: #16213e; border-radius: 8px; text-align: center; }
+        .game-result .final-score { font-size: 1.5em; font-weight: bold; color: #e94560; }
+        .game-result .winner-text { font-size: 1.1em; color: #f1c40f; margin-top: 5px; }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: #666; }
+        .empty-state h2 { color: #888; margin-bottom: 10px; }
+
+        .hand-display { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
+        .score-display { font-size: 0.85em; color: #f1c40f; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="/" style="color: #888; text-decoration: none; font-size: 0.85em;">&#8592; All Games</a>
+        <h1>Lost Cities - Replay Viewer</h1>
+        <p>Browse and replay training games. Select an iteration, then a game.</p>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <h2>Iterations</h2>
+            <div id="iterationList"></div>
+            <h2 id="gamesHeader" style="display:none">Games</h2>
+            <div id="gameList"></div>
+        </div>
+
+        <div class="main" id="mainContent">
+            <div class="empty-state">
+                <h2>No replay selected</h2>
+                <p>Select an iteration and game from the sidebar to view a replay.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const COLORS = ['Red', 'Green', 'Blue', 'White', 'Yellow'];
+        const API_BASE = '{{ api_base|default("", true) }}';
+        let currentReplay = null;
+        let currentMoveIdx = -1;
+
+        async function loadIterations() {
+            const resp = await fetch(`${API_BASE}/api/iterations`);
+            const data = await resp.json();
+            const list = document.getElementById('iterationList');
+            list.innerHTML = '';
+
+            if (data.iterations.length === 0) {
+                list.innerHTML = '<div class="iter-item"><em>No training data yet</em></div>';
+                return;
+            }
+
+            data.iterations.forEach(iter => {
+                const el = document.createElement('div');
+                el.className = 'iter-item';
+                let html = `<div class="name">Iteration ${iter.iteration}</div>`;
+                html += `<div class="meta">${iter.game_count} games, ${iter.total_moves} moves</div>`;
+                if (iter.elo !== undefined) {
+                    html += `<div class="elo">Elo: ${iter.elo}</div>`;
+                }
+                el.innerHTML = html;
+                el.onclick = () => loadGames(iter.iteration, el);
+                list.appendChild(el);
+            });
+        }
+
+        async function loadGames(iteration, el) {
+            document.querySelectorAll('.iter-item').forEach(e => e.classList.remove('active'));
+            el.classList.add('active');
+
+            document.getElementById('gamesHeader').style.display = 'block';
+            const resp = await fetch(`${API_BASE}/api/games/${iteration}`);
+            const data = await resp.json();
+            const list = document.getElementById('gameList');
+            list.innerHTML = '';
+
+            data.games.forEach(game => {
+                const gel = document.createElement('div');
+                gel.className = 'game-item';
+                const w = game.winner === 0 ? 'P0 wins' : (game.winner === 1 ? 'P1 wins' : 'Draw');
+                gel.innerHTML = `
+                    <span class="score">${game.score0} - ${game.score1}</span>
+                    <span class="winner">${w}</span>
+                    <span style="color:#888">(${game.move_count} moves)</span>
+                `;
+                gel.onclick = () => loadReplay(game.game_id, gel);
+                list.appendChild(gel);
+            });
+        }
+
+        async function loadReplay(gameId, el) {
+            document.querySelectorAll('.game-item').forEach(e => e.classList.remove('active'));
+            el.classList.add('active');
+
+            const resp = await fetch(`${API_BASE}/api/replay/${gameId}`);
+            currentReplay = await resp.json();
+            currentMoveIdx = -1;
+            renderReplay();
+        }
+
+        function renderReplay() {
+            if (!currentReplay) return;
+            const main = document.getElementById('mainContent');
+
+            let html = '<div class="replay-controls">';
+            html += `<button class="btn btn-nav" onclick="prevMove()" id="prevBtn">&lt;</button>`;
+            html += '<div class="move-info">';
+            if (currentMoveIdx < 0) {
+                html += '<div class="move-num">Start</div>';
+            } else {
+                const move = currentReplay.moves[currentMoveIdx];
+                html += `<div class="move-num">Move ${move.move_num} / ${currentReplay.moves.length}</div>`;
+                html += `<div class="move-desc">Player ${move.player}: ${move.action_desc}</div>`;
+            }
+            html += '</div>';
+            html += `<button class="btn btn-nav" onclick="nextMove()" id="nextBtn">&gt;</button>`;
+            html += '</div>';
+
+            // Get state to display
+            const state = currentMoveIdx >= 0 ? currentReplay.moves[currentMoveIdx].state : null;
+
+            if (state) {
+                html += '<div class="board">';
+                for (let p = 0; p < 2; p++) {
+                    const isActive = state.current_player === p;
+                    html += `<div class="player-section${isActive ? ' active-player' : ''}">`;
+                    html += `<h3>Player ${p}`;
+                    if (state.scores) html += `<span class="score-display">Score: ${state.scores[p]}</span>`;
+                    html += '</h3>';
+
+                    // Expeditions
+                    html += '<div class="exp-row">';
+                    if (state.expeditions && state.expeditions[p]) {
+                        for (let c = 0; c < 5; c++) {
+                            const exp = state.expeditions[p][c] || [];
+                            html += `<div class="exp-col"><div class="color-name">${COLORS[c]}</div><div class="exp-cards">`;
+                            exp.forEach(card => {
+                                html += `<div class="mini-card color-${card.color}">${card.value === 0 ? 'W' : card.value}</div>`;
+                            });
+                            if (exp.length === 0) html += '<span style="color:#555;font-size:0.7em">-</span>';
+                            html += '</div></div>';
+                        }
+                    }
+                    html += '</div>';
+
+                    // Hand
+                    if (state.hands && state.hands[p]) {
+                        html += '<div style="margin-top:6px;font-size:0.8em;color:#888">Hand:</div>';
+                        html += '<div class="hand-display">';
+                        state.hands[p].forEach(card => {
+                            html += `<div class="mini-card color-${card.color}">${card.value === 0 ? 'W' : card.value}</div>`;
+                        });
+                        html += '</div>';
+                    }
+
+                    html += '</div>';
+                }
+
+                // Discard piles
+                if (state.discard_piles) {
+                    html += '<div class="discard-section"><h3>Discard Piles</h3><div class="exp-row">';
+                    for (let c = 0; c < 5; c++) {
+                        const pile = state.discard_piles[c] || [];
+                        html += `<div class="exp-col"><div class="color-name">${COLORS[c]}</div><div class="exp-cards">`;
+                        pile.forEach(card => {
+                            html += `<div class="mini-card color-${card.color}">${card.value === 0 ? 'W' : card.value}</div>`;
+                        });
+                        if (pile.length === 0) html += '<span style="color:#555;font-size:0.7em">-</span>';
+                        html += '</div></div>';
+                    }
+                    html += '</div></div>';
+                }
+
+                html += `<div style="text-align:center;color:#888;font-size:0.85em">Deck: ${state.deck_size} cards</div>`;
+                html += '</div>';
+            }
+
+            // Final result
+            if (currentMoveIdx === currentReplay.moves.length - 1 && currentReplay.final_score) {
+                html += '<div class="game-result">';
+                html += `<div class="final-score">${currentReplay.final_score[0]} - ${currentReplay.final_score[1]}</div>`;
+                const w = currentReplay.winner;
+                html += `<div class="winner-text">${w === 0 ? 'Player 0 wins' : (w === 1 ? 'Player 1 wins' : 'Draw')}</div>`;
+                html += '</div>';
+            }
+
+            main.innerHTML = html;
+
+            // Disable buttons at boundaries
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            if (prevBtn) prevBtn.disabled = currentMoveIdx < 0;
+            if (nextBtn) nextBtn.disabled = currentMoveIdx >= currentReplay.moves.length - 1;
+        }
+
+        function prevMove() {
+            if (currentMoveIdx > -1) { currentMoveIdx--; renderReplay(); }
+        }
+
+        function nextMove() {
+            if (currentReplay && currentMoveIdx < currentReplay.moves.length - 1) { currentMoveIdx++; renderReplay(); }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'ArrowLeft') prevMove();
+            if (e.key === 'ArrowRight') nextMove();
+        });
+
+        loadIterations();
+        setInterval(loadIterations, 30000);
+    </script>
+</body>
+</html>

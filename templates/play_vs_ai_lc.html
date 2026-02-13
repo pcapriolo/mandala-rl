@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lost Cities - Play vs AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+        .header { background: #16213e; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.4em; color: #e94560; }
+        .model-info { font-size: 0.85em; color: #888; }
+
+        .controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; align-items: center; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+        .btn-primary { background: #e94560; color: white; }
+        .btn-primary:hover { background: #c73652; }
+        .btn-secondary { background: #533483; color: white; }
+        .btn-secondary:hover { background: #3e2563; }
+
+        .game-area { display: flex; flex-direction: column; padding: 15px; gap: 10px; max-width: 1100px; margin: 0 auto; }
+
+        /* Player areas */
+        .player-area { display: flex; gap: 15px; align-items: flex-start; }
+        .player-label { writing-mode: vertical-lr; font-weight: bold; font-size: 0.9em; padding: 5px; min-width: 25px;
+            background: #16213e; border-radius: 4px; text-align: center; }
+        .player-label.active { background: #e94560; }
+
+        /* Expeditions */
+        .expeditions { display: flex; gap: 8px; flex: 1; }
+        .expedition-col { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
+        .expedition-col .color-label { font-size: 0.75em; font-weight: bold; padding: 2px 8px; border-radius: 3px; margin-bottom: 4px; }
+
+        .card-stack { display: flex; flex-direction: column; gap: -20px; min-height: 30px; }
+        .card-stack .card { margin-top: -18px; }
+        .card-stack .card:first-child { margin-top: 0; }
+
+        /* Cards */
+        .card { width: 55px; height: 38px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 0.85em; border: 2px solid rgba(255,255,255,0.2); cursor: default; }
+        .card.wager { font-style: italic; }
+        .card.clickable { cursor: pointer; border-color: #e94560; box-shadow: 0 0 8px rgba(233,69,96,0.5); }
+        .card.clickable:hover { transform: scale(1.1); }
+        .card.selected { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.7); transform: scale(1.1); }
+
+        .color-0 { background: #c0392b; } /* Red */
+        .color-1 { background: #27ae60; } /* Green */
+        .color-2 { background: #2980b9; } /* Blue */
+        .color-3 { background: #bdc3c7; color: #333; } /* White */
+        .color-4 { background: #f1c40f; color: #333; } /* Yellow */
+
+        /* Discard area */
+        .discard-area { display: flex; gap: 8px; padding: 8px; background: #16213e; border-radius: 8px; justify-content: center; align-items: center; }
+        .discard-pile { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
+        .discard-pile .label { font-size: 0.7em; color: #888; margin-top: 2px; }
+
+        /* Hand */
+        .hand-area { display: flex; gap: 6px; padding: 10px; background: #16213e; border-radius: 8px; justify-content: center; flex-wrap: wrap; }
+        .hand-card { width: 65px; height: 45px; font-size: 0.95em; }
+
+        /* Scores */
+        .score-bar { display: flex; justify-content: space-around; padding: 8px; background: #16213e; border-radius: 8px; }
+        .score-item { text-align: center; }
+        .score-item .value { font-size: 1.3em; font-weight: bold; color: #e94560; }
+        .score-item .label { font-size: 0.75em; color: #888; }
+
+        /* Action panel */
+        .action-panel { padding: 10px; background: #0f3460; border-radius: 8px; }
+        .action-panel h3 { font-size: 0.9em; margin-bottom: 8px; color: #e94560; }
+        .action-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+        .action-btn { text-align: left; padding: 6px 10px; background: #16213e; color: #eee; border: 1px solid #333;
+            border-radius: 4px; cursor: pointer; font-size: 0.8em; }
+        .action-btn:hover { background: #1a3a6e; border-color: #e94560; }
+
+        /* Status */
+        .status-bar { padding: 10px; text-align: center; font-size: 0.95em; background: #0f3460; border-radius: 8px; }
+        .status-bar.thinking { color: #f1c40f; }
+        .status-bar.your-turn { color: #27ae60; }
+        .status-bar.game-over { color: #e94560; font-weight: bold; }
+
+        /* Deck info */
+        .deck-info { text-align: center; font-size: 0.8em; color: #888; padding: 4px; }
+
+        /* AI decision */
+        .ai-decision { padding: 8px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; margin-top: 5px; }
+        .ai-decision .move { color: #f1c40f; }
+
+        /* Turn phase indicator */
+        .phase-indicator { display: flex; gap: 10px; justify-content: center; padding: 5px; }
+        .phase { padding: 4px 12px; border-radius: 4px; font-size: 0.8em; background: #16213e; }
+        .phase.active { background: #e94560; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Lost Cities</h1>
+        <div class="model-info" id="modelInfo">Loading...</div>
+    </div>
+
+    <div class="controls">
+        <button class="btn btn-primary" onclick="newGame(0)">New Game (You First)</button>
+        <button class="btn btn-secondary" onclick="newGame(1)">New Game (AI First)</button>
+        <span class="deck-info" id="deckInfo"></span>
+    </div>
+
+    <div class="game-area">
+        <!-- Opponent expeditions -->
+        <div class="player-area">
+            <div class="player-label" id="oppLabel">AI</div>
+            <div class="expeditions" id="oppExpeditions"></div>
+        </div>
+
+        <!-- Discard piles + Deck -->
+        <div class="discard-area" id="discardArea"></div>
+
+        <!-- Your expeditions -->
+        <div class="player-area">
+            <div class="player-label" id="yourLabel">You</div>
+            <div class="expeditions" id="yourExpeditions"></div>
+        </div>
+
+        <!-- Score bar -->
+        <div class="score-bar" id="scoreBar"></div>
+
+        <!-- Your hand -->
+        <div class="hand-area" id="handArea"></div>
+
+        <!-- Status -->
+        <div class="status-bar" id="statusBar">Click "New Game" to start</div>
+
+        <!-- AI decision info -->
+        <div class="ai-decision" id="aiDecision" style="display:none"></div>
+
+        <!-- Action list (for complex moves) -->
+        <div class="action-panel" id="actionPanel" style="display:none">
+            <h3 id="actionTitle">Choose action:</h3>
+            <div class="action-list" id="actionList"></div>
+        </div>
+    </div>
+
+    <script>
+        let gameState = null;
+        let selectedCard = null;
+        let selectedDest = null;
+        const COLORS = ['Red', 'Green', 'Blue', 'White', 'Yellow'];
+
+        async function newGame(humanPlayer) {
+            const resp = await fetch('/api/new_game', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({human_player: humanPlayer})
+            });
+            gameState = await resp.json();
+            selectedCard = null;
+            selectedDest = null;
+            renderGame();
+            checkAiTurn();
+        }
+
+        function renderGame() {
+            if (!gameState) return;
+            const s = gameState.state;
+            const hp = gameState.human_player;
+            const opp = 1 - hp;
+
+            // Model info
+            const mi = gameState.model_info;
+            document.getElementById('modelInfo').textContent =
+                `Iter ${mi.iteration} | ${mi.total_games} games | ${mi.checkpoint}`;
+
+            // Deck info
+            document.getElementById('deckInfo').textContent =
+                `Deck: ${s.deck_size} | Turn: ${s.turns_played}`;
+
+            // Scores
+            document.getElementById('scoreBar').innerHTML = `
+                <div class="score-item"><div class="value">${s.scores['player' + hp]}</div><div class="label">You</div></div>
+                <div class="score-item"><div class="value">${s.scores['player' + opp]}</div><div class="label">AI</div></div>
+            `;
+
+            // Player labels
+            const yourActive = gameState.current_player === hp && !gameState.is_terminal;
+            const oppActive = gameState.current_player === opp && !gameState.is_terminal;
+            document.getElementById('yourLabel').className = 'player-label' + (yourActive ? ' active' : '');
+            document.getElementById('oppLabel').className = 'player-label' + (oppActive ? ' active' : '');
+
+            // Render expeditions
+            renderExpeditions('yourExpeditions', s.expeditions['player' + hp]);
+            renderExpeditions('oppExpeditions', s.expeditions['player' + opp]);
+
+            // Render discard piles
+            renderDiscardPiles(s.discard_piles);
+
+            // Render hand
+            renderHand(s.hands['player' + hp], hp);
+
+            // Status
+            updateStatus();
+        }
+
+        function renderExpeditions(containerId, expeditions) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            for (let c = 0; c < 5; c++) {
+                const col = document.createElement('div');
+                col.className = 'expedition-col';
+
+                const label = document.createElement('div');
+                label.className = 'color-label color-' + c;
+                label.textContent = COLORS[c];
+                col.appendChild(label);
+
+                const stack = document.createElement('div');
+                stack.className = 'card-stack';
+
+                const exp = expeditions[COLORS[c].toLowerCase()];
+                if (exp && exp.cards) {
+                    exp.cards.forEach(card => {
+                        const el = document.createElement('div');
+                        el.className = `card color-${card.color}${card.value === 0 ? ' wager' : ''}`;
+                        el.textContent = card.value === 0 ? 'W' : card.value;
+                        stack.appendChild(el);
+                    });
+                }
+                col.appendChild(stack);
+                container.appendChild(col);
+            }
+        }
+
+        function renderDiscardPiles(piles) {
+            const container = document.getElementById('discardArea');
+            container.innerHTML = '<span style="font-size:0.8em;color:#888;">Discard:</span>';
+            for (let c = 0; c < 5; c++) {
+                const pile = document.createElement('div');
+                pile.className = 'discard-pile';
+
+                const colorName = COLORS[c].toLowerCase();
+                const cards = piles[colorName] || [];
+                if (cards.length > 0) {
+                    const top = cards[cards.length - 1];
+                    const el = document.createElement('div');
+                    el.className = `card color-${top.color}${top.value === 0 ? ' wager' : ''}`;
+                    el.textContent = top.value === 0 ? 'W' : top.value;
+                    pile.appendChild(el);
+                } else {
+                    const el = document.createElement('div');
+                    el.className = 'card';
+                    el.style.background = '#333';
+                    el.style.border = '2px dashed #555';
+                    el.textContent = '-';
+                    pile.appendChild(el);
+                }
+
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = `${COLORS[c]} (${cards.length})`;
+                pile.appendChild(label);
+
+                container.appendChild(pile);
+            }
+        }
+
+        function renderHand(cards, player) {
+            const container = document.getElementById('handArea');
+            container.innerHTML = '';
+
+            const isMyTurn = gameState.current_player === player && !gameState.is_terminal;
+
+            cards.forEach((card, idx) => {
+                const el = document.createElement('div');
+                el.className = `card hand-card color-${card.color}${card.value === 0 ? ' wager' : ''}`;
+                if (isMyTurn) {
+                    el.classList.add('clickable');
+                    if (selectedCard === idx) el.classList.add('selected');
+                    el.onclick = () => selectCard(idx);
+                }
+                el.textContent = card.value === 0 ? 'W' : card.value;
+                container.appendChild(el);
+            });
+        }
+
+        function selectCard(idx) {
+            if (selectedCard === idx) {
+                selectedCard = null;
+                document.getElementById('actionPanel').style.display = 'none';
+            } else {
+                selectedCard = idx;
+                showActionsForCard(idx);
+            }
+            renderGame();
+        }
+
+        function showActionsForCard(handPos) {
+            const panel = document.getElementById('actionPanel');
+            const list = document.getElementById('actionList');
+            const title = document.getElementById('actionTitle');
+            list.innerHTML = '';
+
+            const validMoves = gameState.valid_moves.filter(m => {
+                const hp = m.action / 12 | 0;
+                return hp === handPos;
+            });
+
+            if (validMoves.length === 0) {
+                title.textContent = 'No valid moves for this card';
+                panel.style.display = 'block';
+                return;
+            }
+
+            title.textContent = 'Choose action:';
+            validMoves.forEach(m => {
+                const btn = document.createElement('button');
+                btn.className = 'action-btn';
+                btn.textContent = m.description;
+                btn.onclick = () => makeMove(m.action);
+                list.appendChild(btn);
+            });
+
+            panel.style.display = 'block';
+        }
+
+        async function makeMove(action) {
+            document.getElementById('statusBar').textContent = 'Making move...';
+            document.getElementById('statusBar').className = 'status-bar thinking';
+            document.getElementById('actionPanel').style.display = 'none';
+            selectedCard = null;
+
+            const resp = await fetch('/api/move', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: action})
+            });
+            gameState = await resp.json();
+            renderGame();
+            checkAiTurn();
+        }
+
+        async function checkAiTurn() {
+            if (!gameState || gameState.is_terminal) return;
+            if (gameState.current_player !== gameState.human_player) {
+                document.getElementById('statusBar').textContent = 'AI is thinking...';
+                document.getElementById('statusBar').className = 'status-bar thinking';
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const resp = await fetch('/api/ai_move', {method: 'POST'});
+                gameState = await resp.json();
+
+                if (gameState.ai_decision) {
+                    const dec = gameState.ai_decision;
+                    const decEl = document.getElementById('aiDecision');
+                    decEl.style.display = 'block';
+                    let html = `<span class="move">AI: ${dec.description}</span>`;
+                    if (dec.top_moves && dec.top_moves.length > 1) {
+                        html += '<br><small>Top moves: ' + dec.top_moves.map(m =>
+                            `${m.description} (${m.probability.toFixed(1)}%)`
+                        ).join(', ') + '</small>';
+                    }
+                    decEl.innerHTML = html;
+                }
+
+                renderGame();
+                checkAiTurn();
+            }
+        }
+
+        function updateStatus() {
+            const bar = document.getElementById('statusBar');
+            if (gameState.is_terminal) {
+                const w = gameState.winner;
+                const hp = gameState.human_player;
+                const s = gameState.scores;
+                if (w === hp) {
+                    bar.textContent = `You win! ${s.player0} - ${s.player1}`;
+                } else if (w === -1) {
+                    bar.textContent = `Draw! ${s.player0} - ${s.player1}`;
+                } else {
+                    bar.textContent = `AI wins! ${s.player0} - ${s.player1}`;
+                }
+                bar.className = 'status-bar game-over';
+            } else if (gameState.current_player === gameState.human_player) {
+                bar.textContent = 'Your turn - click a card then choose an action';
+                bar.className = 'status-bar your-turn';
+            } else {
+                bar.textContent = 'AI is thinking...';
+                bar.className = 'status-bar thinking';
+            }
+        }
+    </script>
+</body>
+</html>

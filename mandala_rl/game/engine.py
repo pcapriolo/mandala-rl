@@ -99,7 +99,7 @@ class MandalaGame:
         for color in hand_colors:
             for mandala_idx in range(2):
                 if self._can_play_to_mountain(state, color, mandala_idx):
-                    action_id = color * 2 + mandala_idx
+                    action_id = mandala_idx * 6 + color  # Correct encoding
                     valid[action_id] = 1.0
 
         # GROW_FIELD actions (play 1+ cards of same color to field)
@@ -109,7 +109,7 @@ class MandalaGame:
             if len(hand_colors[color]) < len(hand):
                 for mandala_idx in range(2):
                     if self._can_play_to_field(state, color, mandala_idx, state.current_player):
-                        action_id = 12 + color * 2 + mandala_idx
+                        action_id = 12 + mandala_idx * 6 + color  # Correct encoding
                         valid[action_id] = 1.0
 
         # DISCARD actions (always valid for any color in hand)
@@ -141,8 +141,8 @@ class MandalaGame:
         Apply action and return new state.
 
         Action encoding:
-        - 0-11: BUILD_MOUNTAIN (color * 2 + mandala)
-        - 12-23: GROW_FIELD (12 + color * 2 + mandala)
+        - 0-11: BUILD_MOUNTAIN (mandala * 6 + color)
+        - 12-23: GROW_FIELD (12 + mandala * 6 + color)
         - 24-29: DISCARD (24 + color)
         """
         new_state = state.copy()
@@ -153,8 +153,8 @@ class MandalaGame:
 
         if action_id < 12:
             # BUILD_MOUNTAIN
-            color = action_id // 2
-            mandala_idx = action_id % 2
+            mandala_idx = action_id // 6
+            color = action_id % 6
 
             # Find and remove one card of this color from hand
             card_to_play = None
@@ -191,8 +191,8 @@ class MandalaGame:
         elif action_id < 24:
             # GROW_FIELD
             action_id -= 12
-            color = action_id // 2
-            mandala_idx = action_id % 2
+            mandala_idx = action_id // 6
+            color = action_id % 6
 
             # Remove all cards of this color from hand (but keep at least 1 card total)
             cards_to_play = []
@@ -247,6 +247,7 @@ class MandalaGame:
             # Check if game should end
             if self._should_game_end(new_state):
                 new_state.game_over = True
+                new_state.current_player = 1 - player
                 return new_state
 
             # Refill mountain with 2 cards
@@ -259,6 +260,12 @@ class MandalaGame:
 
         # Switch player
         new_state.current_player = 1 - player
+
+        # End game if next player has no cards and deck is exhausted
+        if not new_state.hands[new_state.current_player]:
+            self._check_and_reshuffle_deck(new_state)
+            if not new_state.deck:
+                new_state.game_over = True
 
         return new_state
 
@@ -320,9 +327,9 @@ class MandalaGame:
             # Alternate claimer
             current_claimer = 1 - current_claimer
 
-        # Discard all cards from both Fields
-        state.discard.extend(state.fields[mandala_idx][0])
-        state.discard.extend(state.fields[mandala_idx][1])
+        # Return field cards to bottom of deck (per official rules)
+        field_cards = state.fields[mandala_idx][0] + state.fields[mandala_idx][1]
+        state.deck = field_cards + state.deck  # Insert at bottom (index 0), deck pops from end
         state.fields[mandala_idx][0] = []
         state.fields[mandala_idx][1] = []
 
@@ -369,7 +376,7 @@ class MandalaGame:
 
     def is_terminal(self, state: GameState) -> bool:
         """Check if game has ended."""
-        return state.game_over or self._should_game_end(state)
+        return state.game_over
 
     def get_reward(self, state: GameState, player: int) -> float:
         """
@@ -393,10 +400,10 @@ class MandalaGame:
         elif scores[player] < scores[1 - player]:
             return -1.0
         else:
-            # Tiebreaker: fewer cards in Cup wins
-            if len(state.cups[player]) < len(state.cups[1 - player]):
+            # Tiebreaker: more cards in Cup wins
+            if len(state.cups[player]) > len(state.cups[1 - player]):
                 return 1.0
-            elif len(state.cups[player]) > len(state.cups[1 - player]):
+            elif len(state.cups[player]) < len(state.cups[1 - player]):
                 return -1.0
             else:
                 return 0.0
@@ -459,6 +466,47 @@ class MandalaGame:
 
         return "\n".join(lines)
 
+    def action_to_string(self, action_id: int) -> str:
+        """Convert action ID to readable string."""
+        colors = ['White', 'Green', 'Purple', 'Yellow', 'Red', 'Orange']
+        if action_id < 12:
+            color = action_id % 6
+            mandala = action_id // 6
+            return f"BUILD_MOUNTAIN: {colors[color]} -> Mandala {mandala}"
+        elif action_id < 24:
+            a = action_id - 12
+            color = a % 6
+            mandala = a // 6
+            return f"GROW_FIELD: {colors[color]} -> Field {mandala}"
+        else:
+            color = action_id - 24
+            return f"DISCARD: {colors[color]}"
+
+    def state_to_summary(self, state: GameState) -> Dict:
+        """Convert game state to JSON-serializable summary for replays."""
+        return {
+            'current_player': state.current_player,
+            'hands': [
+                [c.color for c in state.hands[0]],
+                [c.color for c in state.hands[1]]
+            ],
+            'rivers': [
+                [c.color for c in state.rivers[0]],
+                [c.color for c in state.rivers[1]]
+            ],
+            'cups': [len(state.cups[0]), len(state.cups[1])],
+            'mountains': [
+                [c.color for c in state.mountains[0]],
+                [c.color for c in state.mountains[1]]
+            ],
+            'fields': [
+                [[c.color for c in state.fields[0][0]], [c.color for c in state.fields[0][1]]],
+                [[c.color for c in state.fields[1][0]], [c.color for c in state.fields[1][1]]]
+            ],
+            'deck_size': len(state.deck),
+            'discard_size': len(state.discard)
+        }
+
     def get_symmetries(self, state: GameState, policy: np.ndarray) -> List[Tuple[GameState, np.ndarray]]:
         """
         Get symmetrically equivalent states.
@@ -474,13 +522,13 @@ class MandalaGame:
 
         # Swap policy for mandala-specific actions
         sym_policy = policy.copy()
-        # BUILD_MOUNTAIN: swap mandala index
+        # BUILD_MOUNTAIN: swap mandala index (mandala 0 <-> mandala 1)
         for color in range(6):
-            sym_policy[color * 2], sym_policy[color * 2 + 1] = policy[color * 2 + 1], policy[color * 2]
+            sym_policy[0 * 6 + color], sym_policy[1 * 6 + color] = policy[1 * 6 + color], policy[0 * 6 + color]
         # GROW_FIELD: swap mandala index
         for color in range(6):
-            sym_policy[12 + color * 2], sym_policy[12 + color * 2 + 1] = \
-                policy[12 + color * 2 + 1], policy[12 + color * 2]
+            sym_policy[12 + 0 * 6 + color], sym_policy[12 + 1 * 6 + color] = \
+                policy[12 + 1 * 6 + color], policy[12 + 0 * 6 + color]
         # DISCARD: no change needed
 
         symmetries.append((sym_state, sym_policy))

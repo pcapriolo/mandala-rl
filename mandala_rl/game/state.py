@@ -112,20 +112,64 @@ class GameState:
         """
         Convert state to neural network input tensor.
 
-        Encoding (50 planes × 8×8):
-        - 6 planes: card counts in each Mountain (by color)
-        - 12 planes: card counts in Fields (6 colors × 2 mandalas)
-        - 6 planes: my hand card counts (by color)
-        - 6 planes: opponent hand size indicator
-        - 6 planes: my River colors
-        - 6 planes: opponent River colors
-        - 2 planes: my Cup size / opponent Cup size
-        - 6 planes: deck presence indicators
-        """
-        tensor = np.zeros((50, 8, 8), dtype=np.float32)
+        State is assumed to be in canonical form (current player = index 0).
 
-        # Simplified encoding for now
-        # TODO: Implement full tensor encoding
+        Encoding (59 planes × 8×8, values broadcast across spatial dims):
+          Ch 0-5:   My hand card counts per color (/18)
+          Ch 6-11:  Mountain 0 card counts per color (/18)
+          Ch 12-17: Mountain 1 card counts per color (/18)
+          Ch 18-23: My Field Mandala 0 counts per color (/18)
+          Ch 24-29: My Field Mandala 1 counts per color (/18)
+          Ch 30-35: Opp Field Mandala 0 counts per color (/18)
+          Ch 36-41: Opp Field Mandala 1 counts per color (/18)
+          Ch 42-47: My River value per color ((position+1)/6, 0 if absent)
+          Ch 48-53: Opp River value per color ((position+1)/6, 0 if absent)
+          Ch 54:    My cup size / 20
+          Ch 55:    Opp cup size / 20
+          Ch 56:    Opponent hand size / 8
+          Ch 57:    Deck size / 108
+          Ch 58:    Game ends next mandala flag (0 or 1)
+        """
+        tensor = np.zeros((59, 8, 8), dtype=np.float32)
+
+        def color_counts(cards):
+            counts = np.zeros(6, dtype=np.float32)
+            for card in cards:
+                counts[card.color] += 1
+            return counts / 18.0
+
+        areas = [
+            (0, self.hands[0]),          # My hand
+            (6, self.mountains[0]),       # Mountain 0
+            (12, self.mountains[1]),      # Mountain 1
+            (18, self.fields[0][0]),      # My Field M0
+            (24, self.fields[1][0]),      # My Field M1
+            (30, self.fields[0][1]),      # Opp Field M0
+            (36, self.fields[1][1]),      # Opp Field M1
+        ]
+        for start_ch, cards in areas:
+            counts = color_counts(cards)
+            for c in range(6):
+                tensor[start_ch + c] = counts[c]
+
+        # Ch 42-47: My River scoring values
+        for pos, card in enumerate(self.rivers[0]):
+            tensor[42 + card.color] = (pos + 1) / 6.0
+
+        # Ch 48-53: Opponent River scoring values
+        for pos, card in enumerate(self.rivers[1]):
+            tensor[48 + card.color] = (pos + 1) / 6.0
+
+        # Ch 54-55: Cup sizes
+        tensor[54] = len(self.cups[0]) / 20.0
+        tensor[55] = len(self.cups[1]) / 20.0
+
+        # Ch 56: Opponent hand size
+        tensor[56] = len(self.hands[1]) / 8.0
+        # Ch 57: Deck size
+        tensor[57] = len(self.deck) / 108.0
+        # Ch 58: Game ends next mandala flag
+        tensor[58] = 1.0 if self.game_ends_next_mandala else 0.0
 
         return tensor
 

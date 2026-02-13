@@ -541,7 +541,6 @@
                 });
                 currentState = await response.json();
                 displayState();
-                document.getElementById('saveBtn').disabled = false;
                 showStatus('New game started! You are Player ' + humanPlayer, 'success');
             } catch (error) {
                 showStatus('Error starting game: ' + error, 'error');
@@ -574,9 +573,19 @@
             document.getElementById('deckSize').textContent = `${state.deck_size} cards`;
             document.getElementById('humanPlayer').textContent = `Player ${currentState.human_player}`;
 
-            // Update player areas
-            displayCards('hand0', state.hands.player0);
-            displayCards('hand1', state.hands.player1);
+            // Update player areas - hide opponent's hand
+            const humanPlayer = currentState.human_player;
+            const opponentPlayer = 1 - humanPlayer;
+
+            // Show human's actual cards
+            if (humanPlayer === 0) {
+                displayCards('hand0', state.hands.player0);
+                displayHiddenHand('hand1', state.hands.player1.length);
+            } else {
+                displayHiddenHand('hand0', state.hands.player0.length);
+                displayCards('hand1', state.hands.player1);
+            }
+
             displayCards('river0', state.rivers.player0);
             displayCards('river1', state.rivers.player1);
             document.getElementById('cup0').textContent = `${state.cups.player0} cards`;
@@ -622,6 +631,12 @@
             element.innerHTML = cards.map(card => `<span class="card">${card}</span>`).join('');
         }
 
+        function displayHiddenHand(elementId, cardCount) {
+            const element = document.getElementById(elementId);
+            const hiddenCards = Array(cardCount).fill('🂠').map(card => `<span class="card">${card}</span>`).join('');
+            element.innerHTML = hiddenCards || '<span style="color: #718096;">No cards</span>';
+        }
+
         function displayMoves(moves) {
             const panel = document.getElementById('movesPanel');
             const list = document.getElementById('movesList');
@@ -660,7 +675,10 @@
                 document.getElementById('aiThinking').classList.remove('show');
 
                 if (result.ai_decision) {
-                    showStatus('AI played: ' + result.ai_decision.description, 'info');
+                    showStatus('🤖 AI played: ' + result.ai_decision.description, 'info');
+
+                    // Wait 2 seconds before updating board so user can read what AI did
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
 
                 currentState = result;

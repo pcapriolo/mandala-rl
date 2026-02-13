@@ -1,0 +1,59 @@
+# Lost Cities RL Training Configuration
+
+# Network Architecture
+network:
+  input_channels: 66
+  num_actions: 96  # 8 hand_pos * 2 dest * 6 draw_src
+  num_res_blocks: 8
+  channels: 96
+
+# MCTS Parameters
+mcts:
+  num_simulations: 800
+  c_puct: 1.0
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25
+
+# Self-Play Parameters
+selfplay:
+  games_per_iteration: 100
+  parallel_games: 8  # Simultaneous games for batched NN inference (1 = sequential)
+  temperature: 1.0
+  temperature_threshold: 30
+
+# Training Parameters
+training:
+  num_iterations: 1000
+  batch_size: 256
+  epochs_per_iteration: 10
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  lr_milestones: [100, 200, 300, 500, 700]
+  lr_gamma: 0.1
+  replay_buffer_size: 500000
+  checkpoint_frequency: 1
+  checkpoint_every_n_games: 10
+
+# Evaluation Parameters
+evaluation:
+  num_games: 100
+  win_threshold: 0.55
+  eval_frequency: 1
+  eval_num_games: 20
+  eval_mcts_simulations: 400
+
+# Paths (separate from Mandala)
+paths:
+  checkpoint_dir: data/lost_cities/checkpoints
+  replay_dir: data/lost_cities/replays
+  log_dir: data/lost_cities/logs
+  elo_file: data/lost_cities/elo_ratings.json
+
+# Hardware
+device: mps
+
+# Replay saving
+save_replay_frequency: 1
+
+# Reproducibility
+seed: 42
