@@ -50,7 +50,7 @@ paths:
   elo_file: data/elo_ratings.json
 
 # Hardware
-device: mps  # Use 'mps' for Apple Silicon, 'cuda' for NVIDIA GPU, 'cpu' for CPU
+device: auto  # auto-detects: cuda > mps > cpu (or set explicitly: cuda/mps/cpu)
 
 # Replay saving
 save_replay_frequency: 1  # Save every game (1 = all, 10 = every 10th)

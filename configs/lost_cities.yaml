@@ -50,7 +50,7 @@ paths:
   elo_file: data/lost_cities/elo_ratings.json
 
 # Hardware
-device: mps
+device: auto  # auto-detects: cuda > mps > cpu
 
 # Replay saving
 save_replay_frequency: 1

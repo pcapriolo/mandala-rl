@@ -1,23 +1,16 @@
-FROM python:3.9-slim
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git \
+    python3 python3-pip git g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy project files
 COPY . /app/
 
-# Install the mandala-rl package
-RUN pip install --no-cache-dir -e .
+RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -e .
 
-# Install workflow requirements
-RUN pip install --no-cache-dir -r workflows/requirements.txt
-
-# Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 
-# Flyte will override the entrypoint
-CMD ["python"]
+CMD ["python3"]

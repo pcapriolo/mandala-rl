@@ -172,13 +172,23 @@ def main():
     parser.add_argument('--model2', type=int, default=6, help='Second model iteration')
     parser.add_argument('--num-games', type=int, default=20, help='Number of games to play')
     parser.add_argument('--mcts-sims', type=int, default=400, help='MCTS simulations per move')
-    parser.add_argument('--device', type=str, default='mps', help='Device (mps/cuda/cpu)')
+    parser.add_argument('--device', type=str, default='auto', help='Device (auto/cuda/mps/cpu)')
 
     args = parser.parse_args()
 
-    # Check device availability
-    if args.device == 'mps' and not torch.backends.mps.is_available():
-        print("⚠️  MPS not available, falling back to CPU")
+    # Auto-detect device
+    if args.device == 'auto':
+        if torch.cuda.is_available():
+            args.device = 'cuda'
+        elif torch.backends.mps.is_available():
+            args.device = 'mps'
+        else:
+            args.device = 'cpu'
+    elif args.device == 'cuda' and not torch.cuda.is_available():
+        print("CUDA not available, falling back to CPU")
+        args.device = 'cpu'
+    elif args.device == 'mps' and not torch.backends.mps.is_available():
+        print("MPS not available, falling back to CPU")
         args.device = 'cpu'
 
     success = run_evaluation(

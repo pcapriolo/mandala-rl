@@ -92,6 +92,18 @@ class Trainer:
             device=device
         )
 
+        # Mixed precision for CUDA (2x throughput on A100/H100)
+        self.use_amp = device == 'cuda'
+        self.scaler = torch.amp.GradScaler('cuda') if self.use_amp else None
+
+        # torch.compile for CUDA (20-40% kernel fusion speedup)
+        if device == 'cuda':
+            try:
+                self.network = torch.compile(self.network)
+                print("torch.compile enabled")
+            except Exception:
+                pass
+
         # Training state
         self.iteration = 0
         self.total_games = 0
@@ -234,14 +246,23 @@ class Trainer:
                 policies = torch.from_numpy(policies.astype(np.float32)).to(self.device)
                 values = torch.from_numpy(values.astype(np.float32)).to(self.device)
 
-                total_loss, policy_loss, value_loss = self.network.get_loss(
-                    states, policies, values
-                )
-
                 self.optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
-                self.optimizer.step()
+
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
+                    total_loss, policy_loss, value_loss = self.network.get_loss(
+                        states, policies, values
+                    )
+
+                if self.scaler:
+                    self.scaler.scale(total_loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=1.0)
+                    self.optimizer.step()
 
                 epoch_total_loss = total_loss.item()
                 epoch_policy_loss = policy_loss.item()

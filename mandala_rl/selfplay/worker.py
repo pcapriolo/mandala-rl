@@ -56,6 +56,9 @@ class SelfPlayWorker:
         # Detect game type for C++ engine
         self._game_type = "mandala" if network.num_actions == 30 else "lost_cities"
 
+        # Mixed precision for CUDA inference
+        self.use_amp = device == 'cuda'
+
     def generate_games(self, num_games: int) -> List[SelfPlayGame]:
         """Generate multiple self-play games."""
         return self.play_games_batched(num_games)
@@ -102,7 +105,7 @@ class SelfPlayWorker:
             if len(root_tensors) == 0:
                 break
 
-            with torch.no_grad():
+            with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                 batch = torch.from_numpy(np.stack(root_tensors)).to(self.device)
                 logits, _ = self.network(batch)
                 policies = F.softmax(logits, dim=1).cpu().numpy()
@@ -112,7 +115,7 @@ class SelfPlayWorker:
             for _ in range(self.mcts_simulations):
                 leaf_tensors = mgr.simulate_step()
                 if len(leaf_tensors) > 0:
-                    with torch.no_grad():
+                    with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                         batch = torch.from_numpy(np.stack(leaf_tensors)).to(self.device)
                         logits, vals = self.network(batch)
                         pols = F.softmax(logits, dim=1).cpu().numpy()

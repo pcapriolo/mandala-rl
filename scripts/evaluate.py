@@ -66,9 +66,19 @@ def main():
     # Load config
     config = load_config(args.config)
 
-    # Setup device
-    device = config.get('device', 'mps')
-    if device == 'mps' and not torch.backends.mps.is_available():
+    # Setup device (auto-detect: cuda > mps > cpu)
+    device = config.get('device', 'auto')
+    if device == 'auto':
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    elif device == 'cuda' and not torch.cuda.is_available():
+        print("CUDA not available, falling back to CPU")
+        device = 'cpu'
+    elif device == 'mps' and not torch.backends.mps.is_available():
         print("MPS not available, falling back to CPU")
         device = 'cpu'
     print(f"Using device: {device}")
