@@ -132,7 +132,8 @@ def main():
         game=game,
         network=network,
         config=training_config,
-        device=device
+        device=device,
+        config_path=args.config
     )
     print("Created trainer")
 

@@ -38,7 +38,7 @@ training:
 evaluation:
   num_games: 100
   win_threshold: 0.55  # Win rate threshold to consider improvement
-  eval_frequency: 10  # Evaluate every N iterations (uses slow Python MCTS)
+  eval_frequency: 1  # Evaluate every N iterations (async on CPU, never blocks training)
   eval_num_games: 20  # Games to play during training evaluation (fewer for speed)
   eval_mcts_simulations: 400  # MCTS sims for evaluation (fewer for speed)
 

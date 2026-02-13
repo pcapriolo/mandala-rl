@@ -2,6 +2,8 @@
 import torch
 import torch.optim as optim
 import numpy as np
+import subprocess
+import sys
 from pathlib import Path
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -31,7 +33,8 @@ class Trainer:
         game: MandalaGame,
         network: MandalaNet,
         config: dict,
-        device: str = "mps"
+        device: str = "mps",
+        config_path: str = "configs/default.yaml"
     ):
         """
         Args:
@@ -39,11 +42,13 @@ class Trainer:
             network: Neural network
             config: Training configuration
             device: PyTorch device
+            config_path: Path to YAML config (for background eval subprocess)
         """
         self.game = game
         self.network = network.to(device)
         self.device = device
         self.config = config
+        self._config_path = config_path
 
         # Replay buffer
         self.replay_buffer = ReplayBuffer(
@@ -113,6 +118,7 @@ class Trainer:
         self.total_games = 0
         self.games_in_current_iteration = 0  # Track progress within iteration
         self.best_checkpoint = None
+        self._eval_process = None  # Background eval subprocess
 
     def train(self, num_iterations: int):
         """
@@ -155,10 +161,10 @@ class Trainer:
             # 4. Save checkpoint
             self._save_checkpoint()
 
-            # 5. Evaluate (periodically)
+            # 5. Evaluate (async — runs on CPU in background, never blocks training)
             eval_freq = self.config.get('eval_frequency', 10)
             if self.iteration > 0 and self.iteration % eval_freq == 0:
-                self._evaluate_checkpoint()
+                self._start_async_eval()
 
             # 6. Clean up disk
             self._cleanup_checkpoints()
@@ -370,8 +376,44 @@ class Trainer:
         if self.games_in_current_iteration > 0:
             print(f"Mid-iteration: will continue from game {self.games_in_current_iteration + 1}")
 
+    def _start_async_eval(self):
+        """Spawn background eval subprocess on CPU. Never blocks training."""
+        # Skip if previous eval is still running
+        if self._eval_process is not None and self._eval_process.poll() is None:
+            print(f"[EVAL] Skipping iter {self.iteration} — previous eval still running")
+            return
+
+        checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
+        prev_checkpoint = checkpoint_dir / f'model_iter_{self.iteration - 1}.pt'
+        curr_checkpoint = checkpoint_dir / f'model_iter_{self.iteration}.pt'
+
+        if not prev_checkpoint.exists() or not curr_checkpoint.exists():
+            print(f"[EVAL] Skipping iter {self.iteration} — checkpoint not found")
+            return
+
+        eval_script = Path(__file__).parent.parent.parent / 'scripts' / 'eval_worker.py'
+        if not eval_script.exists():
+            print(f"[EVAL] eval_worker.py not found at {eval_script}")
+            return
+
+        cmd = [
+            sys.executable, str(eval_script),
+            '--config', str(self._config_path),
+            '--iteration', str(self.iteration),
+            '--checkpoint-dir', str(checkpoint_dir),
+            '--elo-file', str(self.elo_file),
+            '--log-dir', str(self.config.get('log_dir', 'data/logs')),
+        ]
+
+        log_dir = Path(self.config.get('log_dir', 'data/logs'))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        eval_log = open(log_dir / 'eval_worker.log', 'a')
+
+        self._eval_process = subprocess.Popen(cmd, stdout=eval_log, stderr=subprocess.STDOUT)
+        print(f"[EVAL] Started background eval for iter {self.iteration} (PID {self._eval_process.pid})")
+
     def _evaluate_checkpoint(self):
-        """Evaluate current model against previous checkpoint."""
+        """Evaluate current model against previous checkpoint (synchronous, legacy)."""
         print(f"\n[EVALUATION] Testing iteration {self.iteration}")
 
         checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
