@@ -97,6 +97,10 @@ class Trainer:
         self.scaler = torch.amp.GradScaler('cuda') if self.use_amp else None
 
         # torch.compile for CUDA (20-40% kernel fusion speedup)
+        # Store unwrapped reference BEFORE compiling — torch.compile wraps
+        # the model, prefixing state_dict keys with '_orig_mod.' which breaks
+        # load_state_dict on uncompiled copies (worker, evaluation models).
+        self._unwrapped_network = self.network
         if device == 'cuda':
             try:
                 self.network = torch.compile(self.network)
@@ -172,7 +176,7 @@ class Trainer:
         parallel_games = self.config.get('parallel_games', 8)
 
         # Update worker's network to latest
-        self.selfplay_worker.network.load_state_dict(self.network.state_dict())
+        self.selfplay_worker.network.load_state_dict(self._unwrapped_network.state_dict())
 
         # Resume from where we left off if mid-iteration
         start_game = self.games_in_current_iteration
@@ -295,7 +299,7 @@ class Trainer:
             'iteration': self.iteration,
             'total_games': self.total_games,
             'games_in_current_iteration': self.games_in_current_iteration,
-            'model_state_dict': self.network.state_dict(),
+            'model_state_dict': self._unwrapped_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
         }
@@ -322,7 +326,7 @@ class Trainer:
         """Load training checkpoint and replay buffer."""
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
-        self.network.load_state_dict(checkpoint['model_state_dict'])
+        self._unwrapped_network.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.iteration = checkpoint['iteration']
@@ -368,7 +372,7 @@ class Trainer:
             num_res_blocks=self.config.get('num_res_blocks', 10),
             channels=self.config.get('channels', 128)
         ).to(self.device)
-        current_model.load_state_dict(self.network.state_dict())
+        current_model.load_state_dict(self._unwrapped_network.state_dict())
 
         prev_model = MandalaNet(
             input_channels=self.config.get('input_channels', 50),
