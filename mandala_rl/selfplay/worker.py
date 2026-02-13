@@ -1,12 +1,14 @@
 """
 Self-play worker for generating training games using C++ MCTS engine.
 """
+import json
 import numpy as np
 import torch
 import torch.nn.functional as F
 import mcts_cpp
 from typing import List, Tuple, Optional
 from pathlib import Path
+from datetime import datetime
 from ..network.model import MandalaNet
 
 
@@ -132,7 +134,31 @@ class SelfPlayWorker:
                 record.current_players = [int(p) for p in players]
                 record.outcome = float(outcome)
                 completed.append(record)
+
+                # Save replay for dashboard monitoring
+                game_num = len(completed)
+                if save_dir and save_replay_freq > 0 and game_num % save_replay_freq == 0:
+                    self._save_replay(save_dir, record, iteration)
+
                 if on_game_complete:
                     on_game_complete(idx, record)
 
         return completed
+
+    @staticmethod
+    def _save_replay(save_dir: Path, game: 'SelfPlayGame', iteration: int):
+        """Save minimal replay JSON for dashboard monitoring."""
+        save_dir.mkdir(parents=True, exist_ok=True)
+        game_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        winner = 0 if game.outcome > 0 else (1 if game.outcome < 0 else None)
+        replay = {
+            'game_id': game_id,
+            'metadata': {'iteration': iteration},
+            'moves': [{'move_num': i, 'player': int(p)}
+                       for i, p in enumerate(game.current_players)],
+            'final_score': None,
+            'winner': winner,
+        }
+        filepath = save_dir / f"game_{game_id}.json"
+        with open(filepath, 'w') as f:
+            json.dump(replay, f)
