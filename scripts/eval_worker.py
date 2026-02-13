@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mandala_rl.network.model import MandalaNet
 from mandala_rl.evaluation.arena import Arena
 from mandala_rl.evaluation.elo import EloRating
-from mandala_rl.game.engine import MandalaGame
 
 
 def main():
@@ -70,8 +69,13 @@ def main():
     current_model = load_model(current_path)
     prev_model = load_model(prev_path)
 
-    # Play match
-    game = MandalaGame()
+    # Create game engine based on network config
+    if net_cfg['num_actions'] == 30:
+        from mandala_rl.game.engine import MandalaGame
+        game = MandalaGame()
+    else:
+        from lost_cities.game.engine import LostCitiesGame
+        game = LostCitiesGame()
     arena = Arena(
         game=game,
         mcts_simulations=eval_cfg.get('eval_mcts_simulations', 400),
