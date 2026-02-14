@@ -61,9 +61,8 @@ def find_missing(checkpoint_dir, elo_file):
     return missing
 
 
-def run_eval(iteration, checkpoint_dir, elo_file, log_dir, net_cfg, eval_cfg, mcts_cfg):
+def run_eval(iteration, checkpoint_dir, elo_file, log_dir, net_cfg, eval_cfg, mcts_cfg, device='cpu'):
     """Run evaluation for a single iteration."""
-    device = 'cpu'
     current_path = checkpoint_dir / f'model_iter_{iteration}.pt'
     prev_path = checkpoint_dir / f'model_iter_{iteration - 1}.pt'
 
@@ -159,6 +158,7 @@ def main():
     parser.add_argument('--config', required=True, help='Training config YAML')
     parser.add_argument('--interval', type=int, default=60, help='Seconds between checks')
     parser.add_argument('--once', action='store_true', help='Run once and exit')
+    parser.add_argument('--device', default='auto', help='Device: auto, cpu, cuda, mps')
     args = parser.parse_args()
 
     config = yaml.safe_load(open(args.config))
@@ -173,8 +173,19 @@ def main():
     log_dir = Path(config.get('paths', {}).get('log_dir',
                    config.get('log_dir', 'data/logs')))
 
+    # Resolve device
+    if args.device == 'auto':
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
+    else:
+        device = args.device
+
     game_name = 'Lost Cities' if net_cfg['num_actions'] != 30 else 'Mandala'
-    print(f"[EVAL DAEMON] {game_name}")
+    print(f"[EVAL DAEMON] {game_name} (device: {device})")
     print(f"[EVAL DAEMON] Checkpoints: {checkpoint_dir}")
     print(f"[EVAL DAEMON] Elo file: {elo_file}")
     if not args.once:
@@ -186,7 +197,7 @@ def main():
             print(f"[EVAL DAEMON] Missing Elo for iterations: {missing}")
             for iteration in missing:
                 run_eval(iteration, checkpoint_dir, elo_file, log_dir,
-                         net_cfg, eval_cfg, mcts_cfg)
+                         net_cfg, eval_cfg, mcts_cfg, device=device)
         else:
             print(f"[EVAL DAEMON] All checkpoints evaluated")
 
