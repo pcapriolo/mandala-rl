@@ -15,6 +15,7 @@ RUNPOD_URL="${1:?Usage: $0 <runpod-data-url>}"
 INTERVAL="${2:-30}"
 
 mkdir -p data/logs data/replays data/checkpoints
+mkdir -p data/lost_cities/logs data/lost_cities/replays data/lost_cities/checkpoints
 
 # Fetch directory listing and extract filenames matching a pattern
 sync_dir() {
@@ -40,6 +41,15 @@ while true; do
 
     # Game replays (only download new ones)
     sync_dir "$RUNPOD_URL/replays/" "data/replays" ".json"
+
+    # Iteration checkpoints (model_iter_*.pt, ~20MB each — skip model_latest.pt which includes replay buffer)
+    sync_dir "$RUNPOD_URL/checkpoints/" "data/checkpoints" "model_iter_"
+
+    # Lost Cities — same structure under data/lost_cities/
+    curl -sf "$RUNPOD_URL/lost_cities/elo_ratings.json" -o data/lost_cities/elo_ratings.json 2>/dev/null || true
+    sync_dir "$RUNPOD_URL/lost_cities/logs/" "data/lost_cities/logs" "events"
+    sync_dir "$RUNPOD_URL/lost_cities/replays/" "data/lost_cities/replays" ".json"
+    sync_dir "$RUNPOD_URL/lost_cities/checkpoints/" "data/lost_cities/checkpoints" "model_iter_"
 
     echo "[$(date +%H:%M:%S)] Synced"
     sleep "$INTERVAL"

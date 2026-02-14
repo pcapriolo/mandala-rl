@@ -1,1 +1,1 @@
-web: python scripts/play_vs_ai_web.py --port $PORT --host 0.0.0.0 --simulations 200
+web: gunicorn serve:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1

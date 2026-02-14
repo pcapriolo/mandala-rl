@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{ game_name }} RL Training Observer</title>
+    <title>RL Training Observer</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -22,21 +22,18 @@
         .card h2 { margin-bottom: 15px; color: #4a9eff; font-size: 18px; }
         .stat { font-size: 32px; font-weight: bold; color: #fff; margin: 10px 0; }
         .stat-label { color: #888; font-size: 14px; }
-        .replay-list { background: #2a2a2a; border-radius: 8px; padding: 20px; border: 1px solid #3a3a3a; }
-        .replay-item {
-            background: #333;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 6px;
-            border: 1px solid #444;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .replay-item:hover { background: #3a3a3a; border-color: #4a9eff; }
-        .replay-meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 14px; color: #888; }
-        .winner { color: #4caf50; font-weight: bold; }
         a { color: #4a9eff; text-decoration: none; }
         a:hover { text-decoration: underline; }
+        .replay-list { background: #2a2a2a; border-radius: 8px; padding: 20px; border: 1px solid #3a3a3a; margin-bottom: 20px; }
+        .replay-list h2 { margin-bottom: 15px; color: #4a9eff; font-size: 18px; }
+        .replay-item {
+            background: #333; padding: 12px; margin: 8px 0; border-radius: 6px;
+            border: 1px solid #444; cursor: pointer; transition: all 0.2s;
+        }
+        .replay-item:hover { background: #3a3a3a; border-color: #4a9eff; }
+        .replay-meta { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: #888; }
+        .winner { color: #4caf50; font-weight: bold; }
+        .replays-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
         .btn {
             background: #4a9eff;
             color: white;
@@ -50,97 +47,156 @@
             margin-top: 10px;
         }
         .btn:hover { background: #3a8eef; }
+        .elo-chart-container {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #3a3a3a;
+            margin-bottom: 30px;
+        }
+        .elo-chart-container h2 { margin-bottom: 15px; color: #4a9eff; font-size: 18px; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
     <div class="container">
-        <h1>🎮 {{ game_name }} RL Training Observer</h1>
+        <h1>RL Training Observer</h1>
 
         <div class="dashboard">
-            <div class="card">
-                <h2>📊 Training Status</h2>
-                <div class="stat" id="num-checkpoints">--</div>
-                <div class="stat-label">Checkpoints Saved</div>
-                <div style="margin-top: 15px; color: #aaa;" id="latest-checkpoint">Loading...</div>
-            </div>
+            <a href="/game/mandala" class="card" style="text-decoration:none; color:inherit;">
+                <h2>Mandala</h2>
+                <div class="stat" id="mandala-replays">--</div>
+                <div class="stat-label">Games Played</div>
+            </a>
+
+            <a href="/game/lost_cities" class="card" style="text-decoration:none; color:inherit;">
+                <h2>Lost Cities</h2>
+                <div class="stat" id="lc-replays">--</div>
+                <div class="stat-label">Games Played</div>
+            </a>
 
             <div class="card">
-                <h2>🎲 Game Replays</h2>
-                <div class="stat" id="num-replays">--</div>
-                <div class="stat-label">Games Recorded</div>
-                <a href="#" class="btn" onclick="loadReplays(); return false;">Refresh List</a>
-            </div>
-
-            <div class="card">
-                <h2>📈 Tensorboard</h2>
+                <h2>Tensorboard</h2>
                 <div style="margin-top: 15px;">
                     <a href="http://localhost:6006" target="_blank" class="btn">Open Tensorboard</a>
                 </div>
-                <div style="margin-top: 15px; color: #888; font-size: 14px;">
-                    View training metrics, loss curves, and more
-                </div>
             </div>
         </div>
 
-        <div class="replay-list">
-            <h2 style="margin-bottom: 20px; color: #4a9eff;">Recent Game Replays</h2>
-            <div id="replays-container">Loading replays...</div>
+        <div class="elo-chart-container">
+            <h2>Elo Ratings by Iteration</h2>
+            <canvas id="elo-chart" height="100"></canvas>
         </div>
+
+        <div class="replays-grid">
+            <div class="replay-list">
+                <h2>Mandala Replays</h2>
+                <div id="mandala-replays-list">Loading...</div>
+            </div>
+            <div class="replay-list">
+                <h2>Lost Cities Replays</h2>
+                <div id="lc-replays-list">Loading...</div>
+            </div>
+        </div>
+
     </div>
 
     <script>
-        async function loadStatus() {
-            try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
+        const COLORS = { 'Mandala': '#4a9eff', 'Lost Cities': '#ff6b6b' };
+        let eloChart = null;
 
-                document.getElementById('num-checkpoints').textContent = data.num_checkpoints;
-                document.getElementById('num-replays').textContent = data.num_replays;
-                document.getElementById('latest-checkpoint').textContent =
-                    data.latest_checkpoint ? `Latest: ${data.latest_checkpoint}` : 'No checkpoints yet';
+        async function loadElo() {
+            try {
+                const response = await fetch('/api/elo');
+                const games = await response.json();
+                const ctx = document.getElementById('elo-chart').getContext('2d');
+
+                const datasets = Object.entries(games).map(([name, points]) => ({
+                    label: name,
+                    data: points.map(p => ({ x: p.iter, y: p.elo })),
+                    borderColor: COLORS[name] || '#aaa',
+                    backgroundColor: (COLORS[name] || '#aaa') + '22',
+                    tension: 0.3,
+                    pointRadius: 3,
+                    fill: false,
+                }));
+
+                if (eloChart) {
+                    eloChart.data.datasets = datasets;
+                    eloChart.update('none');
+                } else {
+                    eloChart = new Chart(ctx, {
+                        type: 'line',
+                        data: { datasets },
+                        options: {
+                            scales: {
+                                x: { type: 'linear', title: { display: true, text: 'Iteration', color: '#888' },
+                                     ticks: { color: '#888', stepSize: 1 }, grid: { color: '#333' } },
+                                y: { title: { display: true, text: 'Elo', color: '#888' },
+                                     ticks: { color: '#888' }, grid: { color: '#333' },
+                                     suggestedMin: 1300, suggestedMax: 1700 }
+                            },
+                            plugins: {
+                                legend: { labels: { color: '#e0e0e0' } },
+                                tooltip: { mode: 'index', intersect: false }
+                            },
+                            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                            responsive: true,
+                        }
+                    });
+                }
             } catch (error) {
-                console.error('Error loading status:', error);
+                console.error('Error loading Elo:', error);
             }
         }
 
-        async function loadReplays() {
+        async function loadReplays(game, containerId) {
             try {
-                const response = await fetch('/api/replays');
+                const response = await fetch(`/api/replays/${game}`);
                 const replays = await response.json();
-
-                const container = document.getElementById('replays-container');
-
+                const container = document.getElementById(containerId);
                 if (replays.length === 0) {
-                    container.innerHTML = '<div style="color: #888;">No replays available yet. Start training to generate game replays!</div>';
+                    container.innerHTML = '<div style="color: #888;">No replays yet</div>';
                     return;
                 }
-
-                container.innerHTML = replays.map(replay => `
-                    <div class="replay-item" onclick="window.location='/replay/${replay.filename}'">
-                        <div style="font-weight: bold; font-size: 16px;">Game ${replay.game_id}</div>
+                container.innerHTML = replays.map(r => `
+                    <div class="replay-item" onclick="window.location='/replay/${game}/${r.filename}'">
+                        <div style="font-weight: bold;">${r.game_id}</div>
                         <div class="replay-meta">
-                            <span>${replay.num_moves} moves</span>
-                            <span>Score: ${replay.final_score ? replay.final_score.join(' - ') : 'N/A'}</span>
-                            <span class="winner">${replay.winner !== null ? `Player ${replay.winner} Won` : 'In Progress'}</span>
+                            <span>${r.num_moves} moves</span>
+                            <span class="winner">${r.winner !== null ? 'P' + r.winner + ' won' : 'Draw'}</span>
                         </div>
                     </div>
                 `).join('');
             } catch (error) {
                 console.error('Error loading replays:', error);
-                document.getElementById('replays-container').innerHTML =
-                    '<div style="color: #f44336;">Error loading replays</div>';
+            }
+        }
+
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                document.getElementById('mandala-replays').textContent = data.mandala_replays;
+                document.getElementById('lc-replays').textContent = data.lc_replays;
+            } catch (error) {
+                console.error('Error loading status:', error);
             }
         }
 
         // Auto-refresh every 5 seconds
         setInterval(() => {
             loadStatus();
-            loadReplays();
+            loadElo();
+            loadReplays('mandala', 'mandala-replays-list');
+            loadReplays('lost_cities', 'lc-replays-list');
         }, 5000);
 
         // Initial load
         loadStatus();
-        loadReplays();
+        loadElo();
+        loadReplays('mandala', 'mandala-replays-list');
+        loadReplays('lost_cities', 'lc-replays-list');
     </script>
 </body>
 </html>

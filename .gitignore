@@ -2,11 +2,15 @@
 data/replays/*
 data/checkpoints/*
 data/logs/*
+data/lost_cities/checkpoints/*
+data/lost_cities/replays/*
+data/lost_cities/logs/*
+data/human_games/
 !data/replays/.gitkeep
 !data/checkpoints/.gitkeep
 !data/logs/.gitkeep
-# Allow lightweight checkpoint for deployment
-!data/checkpoints/model_latest_lightweight.pt
+# Allow deploy checkpoints (lightweight, for Railway)
+!data/deploy/
 
 # Python
 __pycache__/

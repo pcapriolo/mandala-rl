@@ -180,8 +180,9 @@
 
         async function loadGame() {
             try {
+                const game = '{{ game }}';
                 const filename = '{{ filename }}';
-                const response = await fetch(`/api/replay/${filename}`);
+                const response = await fetch(`/api/replay/${game}/${filename}`);
                 gameData = await response.json();
                 currentMoveIndex = 0;
                 displayMove();

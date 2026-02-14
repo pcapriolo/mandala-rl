@@ -163,7 +163,7 @@ class Trainer:
 
             # 5. Evaluate (async — runs on CPU in background, never blocks training)
             eval_freq = self.config.get('eval_frequency', 10)
-            if self.iteration > 0 and self.iteration % eval_freq == 0:
+            if eval_freq > 0 and self.iteration > 0 and self.iteration % eval_freq == 0:
                 self._start_async_eval()
 
             # 6. Clean up disk

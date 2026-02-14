@@ -8,16 +8,20 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
 
-        .header { background: #16213e; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .header { background: #16213e; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 1.4em; color: #e94560; }
         .model-info { font-size: 0.85em; color: #888; }
 
-        .controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; align-items: center; }
-        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+        .controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; min-height: 44px; }
         .btn-primary { background: #e94560; color: white; }
         .btn-primary:hover { background: #c73652; }
         .btn-secondary { background: #533483; color: white; }
         .btn-secondary:hover { background: #3e2563; }
+        .btn-save { background: #48bb78; color: white; }
+        .btn-save:hover { background: #38a169; }
+
+        select { padding: 8px 12px; font-size: 0.9em; border: 2px solid #e94560; border-radius: 6px; background: #16213e; color: #eee; cursor: pointer; min-height: 44px; }
 
         .game-area { display: flex; flex-direction: column; padding: 15px; gap: 10px; max-width: 1100px; margin: 0 auto; }
 
@@ -28,11 +32,11 @@
         .player-label.active { background: #e94560; }
 
         /* Expeditions */
-        .expeditions { display: flex; gap: 8px; flex: 1; }
-        .expedition-col { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
+        .expeditions { display: flex; gap: 8px; flex: 1; overflow-x: auto; }
+        .expedition-col { display: flex; flex-direction: column; align-items: center; min-width: 70px; }
         .expedition-col .color-label { font-size: 0.75em; font-weight: bold; padding: 2px 8px; border-radius: 3px; margin-bottom: 4px; }
 
-        .card-stack { display: flex; flex-direction: column; gap: -20px; min-height: 30px; }
+        .card-stack { display: flex; flex-direction: column; min-height: 30px; }
         .card-stack .card { margin-top: -18px; }
         .card-stack .card:first-child { margin-top: 0; }
 
@@ -51,8 +55,8 @@
         .color-4 { background: #f1c40f; color: #333; } /* Yellow */
 
         /* Discard area */
-        .discard-area { display: flex; gap: 8px; padding: 8px; background: #16213e; border-radius: 8px; justify-content: center; align-items: center; }
-        .discard-pile { display: flex; flex-direction: column; align-items: center; min-width: 80px; }
+        .discard-area { display: flex; gap: 8px; padding: 8px; background: #16213e; border-radius: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
+        .discard-pile { display: flex; flex-direction: column; align-items: center; min-width: 70px; }
         .discard-pile .label { font-size: 0.7em; color: #888; margin-top: 2px; }
 
         /* Hand */
@@ -69,8 +73,8 @@
         .action-panel { padding: 10px; background: #0f3460; border-radius: 8px; }
         .action-panel h3 { font-size: 0.9em; margin-bottom: 8px; color: #e94560; }
         .action-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
-        .action-btn { text-align: left; padding: 6px 10px; background: #16213e; color: #eee; border: 1px solid #333;
-            border-radius: 4px; cursor: pointer; font-size: 0.8em; }
+        .action-btn { text-align: left; padding: 8px 10px; background: #16213e; color: #eee; border: 1px solid #333;
+            border-radius: 4px; cursor: pointer; font-size: 0.85em; min-height: 44px; }
         .action-btn:hover { background: #1a3a6e; border-color: #e94560; }
 
         /* Status */
@@ -86,10 +90,53 @@
         .ai-decision { padding: 8px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; margin-top: 5px; }
         .ai-decision .move { color: #f1c40f; }
 
-        /* Turn phase indicator */
-        .phase-indicator { display: flex; gap: 10px; justify-content: center; padding: 5px; }
-        .phase { padding: 4px 12px; border-radius: 4px; font-size: 0.8em; background: #16213e; }
-        .phase.active { background: #e94560; }
+        /* Game over overlay */
+        .game-over-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+            display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .game-over-overlay.show { display: flex; }
+        .game-over-content { background: #16213e; padding: 30px; border-radius: 12px; text-align: center; max-width: 400px; width: 90%; }
+        .game-over-content h2 { font-size: 1.8em; margin-bottom: 15px; }
+        .game-over-content .result { font-size: 1.2em; color: #e94560; margin-bottom: 20px; }
+        .go-scores-row { display: flex; justify-content: space-around; margin: 20px 0; }
+        .go-score-box { text-align: center; }
+        .go-score-box .player { font-size: 0.9em; color: #888; margin-bottom: 5px; }
+        .go-score-box .score { font-size: 2.5em; font-weight: bold; color: #e94560; }
+
+        /* Feedback form */
+        .feedback-form { margin: 20px 0 0; text-align: left; }
+        .feedback-form h3 { font-size: 0.95em; color: #888; margin-bottom: 12px; text-align: center; }
+        .rating-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .rating-row .rating-label { font-size: 0.85em; color: #aaa; }
+        .stars { display: flex; gap: 4px; }
+        .stars span { font-size: 1.5em; cursor: pointer; color: #444; transition: color 0.15s; user-select: none; }
+        .stars span.filled { color: #f1c40f; }
+        .feedback-comment { width: 100%; padding: 8px; margin-top: 8px; background: #1a1a2e; color: #eee;
+            border: 1px solid #333; border-radius: 6px; font-size: 0.85em; resize: vertical; min-height: 50px; font-family: inherit; }
+        .feedback-comment::placeholder { color: #555; }
+        .feedback-actions { display: flex; gap: 10px; justify-content: center; margin-top: 15px; }
+        .btn-skip { padding: 8px 16px; background: transparent; color: #888; border: 1px solid #444; border-radius: 6px;
+            cursor: pointer; font-size: 0.9em; font-weight: 600; min-height: 44px; }
+        .btn-skip:hover { color: #eee; border-color: #888; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header { padding: 10px 15px; }
+            .controls { padding: 8px 15px; }
+            .game-area { padding: 10px; gap: 8px; }
+            .expedition-col { min-width: 60px; }
+            .card { width: 48px; height: 34px; font-size: 0.8em; }
+            .hand-card { width: 58px; height: 40px; font-size: 0.9em; }
+        }
+
+        @media (max-width: 480px) {
+            .header { flex-direction: column; align-items: flex-start; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .controls .btn, .controls select { width: 100%; }
+            .expedition-col { min-width: 50px; }
+            .card { width: 42px; height: 30px; font-size: 0.75em; }
+            .hand-card { width: 50px; height: 36px; font-size: 0.85em; }
+            .player-area { gap: 8px; }
+        }
     </style>
 </head>
 <body>
@@ -99,8 +146,12 @@
     </div>
 
     <div class="controls">
+        <select id="checkpointSelect" onchange="reloadWithCheckpoint()">
+            <option value="">Loading checkpoints...</option>
+        </select>
         <button class="btn btn-primary" onclick="newGame(0)">New Game (You First)</button>
         <button class="btn btn-secondary" onclick="newGame(1)">New Game (AI First)</button>
+        <button class="btn btn-save" onclick="saveGame()">Save Game</button>
         <span class="deck-info" id="deckInfo"></span>
     </div>
 
@@ -139,21 +190,53 @@
         </div>
     </div>
 
+    <!-- Game over -->
+    <div class="game-over-overlay" id="gameOver">
+        <div class="game-over-content">
+            <h2 id="gameOverTitle">Game Over</h2>
+            <div class="result" id="winnerText"></div>
+            <div class="go-scores-row">
+                <div class="go-score-box"><div class="player">You</div><div class="score" id="finalScoreYou">0</div></div>
+                <div class="go-score-box"><div class="player">AI</div><div class="score" id="finalScoreAI">0</div></div>
+            </div>
+            <div class="feedback-form">
+                <h3>Rate this game (optional)</h3>
+                <div class="rating-row">
+                    <span class="rating-label">Your play</span>
+                    <div class="stars" id="starsMyPlay"></div>
+                </div>
+                <div class="rating-row">
+                    <span class="rating-label">Bot's play</span>
+                    <div class="stars" id="starsBotPlay"></div>
+                </div>
+                <textarea class="feedback-comment" id="feedbackComment" placeholder="Any comments?" maxlength="500"></textarea>
+                <div class="feedback-actions">
+                    <button class="btn-skip" onclick="closeGameOver()">Skip</button>
+                    <button class="btn btn-primary" onclick="submitFeedback()">Submit & Play Again</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
+        const BASE_URL = '{{ base_url }}';
         let gameState = null;
         let selectedCard = null;
-        let selectedDest = null;
+        let turnStartTime = null;
+        let gameId = null;
         const COLORS = ['Red', 'Green', 'Blue', 'White', 'Yellow'];
 
         async function newGame(humanPlayer) {
-            const resp = await fetch('/api/new_game', {
+            const resp = await fetch(`${BASE_URL}/api/new_game`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({human_player: humanPlayer})
             });
             gameState = await resp.json();
+            gameId = gameState.game_id;
             selectedCard = null;
-            selectedDest = null;
+            turnStartTime = null;
+            gameOverShown = false;
             renderGame();
             checkAiTurn();
         }
@@ -194,6 +277,11 @@
 
             // Render hand
             renderHand(s.hands['player' + hp], hp);
+
+            // Track think time
+            if (yourActive) {
+                if (!turnStartTime) turnStartTime = Date.now();
+            }
 
             // Status
             updateStatus();
@@ -321,15 +409,18 @@
         }
 
         async function makeMove(action) {
+            const thinkTime = turnStartTime ? Date.now() - turnStartTime : null;
+            turnStartTime = null;
+
             document.getElementById('statusBar').textContent = 'Making move...';
             document.getElementById('statusBar').className = 'status-bar thinking';
             document.getElementById('actionPanel').style.display = 'none';
             selectedCard = null;
 
-            const resp = await fetch('/api/move', {
+            const resp = await fetch(`${BASE_URL}/api/move`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: action})
+                body: JSON.stringify({game_id: gameId, action: action, think_time_ms: thinkTime})
             });
             gameState = await resp.json();
             renderGame();
@@ -337,14 +428,24 @@
         }
 
         async function checkAiTurn() {
-            if (!gameState || gameState.is_terminal) return;
+            if (!gameState || gameState.is_terminal) {
+                if (gameState && gameState.is_terminal) {
+                    saveGame();
+                    showGameOver();
+                }
+                return;
+            }
             if (gameState.current_player !== gameState.human_player) {
                 document.getElementById('statusBar').textContent = 'AI is thinking...';
                 document.getElementById('statusBar').className = 'status-bar thinking';
 
                 await new Promise(r => setTimeout(r, 500));
 
-                const resp = await fetch('/api/ai_move', {method: 'POST'});
+                const resp = await fetch(`${BASE_URL}/api/ai_move`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId})
+                });
                 gameState = await resp.json();
 
                 if (gameState.ai_decision) {
@@ -353,7 +454,7 @@
                     decEl.style.display = 'block';
                     let html = `<span class="move">AI: ${dec.description}</span>`;
                     if (dec.top_moves && dec.top_moves.length > 1) {
-                        html += '<br><small>Top moves: ' + dec.top_moves.map(m =>
+                        html += '<br><small>Top: ' + dec.top_moves.map(m =>
                             `${m.description} (${m.probability.toFixed(1)}%)`
                         ).join(', ') + '</small>';
                     }
@@ -387,6 +488,150 @@
                 bar.className = 'status-bar thinking';
             }
         }
+
+        async function saveGame() {
+            if (!gameId) return;
+            try {
+                await fetch(`${BASE_URL}/api/save`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId})
+                });
+            } catch (e) {
+                console.error('Save failed:', e);
+            }
+        }
+
+        async function loadCheckpoints() {
+            try {
+                const resp = await fetch(`${BASE_URL}/api/checkpoints`);
+                const checkpoints = await resp.json();
+                const select = document.getElementById('checkpointSelect');
+                select.innerHTML = '<option value="">Select checkpoint...</option>';
+                checkpoints.forEach(cp => {
+                    const opt = document.createElement('option');
+                    opt.value = cp.name;
+                    opt.textContent = `${cp.name} (Iter ${cp.iteration}, ${cp.total_games} games)`;
+                    if (gameState && gameState.model_info && cp.name === gameState.model_info.checkpoint) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Error loading checkpoints:', e);
+            }
+        }
+
+        async function reloadWithCheckpoint() {
+            const select = document.getElementById('checkpointSelect');
+            if (!select.value) return;
+            try {
+                const resp = await fetch(`${BASE_URL}/api/load_checkpoint`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({checkpoint: select.value})
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    document.getElementById('statusBar').textContent = `Loaded: Iter ${result.iteration}. Click New Game to play.`;
+                    document.getElementById('statusBar').className = 'status-bar your-turn';
+                    gameId = null;
+                }
+            } catch (e) {
+                console.error('Error loading checkpoint:', e);
+            }
+        }
+
+        // Game over overlay + feedback
+        let myPlayRating = 0;
+        let botPlayRating = 0;
+        let gameOverShown = false;
+
+        function showGameOver() {
+            if (gameOverShown) return;
+            gameOverShown = true;
+
+            const w = gameState.winner;
+            const hp = gameState.human_player;
+            const s = gameState.scores;
+
+            document.getElementById('finalScoreYou').textContent = s['player' + hp];
+            document.getElementById('finalScoreAI').textContent = s['player' + (1 - hp)];
+
+            if (w === hp) {
+                document.getElementById('gameOverTitle').textContent = 'You Win!';
+                document.getElementById('winnerText').textContent = 'You beat the AI!';
+            } else if (w === -1) {
+                document.getElementById('gameOverTitle').textContent = 'Draw!';
+                document.getElementById('winnerText').textContent = 'The game ended in a tie.';
+            } else {
+                document.getElementById('gameOverTitle').textContent = 'AI Wins';
+                document.getElementById('winnerText').textContent = 'Better luck next time.';
+            }
+
+            resetFeedback();
+            document.getElementById('gameOver').classList.add('show');
+        }
+
+        function closeGameOver() {
+            document.getElementById('gameOver').classList.remove('show');
+        }
+
+        function initStars(containerId, setter) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            let currentRating = 0;
+            for (let i = 1; i <= 5; i++) {
+                const star = document.createElement('span');
+                star.textContent = '\u2605';
+                star.dataset.value = i;
+                star.onmouseenter = () => updateStars(containerId, i);
+                star.onclick = () => {
+                    currentRating = i;
+                    setter(i);
+                    updateStars(containerId, i);
+                };
+                container.appendChild(star);
+            }
+            container.onmouseleave = () => updateStars(containerId, currentRating);
+        }
+
+        function updateStars(containerId, rating) {
+            const stars = document.getElementById(containerId).querySelectorAll('span');
+            stars.forEach(s => {
+                s.classList.toggle('filled', parseInt(s.dataset.value) <= rating);
+            });
+        }
+
+        function resetFeedback() {
+            myPlayRating = 0;
+            botPlayRating = 0;
+            initStars('starsMyPlay', v => { myPlayRating = v; });
+            initStars('starsBotPlay', v => { botPlayRating = v; });
+            document.getElementById('feedbackComment').value = '';
+        }
+
+        async function submitFeedback() {
+            if (!gameId) { closeGameOver(); return; }
+            const payload = { game_id: gameId };
+            if (myPlayRating > 0) payload.my_play_rating = myPlayRating;
+            if (botPlayRating > 0) payload.bot_play_rating = botPlayRating;
+            const comment = document.getElementById('feedbackComment').value.trim();
+            if (comment) payload.comment = comment;
+
+            try {
+                await fetch(`${BASE_URL}/api/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+            } catch (e) {
+                console.error('Feedback submit failed:', e);
+            }
+            closeGameOver();
+        }
+
+        loadCheckpoints();
     </script>
 </body>
 </html>

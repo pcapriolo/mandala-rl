@@ -2,61 +2,72 @@
 """
 Web-based Human vs AI gameplay for Mandala RL.
 
-Run this to start a web server where you can play against trained models.
+Can run standalone (python scripts/play_vs_ai_web.py) or as a Blueprint
+imported by the combined server (serve.py).
 """
 
 import argparse
-import os
+import json
 import sys
-import pickle
+import time
+import uuid
 import torch
 import yaml
+import numpy as np
 from pathlib import Path
-from flask import Flask, render_template, jsonify, request, send_from_directory
+from flask import Flask, Blueprint, render_template, jsonify, request
 from datetime import datetime
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mandala_rl.game.engine import MandalaGame
-from mandala_rl.game.state import GameState
 from mandala_rl.network.model import MandalaNet
 from mandala_rl.mcts.search import MCTS
-from mandala_rl.selfplay.worker import SelfPlayGame
 
-# Set up Flask with correct template directory
 template_dir = Path(__file__).parent.parent / 'templates'
-app = Flask(__name__, template_folder=str(template_dir))
 
-# Global game state
-game_manager = None
-config_path = None
-mcts_simulations = None
+COLOR_NAMES = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White']
+COLOR_SHORT = ['R', 'G', 'P', 'O', 'Y', 'W']
 
 
-class WebGameManager:
-    """Manages web-based human vs AI games."""
+def action_to_string(action):
+    """Convert action ID to short string for experienced players."""
+    if action < 0 or action >= 30:
+        return f"Invalid: {action}"
+    if action < 12:
+        color_idx = action % 6
+        mandala_idx = action // 6
+        return f"{COLOR_SHORT[color_idx]} → Mt{mandala_idx}"
+    elif action < 24:
+        action_offset = action - 12
+        color_idx = action_offset % 6
+        mandala_idx = action_offset // 6
+        return f"{COLOR_SHORT[color_idx]} → Fd{mandala_idx}"
+    else:
+        color_idx = action - 24
+        return f"Discard {COLOR_SHORT[color_idx]}"
+
+
+class MandalaModelServer:
+    """Shared model + MCTS. Loaded once, used by all game sessions."""
 
     def __init__(self, checkpoint_path, config_path, mcts_simulations=400):
-        self.engine = MandalaGame()
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = str(checkpoint_path)
         self.mcts_simulations = mcts_simulations
+        self.engine = MandalaGame()
 
-        # Load config
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
 
-        # Set up device
         if torch.backends.mps.is_available():
             self.device = torch.device('mps')
         elif torch.cuda.is_available():
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')
-        print(f"Using device: {self.device}")
+        print(f"[Mandala] Using device: {self.device}")
 
-        # Load model
-        print(f"Loading model from {checkpoint_path}...")
+        print(f"[Mandala] Loading model from {checkpoint_path}...")
         self.model = MandalaNet(
             input_channels=self.config['network'].get('input_channels', 50),
             num_actions=self.config['network'].get('num_actions', 256),
@@ -70,9 +81,8 @@ class WebGameManager:
 
         self.iteration = checkpoint.get('iteration', 'unknown')
         self.total_games = checkpoint.get('total_games', 'unknown')
-        print(f"Model loaded: iteration {self.iteration}, {self.total_games} games trained")
+        print(f"[Mandala] Model loaded: iteration {self.iteration}, {self.total_games} games")
 
-        # Create network wrapper for MCTS
         def network_fn(state):
             state_tensor = torch.from_numpy(state.to_tensor()).unsqueeze(0).to(self.device)
             with torch.no_grad():
@@ -88,43 +98,73 @@ class WebGameManager:
             c_puct=self.config['mcts']['c_puct']
         )
 
-        # Current game state
-        self.state = None
-        self.human_player = 0
-        self.game_history = []
-        self.move_count = 0
+    def get_ai_move(self, state):
+        """Run MCTS on state, return decision dict."""
+        t0 = time.time()
+        policy, _ = self.mcts.get_action_prob(state, temperature=0.0, add_noise=False)
+        think_ms = int((time.time() - t0) * 1000)
 
-    def start_new_game(self, human_player=0):
-        """Start a new game."""
-        self.state = self.engine.get_initial_state()
+        canonical = state.get_canonical_form()
+        state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            _, val = self.model(state_tensor)
+            value = val.item()
+
+        valid_moves = self.engine.get_valid_moves(state)
+        valid_policy = policy * valid_moves
+        action = int(valid_policy.argmax())
+
+        top_actions = valid_policy.argsort()[-5:][::-1]
+        top_moves = [
+            {
+                'action': int(a),
+                'description': action_to_string(a),
+                'probability': float(policy[a] * 100)
+            }
+            for a in top_actions if valid_moves[a]
+        ]
+
+        return {
+            'action': action,
+            'description': action_to_string(action),
+            'top_moves': top_moves,
+            'policy': [float(p) for p in policy],
+            'value': float(value),
+            'think_time_ms': think_ms,
+        }
+
+
+class MandalaGameSession:
+    """Per-player game state. Created on new_game, identified by UUID."""
+
+    def __init__(self, server, human_player=0):
+        self.server = server
+        self.state = server.engine.get_initial_state()
         self.human_player = human_player
-        self.game_history = []
         self.move_count = 0
-        return self.get_game_state_dict()
+        self.game_history = []
+        self.game_start_time = datetime.now().isoformat()
+        self.last_activity = time.time()
+        self.last_save_filepath = None
 
     def get_game_state_dict(self):
-        """Convert game state to dictionary for web display."""
         if self.state is None:
             return None
 
-        valid_moves = self.engine.get_valid_moves(self.state)
-        valid_actions = [(i, self.action_to_string(i)) for i, valid in enumerate(valid_moves) if valid]
+        engine = self.server.engine
+        valid_moves = engine.get_valid_moves(self.state)
+        valid_actions = [
+            (i, action_to_string(i))
+            for i, valid in enumerate(valid_moves) if valid
+        ]
 
-        # Debug: Log valid moves for human player
-        if self.state.current_player == self.human_player and not self.engine.is_terminal(self.state):
-            hand_colors = [card.color for card in self.state.hands[self.human_player]]
-            print(f"\n👤 Human Player Valid Moves:")
-            print(f"   Hand colors: {hand_colors}")
-            print(f"   Valid actions: {[i for i, v in enumerate(valid_moves) if v]}")
-            print(f"   Descriptions: {[desc for _, desc in valid_actions]}")
-
-        is_terminal = self.engine.is_terminal(self.state)
+        is_terminal = engine.is_terminal(self.state)
         winner = None
         scores = None
 
         if is_terminal:
-            p0_score = self.engine._calculate_score(self.state, 0)
-            p1_score = self.engine._calculate_score(self.state, 1)
+            p0_score = engine._calculate_score(self.state, 0)
+            p1_score = engine._calculate_score(self.state, 1)
             scores = {'player0': p0_score, 'player1': p1_score}
             if p0_score > p1_score:
                 winner = 0
@@ -134,7 +174,7 @@ class WebGameManager:
                 winner = -1
 
         return {
-            'state': self.format_state_for_display(),
+            'state': self._format_state(),
             'current_player': self.state.current_player,
             'human_player': self.human_player,
             'valid_moves': valid_actions,
@@ -143,27 +183,24 @@ class WebGameManager:
             'scores': scores,
             'move_count': self.move_count,
             'model_info': {
-                'iteration': self.iteration,
-                'total_games': self.total_games,
-                'checkpoint': Path(self.checkpoint_path).name
+                'iteration': self.server.iteration,
+                'total_games': self.server.total_games,
+                'checkpoint': Path(self.server.checkpoint_path).name
             }
         }
 
-    def format_state_for_display(self):
-        """Format state for web display."""
-        color_emojis = ['🔴', '🟢', '🟣', '🟠', '🟡', '⚪']
-
-        def cards_to_emojis(cards):
-            return [color_emojis[card.color] for card in cards]
+    def _format_state(self):
+        def cards_to_colors(cards):
+            return [card.color for card in cards]
 
         return {
             'hands': {
-                'player0': cards_to_emojis(self.state.hands[0]),
-                'player1': cards_to_emojis(self.state.hands[1])
+                'player0': cards_to_colors(self.state.hands[0]),
+                'player1': cards_to_colors(self.state.hands[1])
             },
             'rivers': {
-                'player0': cards_to_emojis(self.state.rivers[0]),
-                'player1': cards_to_emojis(self.state.rivers[1])
+                'player0': cards_to_colors(self.state.rivers[0]),
+                'player1': cards_to_colors(self.state.rivers[1])
             },
             'cups': {
                 'player0': len(self.state.cups[0]),
@@ -171,15 +208,15 @@ class WebGameManager:
             },
             'mandalas': [
                 {
-                    'mountain': cards_to_emojis(self.state.mountains[0]),
-                    'field_p0': cards_to_emojis(self.state.fields[0][0]),
-                    'field_p1': cards_to_emojis(self.state.fields[0][1]),
+                    'mountain': cards_to_colors(self.state.mountains[0]),
+                    'field_p0': cards_to_colors(self.state.fields[0][0]),
+                    'field_p1': cards_to_colors(self.state.fields[0][1]),
                     'colors': len(set(card.color for card in self.state.mountains[0]))
                 },
                 {
-                    'mountain': cards_to_emojis(self.state.mountains[1]),
-                    'field_p0': cards_to_emojis(self.state.fields[1][0]),
-                    'field_p1': cards_to_emojis(self.state.fields[1][1]),
+                    'mountain': cards_to_colors(self.state.mountains[1]),
+                    'field_p0': cards_to_colors(self.state.fields[1][0]),
+                    'field_p1': cards_to_colors(self.state.fields[1][1]),
                     'colors': len(set(card.color for card in self.state.mountains[1]))
                 }
             ],
@@ -188,128 +225,83 @@ class WebGameManager:
             'deck_reshuffled': self.state.deck_reshuffled
         }
 
-    def action_to_string(self, action):
-        """Convert action ID to string."""
-        # Validate action range
-        if action < 0 or action >= 30:
-            return f"Invalid action: {action}"
-
-        color_names = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White']
-        color_emojis = ['🔴', '🟢', '🟣', '🟠', '🟡', '⚪']
-
-        if action < 12:
-            color_idx = action % 6
-            mandala_idx = action // 6
-            return f"Play {color_emojis[color_idx]} {color_names[color_idx]} to Mountain {mandala_idx}"
-        elif action < 24:
-            action -= 12
-            color_idx = action % 6
-            mandala_idx = action // 6
-            return f"Play {color_emojis[color_idx]} {color_names[color_idx]} to Field {mandala_idx}"
-        else:
-            color_idx = action - 24
-            return f"Discard {color_emojis[color_idx]} {color_names[color_idx]}"
-
-    def make_move(self, action):
-        """Execute a move and return new state."""
-        if self.state is None or self.engine.is_terminal(self.state):
+    def make_move(self, action, think_time_ms=None, ai_data=None):
+        engine = self.server.engine
+        if self.state is None or engine.is_terminal(self.state):
             return {'error': 'No active game'}
 
-        # Validate move
-        valid_moves = self.engine.get_valid_moves(self.state)
-
-        # Debug: Log move validation
-        hand_colors = [card.color for card in self.state.hands[self.state.current_player]]
-        print(f"\n🎯 Move Validation:")
-        print(f"   Player {self.state.current_player} attempting action {action}: {self.action_to_string(action)}")
-        print(f"   Hand colors: {hand_colors}")
-        print(f"   Is valid: {bool(valid_moves[action])}")
-
+        valid_moves = engine.get_valid_moves(self.state)
         if not valid_moves[action]:
-            error_msg = f'Invalid move: {self.action_to_string(action)} not allowed'
-            print(f"   ❌ {error_msg}")
-            return {'error': error_msg}
+            return {'error': f'Invalid move: {action_to_string(action)}'}
 
-        # Store state for history
-        state_tensor = self.state.to_tensor()
-        policy = torch.zeros(30)  # Mandala has 30 possible actions
-        policy[action] = 1.0
+        is_human = self.state.current_player == self.human_player
 
-        self.game_history.append({
-            'state': state_tensor,
-            'policy': policy,
-            'player': self.state.current_player
-        })
+        move_record = {
+            'move_num': self.move_count + 1,
+            'player': int(self.state.current_player),
+            'is_human': is_human,
+            'action': int(action),
+            'action_description': action_to_string(action),
+            'timestamp': datetime.now().isoformat(),
+            'think_time_ms': think_time_ms,
+            'ai_policy': None,
+            'ai_value': None,
+            'ai_top_moves': None,
+        }
 
-        # Execute move
-        print(f"   ✅ Move accepted, executing...")
-        self.state = self.engine.get_next_state(self.state, action)
+        if ai_data:
+            move_record['ai_policy'] = ai_data.get('policy')
+            move_record['ai_value'] = ai_data.get('value')
+            move_record['ai_top_moves'] = ai_data.get('top_moves')
+            move_record['think_time_ms'] = ai_data.get('think_time_ms')
+
+        self.game_history.append(move_record)
+        self.state = engine.get_next_state(self.state, action)
         self.move_count += 1
 
         return self.get_game_state_dict()
 
-    def get_ai_move(self):
-        """Get AI's move using MCTS."""
-        if self.state is None or self.engine.is_terminal(self.state):
-            return {'error': 'No active game'}
-
-        # Run MCTS
-        policy, _ = self.mcts.get_action_prob(self.state, temperature=0.0, add_noise=False)
-
-        # Get best action
-        valid_moves = self.engine.get_valid_moves(self.state)
-        valid_policy = policy * valid_moves
-        action = valid_policy.argmax()
-
-        # Debug: Log what the AI chose
-        print(f"\n🤖 AI Move Debug:")
-        print(f"   Chosen action: {action} - {self.action_to_string(action)}")
-        print(f"   Valid moves: {[i for i, v in enumerate(valid_moves) if v]}")
-
-        # Get top moves for display
-        top_actions = valid_policy.argsort()[-5:][::-1]
-        top_moves = [
-            {
-                'action': int(a),
-                'description': self.action_to_string(a),
-                'probability': float(policy[a] * 100)
-            }
-            for a in top_actions if valid_moves[a]
-        ]
-
-        return {
-            'action': int(action),
-            'description': self.action_to_string(action),
-            'top_moves': top_moves
-        }
-
     def save_game(self):
-        """Save game history."""
         if not self.game_history:
             return {'error': 'No game to save'}
 
-        save_dir = Path("data/human_games")
+        save_dir = Path("data/human_games/mandala")
         save_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"web_game_{timestamp}.pkl"
+        game_id = f"mandala_{timestamp}"
+        filename = f"{game_id}.json"
         filepath = save_dir / filename
 
-        states = [entry['state'] for entry in self.game_history]
-        policies = [entry['policy'] for entry in self.game_history]
-
-        is_terminal = self.engine.is_terminal(self.state)
+        engine = self.server.engine
+        is_terminal = engine.is_terminal(self.state)
+        winner = None
+        final_scores = None
         if is_terminal:
-            p0_score = self.engine._calculate_score(self.state, 0)
-            p1_score = self.engine._calculate_score(self.state, 1)
-            outcome = 1 if p0_score > p1_score else (-1 if p1_score > p0_score else 0)
-        else:
-            outcome = 0
+            p0 = engine._calculate_score(self.state, 0)
+            p1 = engine._calculate_score(self.state, 1)
+            final_scores = {'player0': p0, 'player1': p1}
+            winner = 0 if p0 > p1 else (1 if p1 > p0 else -1)
 
-        game_data = SelfPlayGame(states=states, policies=policies, outcome=outcome)
+        game_data = {
+            'game_id': game_id,
+            'game': 'mandala',
+            'timestamp': self.game_start_time,
+            'model_checkpoint': Path(self.server.checkpoint_path).name,
+            'model_iteration': self.server.iteration,
+            'mcts_simulations': self.server.mcts_simulations,
+            'human_player': self.human_player,
+            'winner': winner,
+            'final_scores': final_scores,
+            'total_moves': len(self.game_history),
+            'is_complete': is_terminal,
+            'moves': self.game_history,
+        }
 
-        with open(filepath, 'wb') as f:
-            pickle.dump(game_data, f)
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+
+        self.last_save_filepath = str(filepath)
 
         return {
             'success': True,
@@ -318,112 +310,198 @@ class WebGameManager:
         }
 
 
-# Flask routes
-@app.route('/')
-def index():
-    """Serve the main game page."""
-    return render_template('play_vs_ai.html')
+def create_mandala_blueprint(checkpoint_path, config_path, simulations=400,
+                              base_url='', checkpoint_dir='data/checkpoints'):
+    """Create Flask Blueprint for Mandala game with session-based game management."""
+    bp = Blueprint('mandala', __name__, template_folder=str(template_dir))
+    server = MandalaModelServer(checkpoint_path, config_path, simulations)
+    sessions = {}
 
-@app.route('/api/new_game', methods=['POST'])
-def new_game():
-    """Start a new game."""
-    data = request.json or {}
-    human_player = data.get('human_player', 0)
-    state = game_manager.start_new_game(human_player)
-    return jsonify(state)
+    def get_session(game_id):
+        session = sessions.get(game_id)
+        if session:
+            session.last_activity = time.time()
+        return session
 
-@app.route('/api/state', methods=['GET'])
-def get_state():
-    """Get current game state."""
-    state = game_manager.get_game_state_dict()
-    return jsonify(state)
+    def cleanup_expired():
+        now = time.time()
+        expired = [gid for gid, s in sessions.items() if now - s.last_activity > 3600]
+        for gid in expired:
+            del sessions[gid]
 
-@app.route('/api/move', methods=['POST'])
-def make_move():
-    """Make a move."""
-    data = request.json
-    action = data.get('action')
-    if action is None:
-        return jsonify({'error': 'No action provided'}), 400
+    @bp.route('/')
+    def index():
+        return render_template('play_vs_ai.html', base_url=base_url)
 
-    result = game_manager.make_move(action)
-    return jsonify(result)
+    @bp.route('/api/info', methods=['GET'])
+    def info():
+        return jsonify({
+            'game': 'mandala',
+            'iteration': server.iteration,
+            'total_games': server.total_games,
+            'checkpoint': Path(server.checkpoint_path).name,
+            'active_sessions': len(sessions),
+        })
 
-@app.route('/api/ai_move', methods=['POST'])
-def ai_move():
-    """Get and execute AI move."""
-    ai_decision = game_manager.get_ai_move()
-    if 'error' in ai_decision:
-        return jsonify(ai_decision), 400
+    @bp.route('/api/new_game', methods=['POST'])
+    def new_game():
+        cleanup_expired()
+        data = request.json or {}
+        human_player = data.get('human_player', 0)
+        game_id = str(uuid.uuid4())
+        sessions[game_id] = MandalaGameSession(server, human_player)
+        state = sessions[game_id].get_game_state_dict()
+        state['game_id'] = game_id
+        return jsonify(state)
 
-    # Execute the AI's move
-    result = game_manager.make_move(ai_decision['action'])
-    result['ai_decision'] = ai_decision
-    return jsonify(result)
+    @bp.route('/api/state', methods=['GET'])
+    def get_state():
+        game_id = request.args.get('game_id')
+        session = get_session(game_id)
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        state = session.get_game_state_dict()
+        state['game_id'] = game_id
+        return jsonify(state)
 
-@app.route('/api/save', methods=['POST'])
-def save_game():
-    """Save current game."""
-    result = game_manager.save_game()
-    return jsonify(result)
+    @bp.route('/api/move', methods=['POST'])
+    def make_move():
+        data = request.json
+        game_id = data.get('game_id')
+        session = get_session(game_id)
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        action = data.get('action')
+        if action is None:
+            return jsonify({'error': 'No action provided'}), 400
+        think_time_ms = data.get('think_time_ms')
+        result = session.make_move(action, think_time_ms=think_time_ms)
+        result['game_id'] = game_id
+        return jsonify(result)
 
-@app.route('/api/checkpoints', methods=['GET'])
-def list_checkpoints():
-    """List available checkpoints."""
-    checkpoint_dir = Path("data/checkpoints")
-    if not checkpoint_dir.exists():
-        return jsonify([])
+    @bp.route('/api/ai_move', methods=['POST'])
+    def ai_move():
+        data = request.json or {}
+        game_id = data.get('game_id')
+        session = get_session(game_id)
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
 
-    checkpoints = []
-    for cp in sorted(checkpoint_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True):
+        ai_decision = server.get_ai_move(session.state)
+        if 'error' in ai_decision:
+            return jsonify(ai_decision), 400
+
+        ai_data = {
+            'policy': ai_decision['policy'],
+            'value': ai_decision['value'],
+            'top_moves': ai_decision['top_moves'],
+            'think_time_ms': ai_decision['think_time_ms'],
+        }
+        result = session.make_move(ai_decision['action'], ai_data=ai_data)
+        result['ai_decision'] = {
+            'action': ai_decision['action'],
+            'description': ai_decision['description'],
+            'top_moves': ai_decision['top_moves'],
+        }
+        result['game_id'] = game_id
+        return jsonify(result)
+
+    @bp.route('/api/save', methods=['POST'])
+    def save_game():
+        data = request.json or {}
+        game_id = data.get('game_id')
+        session = get_session(game_id)
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        return jsonify(session.save_game())
+
+    @bp.route('/api/feedback', methods=['POST'])
+    def submit_feedback():
+        data = request.json or {}
+        game_id = data.get('game_id')
+        session = get_session(game_id)
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        if not session.last_save_filepath:
+            return jsonify({'error': 'Game not saved yet'}), 400
+
+        filepath = Path(session.last_save_filepath)
+        if not filepath.exists():
+            return jsonify({'error': 'Save file not found'}), 404
+
+        feedback = {'submitted_at': datetime.now().isoformat()}
+        my_rating = data.get('my_play_rating')
+        bot_rating = data.get('bot_play_rating')
+        comment = data.get('comment', '').strip()
+        if my_rating is not None:
+            feedback['my_play_rating'] = max(1, min(5, int(my_rating)))
+        if bot_rating is not None:
+            feedback['bot_play_rating'] = max(1, min(5, int(bot_rating)))
+        if comment:
+            feedback['comment'] = comment
+
+        with open(filepath, 'r') as f:
+            game_data = json.load(f)
+        game_data['feedback'] = feedback
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+
+        return jsonify({'success': True})
+
+    @bp.route('/api/checkpoints', methods=['GET'])
+    def list_checkpoints():
+        cp_dir = Path(checkpoint_dir)
+        if not cp_dir.exists():
+            return jsonify([])
+        checkpoints = []
+        for cp in sorted(cp_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                data = torch.load(cp, map_location='cpu', weights_only=False)
+                checkpoints.append({
+                    'name': cp.name,
+                    'path': str(cp),
+                    'iteration': data.get('iteration', '?'),
+                    'total_games': data.get('total_games', '?')
+                })
+            except Exception:
+                checkpoints.append({
+                    'name': cp.name, 'path': str(cp),
+                    'iteration': '?', 'total_games': '?'
+                })
+        return jsonify(checkpoints)
+
+    @bp.route('/api/load_checkpoint', methods=['POST'])
+    def load_checkpoint():
+        nonlocal server
+        data = request.json
+        checkpoint_name = data.get('checkpoint')
+        if not checkpoint_name:
+            return jsonify({'error': 'No checkpoint specified'}), 400
+        cp_path = Path(checkpoint_dir) / checkpoint_name
+        if not cp_path.exists():
+            return jsonify({'error': f'Checkpoint not found: {checkpoint_name}'}), 404
         try:
-            checkpoint = torch.load(cp, map_location='cpu', weights_only=False)
-            checkpoints.append({
-                'name': cp.name,
-                'path': str(cp),
-                'iteration': checkpoint.get('iteration', '?'),
-                'total_games': checkpoint.get('total_games', '?')
+            server = MandalaModelServer(cp_path, config_path, simulations)
+            sessions.clear()
+            return jsonify({
+                'success': True,
+                'checkpoint': checkpoint_name,
+                'iteration': server.iteration,
+                'total_games': server.total_games
             })
         except Exception as e:
-            print(f"Warning: Failed to load checkpoint {cp.name}: {e}")
-            checkpoints.append({
-                'name': cp.name,
-                'path': str(cp),
-                'iteration': '?',
-                'total_games': '?'
-            })
+            return jsonify({'error': str(e)}), 500
 
-    return jsonify(checkpoints)
+    return bp, server
 
-@app.route('/api/load_checkpoint', methods=['POST'])
-def load_checkpoint():
-    """Load a different checkpoint."""
-    global game_manager
-    data = request.json
-    checkpoint_name = data.get('checkpoint')
 
-    if not checkpoint_name:
-        return jsonify({'error': 'No checkpoint specified'}), 400
-
-    checkpoint_path = Path("data/checkpoints") / checkpoint_name
-    if not checkpoint_path.exists():
-        return jsonify({'error': f'Checkpoint not found: {checkpoint_name}'}), 404
-
-    try:
-        print(f"Loading new checkpoint: {checkpoint_path}")
-        game_manager = WebGameManager(
-            checkpoint_path=checkpoint_path,
-            config_path=config_path,
-            mcts_simulations=mcts_simulations
-        )
-        return jsonify({
-            'success': True,
-            'checkpoint': checkpoint_name,
-            'iteration': game_manager.iteration,
-            'total_games': game_manager.total_games
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def find_latest_checkpoint(checkpoint_dir):
+    """Find most recent checkpoint in directory."""
+    cp_dir = Path(checkpoint_dir)
+    if not cp_dir.exists():
+        return None
+    checkpoints = sorted(cp_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True)
+    return checkpoints[0] if checkpoints else None
 
 
 def main():
@@ -438,20 +516,13 @@ def main():
                         help='Port to run web server (default: 5001)')
     parser.add_argument('--host', type=str, default='127.0.0.1',
                         help='Host to bind to (default: 127.0.0.1)')
-
     args = parser.parse_args()
 
-    # Select checkpoint
     if args.checkpoint is None:
-        checkpoint_dir = Path("data/checkpoints")
-        if not checkpoint_dir.exists():
+        checkpoint_path = find_latest_checkpoint("data/checkpoints")
+        if not checkpoint_path:
             print("No checkpoints found. Please train a model first.")
             return
-        checkpoints = sorted(checkpoint_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True)
-        if not checkpoints:
-            print("No checkpoints found. Please train a model first.")
-            return
-        checkpoint_path = checkpoints[0]
         print(f"Using latest checkpoint: {checkpoint_path}")
     else:
         checkpoint_path = Path(args.checkpoint)
@@ -459,31 +530,25 @@ def main():
             print(f"Checkpoint not found: {checkpoint_path}")
             return
 
-    # Initialize game manager
-    global game_manager, config_path, mcts_simulations
-    config_path = args.config
-    mcts_simulations = args.simulations
-
-    game_manager = WebGameManager(
+    app = Flask(__name__, template_folder=str(template_dir))
+    bp, server = create_mandala_blueprint(
         checkpoint_path=checkpoint_path,
-        config_path=config_path,
-        mcts_simulations=mcts_simulations
+        config_path=args.config,
+        simulations=args.simulations,
+        base_url='',
+        checkpoint_dir='data/checkpoints'
     )
+    app.register_blueprint(bp)
 
-    # Create templates directory if needed
-    templates_dir = Path(__file__).parent.parent / 'templates'
-    templates_dir.mkdir(exist_ok=True)
-
-    print(f"\n{'='*80}")
+    print(f"\n{'='*60}")
     print(f"MANDALA WEB PLAYER")
-    print(f"{'='*80}")
-    print(f"\n🎮 Starting web server on http://{args.host}:{args.port}")
-    print(f"📊 Model: Iteration {game_manager.iteration}, {game_manager.total_games} games")
-    print(f"\nOpen your browser and navigate to: http://localhost:{args.port}")
-    print(f"Press Ctrl+C to stop the server\n")
-    print(f"🔄 Auto-reload enabled - server will restart when files change\n")
+    print(f"{'='*60}")
+    print(f"\nStarting web server on http://{args.host}:{args.port}")
+    print(f"Model: Iteration {server.iteration}, {server.total_games} games")
+    print(f"\nOpen your browser: http://localhost:{args.port}")
+    print(f"Press Ctrl+C to stop\n")
 
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=False)
 
 
 if __name__ == '__main__':

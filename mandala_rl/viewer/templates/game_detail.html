@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ game_name }} - RL Training Observer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        h1 { color: #fff; }
+        a { color: #4a9eff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .iter-row {
+            background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 8px;
+            padding: 16px 20px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .iter-row:hover { background: #333; border-color: #4a9eff; }
+        .iter-row.expanded { border-color: #4a9eff; border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+        .iter-num { font-size: 18px; font-weight: bold; color: #fff; }
+        .iter-meta { display: flex; gap: 30px; font-size: 14px; color: #888; }
+        .iter-elo { color: #4caf50; font-weight: bold; }
+        .replays-panel {
+            background: #222; border: 1px solid #4a9eff; border-top: none;
+            border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+            padding: 12px 20px; margin-bottom: 8px; display: none;
+        }
+        .replays-panel.show { display: block; }
+        .replay-item {
+            background: #333; padding: 10px 14px; margin: 6px 0; border-radius: 6px;
+            border: 1px solid #444; cursor: pointer; transition: all 0.2s;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .replay-item:hover { background: #3a3a3a; border-color: #4a9eff; }
+        .winner { color: #4caf50; font-weight: bold; }
+        .loading { color: #888; padding: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{ game_name }}</h1>
+            <a href="/">Back to Dashboard</a>
+        </div>
+        <div id="iterations">Loading iterations...</div>
+    </div>
+
+    <script>
+        const GAME = '{{ game }}';
+        let expandedIter = null;
+
+        async function loadIterations() {
+            try {
+                const response = await fetch(`/api/iterations/${GAME}`);
+                const iterations = await response.json();
+                const container = document.getElementById('iterations');
+
+                if (iterations.length === 0) {
+                    container.innerHTML = '<div class="loading">No iterations yet</div>';
+                    return;
+                }
+
+                container.innerHTML = iterations.map(it => `
+                    <div class="iter-row ${expandedIter === it.iteration ? 'expanded' : ''}"
+                         id="iter-row-${it.iteration}"
+                         onclick="toggleIter(${it.iteration})">
+                        <span class="iter-num">Iteration ${it.iteration}</span>
+                        <div class="iter-meta">
+                            ${it.elo !== null ? `<span class="iter-elo">Elo: ${Math.round(it.elo)}</span>` : ''}
+                            <span>${it.num_replays} games</span>
+                        </div>
+                    </div>
+                    <div class="replays-panel ${expandedIter === it.iteration ? 'show' : ''}"
+                         id="replays-${it.iteration}">
+                        <div class="loading">Loading replays...</div>
+                    </div>
+                `).join('');
+
+                if (expandedIter !== null) {
+                    loadReplaysForIter(expandedIter);
+                }
+            } catch (error) {
+                console.error('Error loading iterations:', error);
+            }
+        }
+
+        async function toggleIter(iter) {
+            if (expandedIter === iter) {
+                expandedIter = null;
+                loadIterations();
+                return;
+            }
+            expandedIter = iter;
+            loadIterations();
+            loadReplaysForIter(iter);
+        }
+
+        async function loadReplaysForIter(iter) {
+            const panel = document.getElementById(`replays-${iter}`);
+            if (!panel) return;
+
+            try {
+                const response = await fetch(`/api/replays/${GAME}?iteration=${iter}&limit=50`);
+                const replays = await response.json();
+
+                if (replays.length === 0) {
+                    panel.innerHTML = '<div class="loading">No replays for this iteration</div>';
+                    return;
+                }
+
+                panel.innerHTML = replays.map(r => `
+                    <div class="replay-item" onclick="event.stopPropagation(); window.location='/replay/${GAME}/${r.filename}'">
+                        <span>${r.game_id}</span>
+                        <div style="display:flex; gap:20px; font-size:13px; color:#888;">
+                            <span>${r.num_moves} moves</span>
+                            <span class="winner">${r.winner !== null ? 'P' + r.winner + ' won' : 'Draw'}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                panel.innerHTML = '<div class="loading">Error loading replays</div>';
+            }
+        }
+
+        loadIterations();
+        setInterval(loadIterations, 10000);
+    </script>
+</body>
+</html>

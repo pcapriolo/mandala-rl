@@ -1,814 +1,597 @@
-<!DOCTYPE html>
+front<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Human vs AI - Mandala</title>
+    <title>Mandala - Play vs AI</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+        .header { background: #16213e; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+        .header h1 { font-size: 1.4em; color: #667eea; }
+        .model-info { font-size: 0.85em; color: #888; }
+
+        .controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600; min-height: 44px; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5568d3; }
+        .btn-secondary { background: #533483; color: white; }
+        .btn-secondary:hover { background: #3e2563; }
+        .btn-save { background: #48bb78; color: white; }
+        .btn-save:hover { background: #38a169; }
+
+        select { padding: 8px 12px; font-size: 0.9em; border: 2px solid #667eea; border-radius: 6px; background: #16213e; color: #eee; cursor: pointer; min-height: 44px; }
+
+        .game-area { display: flex; flex-direction: column; padding: 15px; gap: 12px; max-width: 1100px; margin: 0 auto; }
+
+        /* Game info bar */
+        .info-bar { display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; padding: 8px; background: #16213e; border-radius: 8px; }
+        .info-item { text-align: center; min-width: 70px; }
+        .info-item .value { font-size: 1.2em; font-weight: bold; color: #667eea; }
+        .info-item .label { font-size: 0.75em; color: #888; }
+
+        /* Player areas */
+        .player-area { background: #16213e; border-radius: 8px; padding: 12px; border: 2px solid transparent; }
+        .player-area.active { border-color: #667eea; }
+        .player-area.human { border-color: #48bb78; }
+        .player-title { font-weight: bold; font-size: 0.95em; margin-bottom: 8px; }
+        .player-section { margin-bottom: 8px; }
+        .player-section .label { font-size: 0.75em; color: #888; margin-bottom: 4px; }
+
+        .cards-row { display: flex; flex-wrap: wrap; gap: 6px; min-height: 36px; }
+
+        /* Color cards */
+        .card { width: 36px; height: 36px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 0.85em; border: 2px solid rgba(255,255,255,0.15); }
+        .card-hidden { background: #333; color: #666; border-color: #444; }
+        .color-0 { background: #c0392b; } /* Red */
+        .color-1 { background: #27ae60; } /* Green */
+        .color-2 { background: #8e44ad; } /* Purple */
+        .color-3 { background: #e67e22; } /* Orange */
+        .color-4 { background: #f1c40f; color: #333; } /* Yellow */
+        .color-5 { background: #bdc3c7; color: #333; } /* White */
+
+        /* Mandala boards */
+        .mandalas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .mandala { background: #16213e; border-radius: 8px; padding: 12px; border: 1px solid #333; }
+        .mandala h3 { font-size: 0.95em; margin-bottom: 8px; color: #667eea; }
+        .mandala-section { margin-bottom: 6px; }
+        .mandala-section .label { font-size: 0.7em; color: #888; }
+
+        /* Players grid */
+        .players-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        /* Moves panel */
+        .moves-panel { background: #0f3460; border-radius: 8px; padding: 12px; }
+        .moves-panel h3 { font-size: 0.95em; margin-bottom: 10px; color: #667eea; }
+        .moves-group { margin-bottom: 8px; }
+        .moves-group-label { font-size: 0.75em; color: #888; margin-bottom: 4px; font-weight: bold; }
+        .moves-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .move-btn { padding: 8px 14px; background: #16213e; color: #eee; border: 1px solid #333;
+            border-radius: 6px; cursor: pointer; font-size: 0.85em; min-height: 44px; display: flex; align-items: center; gap: 6px; }
+        .move-btn:hover { background: #1a3a6e; border-color: #667eea; }
+        .move-btn .move-card { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center;
+            justify-content: center; font-size: 0.75em; font-weight: bold; border: 1px solid rgba(255,255,255,0.2); }
+
+        /* Status */
+        .status-bar { padding: 10px; text-align: center; font-size: 0.95em; background: #0f3460; border-radius: 8px; }
+        .status-bar.thinking { color: #f1c40f; }
+        .status-bar.your-turn { color: #48bb78; }
+        .status-bar.game-over { color: #e94560; font-weight: bold; }
+
+        /* AI decision */
+        .ai-decision { padding: 8px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; }
+        .ai-decision .move { color: #f1c40f; }
+
+        /* Game over overlay */
+        .game-over-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+            display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .game-over-overlay.show { display: flex; }
+        .game-over-content { background: #16213e; padding: 30px; border-radius: 12px; text-align: center; max-width: 400px; width: 90%; }
+        .game-over-content h2 { font-size: 1.8em; margin-bottom: 15px; }
+        .game-over-content .result { font-size: 1.2em; color: #667eea; margin-bottom: 20px; }
+        .scores-row { display: flex; justify-content: space-around; margin: 20px 0; }
+        .score-box { text-align: center; }
+        .score-box .player { font-size: 0.9em; color: #888; margin-bottom: 5px; }
+        .score-box .score { font-size: 2.5em; font-weight: bold; color: #667eea; }
+
+        /* Feedback form */
+        .feedback-form { margin: 20px 0 0; text-align: left; }
+        .feedback-form h3 { font-size: 0.95em; color: #888; margin-bottom: 12px; text-align: center; }
+        .rating-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .rating-row .rating-label { font-size: 0.85em; color: #aaa; }
+        .stars { display: flex; gap: 4px; }
+        .stars span { font-size: 1.5em; cursor: pointer; color: #444; transition: color 0.15s; user-select: none; }
+        .stars span.filled { color: #f1c40f; }
+        .feedback-comment { width: 100%; padding: 8px; margin-top: 8px; background: #1a1a2e; color: #eee;
+            border: 1px solid #333; border-radius: 6px; font-size: 0.85em; resize: vertical; min-height: 50px; font-family: inherit; }
+        .feedback-comment::placeholder { color: #555; }
+        .feedback-actions { display: flex; gap: 10px; justify-content: center; margin-top: 15px; }
+        .btn-skip { padding: 8px 16px; background: transparent; color: #888; border: 1px solid #444; border-radius: 6px;
+            cursor: pointer; font-size: 0.9em; font-weight: 600; min-height: 44px; }
+        .btn-skip:hover { color: #eee; border-color: #888; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header { padding: 10px 15px; }
+            .header h1 { font-size: 1.2em; }
+            .controls { padding: 8px 15px; }
+            .game-area { padding: 10px; gap: 10px; }
+            .players-grid { grid-template-columns: 1fr; }
+            .mandalas { grid-template-columns: 1fr; }
+            .info-bar { gap: 10px; }
         }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 30px;
-        }
-
-        h1 {
-            text-align: center;
-            color: #667eea;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-        }
-
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 1.1em;
-        }
-
-        .game-controls {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
-
-        button {
-            padding: 12px 24px;
-            font-size: 16px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 600;
-        }
-
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn-secondary {
-            background: #48bb78;
-            color: white;
-        }
-
-        .btn-secondary:hover {
-            background: #38a169;
-            transform: translateY(-2px);
-        }
-
-        .btn-danger {
-            background: #f56565;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #e53e3e;
-        }
-
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none !important;
-        }
-
-        .game-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-
-        .info-card {
-            background: #f7fafc;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-        }
-
-        .info-card h3 {
-            font-size: 0.9em;
-            color: #666;
-            margin-bottom: 5px;
-        }
-
-        .info-card .value {
-            font-size: 1.3em;
-            font-weight: bold;
-            color: #2d3748;
-        }
-
-        .game-board {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-
-        .player-area {
-            background: #f7fafc;
-            padding: 20px;
-            border-radius: 15px;
-            border: 3px solid transparent;
-        }
-
-        .player-area.active {
-            border-color: #667eea;
-            background: #edf2f7;
-        }
-
-        .player-area.human {
-            border-color: #48bb78;
-        }
-
-        .player-title {
-            font-size: 1.4em;
-            font-weight: bold;
-            margin-bottom: 15px;
-            color: #2d3748;
-        }
-
-        .hand, .river, .cup {
-            margin-bottom: 15px;
-        }
-
-        .label {
-            font-weight: 600;
-            color: #4a5568;
-            margin-bottom: 8px;
-            font-size: 0.95em;
-        }
-
-        .cards {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            min-height: 40px;
-            background: white;
-            padding: 10px;
-            border-radius: 8px;
-        }
-
-        .card {
-            font-size: 2em;
-            transition: transform 0.2s;
-        }
-
-        .card:hover {
-            transform: scale(1.2);
-        }
-
-        .mandalas {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .mandala {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            padding: 20px;
-            border-radius: 15px;
-            color: white;
-        }
-
-        .mandala h3 {
-            margin-bottom: 15px;
-            font-size: 1.3em;
-        }
-
-        .mountain, .field {
-            background: rgba(255,255,255,0.2);
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-
-        .moves-panel {
-            background: #f7fafc;
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-        }
-
-        .moves-panel h3 {
-            margin-bottom: 15px;
-            color: #2d3748;
-        }
-
-        .move-button {
-            display: block;
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 8px;
-            background: white;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: left;
-            font-size: 1em;
-        }
-
-        .move-button:hover {
-            border-color: #667eea;
-            background: #edf2f7;
-            transform: translateX(5px);
-        }
-
-        .ai-thinking {
-            background: #fef5e7;
-            padding: 20px;
-            border-radius: 15px;
-            border-left: 4px solid #f39c12;
-            margin-bottom: 20px;
-            display: none;
-        }
-
-        .ai-thinking.show {
-            display: block;
-        }
-
-        .ai-move-info {
-            background: #e8f5e9;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-
-        .game-over {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-
-        .game-over.show {
-            display: flex;
-        }
-
-        .game-over-content {
-            background: white;
-            padding: 40px;
-            border-radius: 20px;
-            text-align: center;
-            max-width: 500px;
-        }
-
-        .game-over-content h2 {
-            font-size: 2.5em;
-            margin-bottom: 20px;
-        }
-
-        .game-over-content .winner {
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            color: #667eea;
-        }
-
-        .scores {
-            display: flex;
-            justify-content: space-around;
-            margin: 30px 0;
-        }
-
-        .score-box {
-            text-align: center;
-        }
-
-        .score-box .player {
-            font-size: 1.1em;
-            color: #666;
-            margin-bottom: 10px;
-        }
-
-        .score-box .score {
-            font-size: 3em;
-            font-weight: bold;
-            color: #667eea;
-        }
-
-        .status-message {
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            text-align: center;
-            font-weight: 600;
-        }
-
-        .status-info {
-            background: #bee3f8;
-            color: #2c5282;
-        }
-
-        .status-success {
-            background: #c6f6d5;
-            color: #22543d;
-        }
-
-        .status-error {
-            background: #fed7d7;
-            color: #742a2a;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .spinner {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(0,0,0,0.1);
-            border-radius: 50%;
-            border-top-color: #667eea;
-            animation: spin 1s linear infinite;
-        }
-
-        select {
-            padding: 12px 24px;
-            font-size: 16px;
-            border: 2px solid #667eea;
-            border-radius: 8px;
-            background: white;
-            cursor: pointer;
-            font-weight: 600;
-            color: #2d3748;
-            transition: all 0.3s;
-        }
-
-        select:hover {
-            border-color: #5568d3;
-            background: #edf2f7;
-        }
-
-        .checkpoint-info {
-            display: inline-block;
-            margin-left: 10px;
-            padding: 6px 12px;
-            background: #f7fafc;
-            border-radius: 6px;
-            font-size: 0.9em;
-            color: #4a5568;
-        }
-
-        .main-header {
-            text-align: center;
-            font-size: 3em;
-            font-weight: bold;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 15px;
-            letter-spacing: 2px;
+        @media (max-width: 480px) {
+            .header { flex-direction: column; align-items: flex-start; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .controls .btn, .controls select { width: 100%; }
+            .card { width: 32px; height: 32px; font-size: 0.75em; }
+            .move-btn { padding: 6px 10px; font-size: 0.8em; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="main-header">PLAY MANDALA</div>
-        <h1>👤 Human vs AI 🤖</h1>
-        <div class="subtitle" id="modelInfo">Loading model...</div>
+    <div class="header">
+        <h1>Mandala</h1>
+        <div class="model-info" id="modelInfo">Loading...</div>
+    </div>
 
-        <div class="game-controls">
-            <select id="checkpointSelect" onchange="reloadWithCheckpoint()" title="Select AI checkpoint">
-                <option value="">Loading checkpoints...</option>
-            </select>
-            <button class="btn-primary" onclick="newGame(0)">New Game (Play as Player 0)</button>
-            <button class="btn-primary" onclick="newGame(1)">New Game (Play as Player 1)</button>
+    <div class="controls">
+        <select id="checkpointSelect" onchange="reloadWithCheckpoint()">
+            <option value="">Loading checkpoints...</option>
+        </select>
+        <button class="btn btn-primary" onclick="newGame(0)">New Game (You First)</button>
+        <button class="btn btn-secondary" onclick="newGame(1)">New Game (AI First)</button>
+        <button class="btn btn-save" onclick="saveGame()">Save Game</button>
+    </div>
+
+    <div class="game-area">
+        <!-- Info bar -->
+        <div class="info-bar">
+            <div class="info-item"><div class="value" id="moveCount">-</div><div class="label">Move</div></div>
+            <div class="info-item"><div class="value" id="currentPlayer">-</div><div class="label">Turn</div></div>
+            <div class="info-item"><div class="value" id="deckSize">-</div><div class="label">Deck</div></div>
+            <div class="info-item"><div class="value" id="humanRole">-</div><div class="label">You</div></div>
         </div>
 
-        <div id="statusMessage"></div>
-
-        <div class="game-info">
-            <div class="info-card">
-                <h3>Move #</h3>
-                <div class="value" id="moveCount">-</div>
+        <!-- Mandalas -->
+        <div class="mandalas">
+            <div class="mandala" id="mandala0">
+                <h3>Mandala 0 (<span id="m0colors">0</span>/6)</h3>
+                <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain0"></div></div>
+                <div class="mandala-section"><div class="label">P0 Field</div><div class="cards-row" id="field0_0"></div></div>
+                <div class="mandala-section"><div class="label">P1 Field</div><div class="cards-row" id="field0_1"></div></div>
             </div>
-            <div class="info-card">
-                <h3>Current Player</h3>
-                <div class="value" id="currentPlayer">-</div>
-            </div>
-            <div class="info-card">
-                <h3>Deck</h3>
-                <div class="value" id="deckSize">-</div>
-            </div>
-            <div class="info-card">
-                <h3>Your Role</h3>
-                <div class="value" id="humanPlayer">-</div>
+            <div class="mandala" id="mandala1">
+                <h3>Mandala 1 (<span id="m1colors">0</span>/6)</h3>
+                <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain1"></div></div>
+                <div class="mandala-section"><div class="label">P0 Field</div><div class="cards-row" id="field1_0"></div></div>
+                <div class="mandala-section"><div class="label">P1 Field</div><div class="cards-row" id="field1_1"></div></div>
             </div>
         </div>
 
-        <div class="ai-thinking" id="aiThinking">
-            <strong>🤖 AI is thinking...</strong> <span class="spinner"></span>
-        </div>
-
-        <div class="game-board">
+        <!-- Player areas -->
+        <div class="players-grid">
             <div class="player-area" id="player0Area">
                 <div class="player-title">Player 0</div>
-                <div class="hand">
-                    <div class="label">Hand:</div>
-                    <div class="cards" id="hand0"></div>
-                </div>
-                <div class="river">
-                    <div class="label">River (Scoring):</div>
-                    <div class="cards" id="river0"></div>
-                </div>
-                <div class="cup">
-                    <div class="label">Cup:</div>
-                    <div class="value" id="cup0">0 cards</div>
-                </div>
+                <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand0"></div></div>
+                <div class="player-section"><div class="label">River</div><div class="cards-row" id="river0"></div></div>
+                <div class="player-section"><div class="label">Cup: <span id="cup0">0</span></div></div>
             </div>
-
             <div class="player-area" id="player1Area">
                 <div class="player-title">Player 1</div>
-                <div class="hand">
-                    <div class="label">Hand:</div>
-                    <div class="cards" id="hand1"></div>
-                </div>
-                <div class="river">
-                    <div class="label">River (Scoring):</div>
-                    <div class="cards" id="river1"></div>
-                </div>
-                <div class="cup">
-                    <div class="label">Cup:</div>
-                    <div class="value" id="cup1">0 cards</div>
-                </div>
+                <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand1"></div></div>
+                <div class="player-section"><div class="label">River</div><div class="cards-row" id="river1"></div></div>
+                <div class="player-section"><div class="label">Cup: <span id="cup1">0</span></div></div>
             </div>
         </div>
 
-        <div class="mandalas">
-            <div class="mandala">
-                <h3>Mandala 0 (<span id="mandala0Colors">0</span>/6 colors)</h3>
-                <div class="mountain">
-                    <div class="label">Mountain:</div>
-                    <div class="cards" id="mountain0"></div>
-                </div>
-                <div class="field">
-                    <div class="label">Field P0:</div>
-                    <div class="cards" id="field0_0"></div>
-                </div>
-                <div class="field">
-                    <div class="label">Field P1:</div>
-                    <div class="cards" id="field0_1"></div>
-                </div>
-            </div>
+        <!-- Status -->
+        <div class="status-bar" id="statusBar">Click "New Game" to start</div>
 
-            <div class="mandala">
-                <h3>Mandala 1 (<span id="mandala1Colors">0</span>/6 colors)</h3>
-                <div class="mountain">
-                    <div class="label">Mountain:</div>
-                    <div class="cards" id="mountain1"></div>
-                </div>
-                <div class="field">
-                    <div class="label">Field P0:</div>
-                    <div class="cards" id="field1_0"></div>
-                </div>
-                <div class="field">
-                    <div class="label">Field P1:</div>
-                    <div class="cards" id="field1_1"></div>
-                </div>
-            </div>
-        </div>
+        <!-- AI decision -->
+        <div class="ai-decision" id="aiDecision" style="display:none"></div>
 
-        <div class="moves-panel" id="movesPanel" style="display: none;">
-            <h3>Your Move:</h3>
+        <!-- Moves -->
+        <div class="moves-panel" id="movesPanel" style="display:none">
+            <h3>Your Move</h3>
             <div id="movesList"></div>
         </div>
     </div>
 
-    <div class="game-over" id="gameOver">
+    <!-- Game over -->
+    <div class="game-over-overlay" id="gameOver">
         <div class="game-over-content">
-            <h2 id="gameOverTitle">Game Over!</h2>
-            <div class="winner" id="winnerText"></div>
-            <div class="scores">
-                <div class="score-box">
-                    <div class="player">Player 0</div>
-                    <div class="score" id="finalScore0">0</div>
+            <h2 id="gameOverTitle">Game Over</h2>
+            <div class="result" id="winnerText"></div>
+            <div class="scores-row">
+                <div class="score-box"><div class="player">Player 0</div><div class="score" id="finalScore0">0</div></div>
+                <div class="score-box"><div class="player">Player 1</div><div class="score" id="finalScore1">0</div></div>
+            </div>
+            <div class="feedback-form">
+                <h3>Rate this game (optional)</h3>
+                <div class="rating-row">
+                    <span class="rating-label">Your play</span>
+                    <div class="stars" id="starsMyPlay"></div>
                 </div>
-                <div class="score-box">
-                    <div class="player">Player 1</div>
-                    <div class="score" id="finalScore1">0</div>
+                <div class="rating-row">
+                    <span class="rating-label">Bot's play</span>
+                    <div class="stars" id="starsBotPlay"></div>
+                </div>
+                <textarea class="feedback-comment" id="feedbackComment" placeholder="Any comments?" maxlength="500"></textarea>
+                <div class="feedback-actions">
+                    <button class="btn-skip" onclick="closeGameOver()">Skip</button>
+                    <button class="btn btn-primary" onclick="submitFeedback()">Submit & Play Again</button>
                 </div>
             </div>
-            <button class="btn-primary" onclick="closeGameOver()">Play Again</button>
         </div>
     </div>
 
     <script>
+        const BASE_URL = '{{ base_url }}';
+        const COLOR_NAMES = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White'];
+        const COLOR_SHORT = ['R', 'G', 'P', 'O', 'Y', 'W'];
         let currentState = null;
+        let turnStartTime = null;
+        let gameId = null;
 
-        async function init() {
-            await updateState();
+        function renderCard(colorIdx) {
+            return `<div class="card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</div>`;
+        }
+
+        function renderHiddenCards(count) {
+            return Array(count).fill('<div class="card card-hidden">?</div>').join('');
+        }
+
+        function renderCards(colors) {
+            return colors.map(c => renderCard(c)).join('');
         }
 
         async function newGame(humanPlayer) {
-            try {
-                const response = await fetch('/api/new_game', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ human_player: humanPlayer })
-                });
-                currentState = await response.json();
-                displayState();
-                showStatus('New game started! You are Player ' + humanPlayer, 'success');
-            } catch (error) {
-                showStatus('Error starting game: ' + error, 'error');
-            }
+            const resp = await fetch(`${BASE_URL}/api/new_game`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({human_player: humanPlayer})
+            });
+            currentState = await resp.json();
+            gameId = currentState.game_id;
+            turnStartTime = null;
+            renderGame();
+            checkAiTurn();
         }
 
-        async function updateState() {
-            try {
-                const response = await fetch('/api/state');
-                currentState = await response.json();
-                displayState();
-            } catch (error) {
-                console.error('Error updating state:', error);
-            }
-        }
-
-        function displayState() {
+        function renderGame() {
             if (!currentState || !currentState.state) return;
+            const s = currentState.state;
+            const hp = currentState.human_player;
 
-            const state = currentState.state;
-            const modelInfo = currentState.model_info;
-
-            // Update model info
+            // Model info
+            const mi = currentState.model_info;
             document.getElementById('modelInfo').textContent =
-                `Model: Iteration ${modelInfo.iteration}, ${modelInfo.total_games} games trained`;
+                `Iter ${mi.iteration} | ${mi.total_games} games | ${mi.checkpoint}`;
 
-            // Update game info
+            // Info bar
             document.getElementById('moveCount').textContent = currentState.move_count;
-            document.getElementById('currentPlayer').textContent = `Player ${currentState.current_player}`;
-            document.getElementById('deckSize').textContent = `${state.deck_size} cards`;
-            document.getElementById('humanPlayer').textContent = `Player ${currentState.human_player}`;
+            document.getElementById('currentPlayer').textContent = `P${currentState.current_player}`;
+            document.getElementById('deckSize').textContent = s.deck_size;
+            document.getElementById('humanRole').textContent = `P${hp}`;
 
-            // Update player areas - hide opponent's hand
-            const humanPlayer = currentState.human_player;
-            const opponentPlayer = 1 - humanPlayer;
-
-            // Show human's actual cards
-            if (humanPlayer === 0) {
-                displayCards('hand0', state.hands.player0);
-                displayHiddenHand('hand1', state.hands.player1.length);
+            // Hands: show human's cards, hide opponent's
+            if (hp === 0) {
+                document.getElementById('hand0').innerHTML = renderCards(s.hands.player0);
+                document.getElementById('hand1').innerHTML = renderHiddenCards(s.hands.player1.length);
             } else {
-                displayHiddenHand('hand0', state.hands.player0.length);
-                displayCards('hand1', state.hands.player1);
+                document.getElementById('hand0').innerHTML = renderHiddenCards(s.hands.player0.length);
+                document.getElementById('hand1').innerHTML = renderCards(s.hands.player1);
             }
 
-            displayCards('river0', state.rivers.player0);
-            displayCards('river1', state.rivers.player1);
-            document.getElementById('cup0').textContent = `${state.cups.player0} cards`;
-            document.getElementById('cup1').textContent = `${state.cups.player1} cards`;
+            // Rivers
+            document.getElementById('river0').innerHTML = renderCards(s.rivers.player0);
+            document.getElementById('river1').innerHTML = renderCards(s.rivers.player1);
 
-            // Highlight active player
-            document.getElementById('player0Area').classList.toggle('active', currentState.current_player === 0);
-            document.getElementById('player1Area').classList.toggle('active', currentState.current_player === 1);
+            // Cups
+            document.getElementById('cup0').textContent = s.cups.player0;
+            document.getElementById('cup1').textContent = s.cups.player1;
 
-            // Highlight human player
-            document.getElementById('player0Area').classList.toggle('human', currentState.human_player === 0);
-            document.getElementById('player1Area').classList.toggle('human', currentState.human_player === 1);
-
-            // Update mandalas
+            // Mandalas
             for (let i = 0; i < 2; i++) {
-                const mandala = state.mandalas[i];
-                displayCards(`mountain${i}`, mandala.mountain);
-                displayCards(`field${i}_0`, mandala.field_p0);
-                displayCards(`field${i}_1`, mandala.field_p1);
-                document.getElementById(`mandala${i}Colors`).textContent = mandala.colors;
+                const m = s.mandalas[i];
+                document.getElementById(`mountain${i}`).innerHTML = renderCards(m.mountain);
+                document.getElementById(`field${i}_0`).innerHTML = renderCards(m.field_p0);
+                document.getElementById(`field${i}_1`).innerHTML = renderCards(m.field_p1);
+                document.getElementById(`m${i}colors`).textContent = m.colors;
             }
 
-            // Show moves if it's human's turn
-            if (currentState.current_player === currentState.human_player && !currentState.is_terminal) {
+            // Active/human highlights
+            document.getElementById('player0Area').className = 'player-area' +
+                (currentState.current_player === 0 ? ' active' : '') +
+                (hp === 0 ? ' human' : '');
+            document.getElementById('player1Area').className = 'player-area' +
+                (currentState.current_player === 1 ? ' active' : '') +
+                (hp === 1 ? ' human' : '');
+
+            // Moves
+            if (currentState.current_player === hp && !currentState.is_terminal) {
                 displayMoves(currentState.valid_moves);
+                turnStartTime = Date.now();
             } else {
                 document.getElementById('movesPanel').style.display = 'none';
             }
 
-            // Handle game over
+            // Status
+            updateStatus();
+
+            // Game over
             if (currentState.is_terminal) {
                 showGameOver();
             }
-
-            // Auto-play AI move if it's AI's turn
-            if (currentState.current_player !== currentState.human_player && !currentState.is_terminal) {
-                setTimeout(playAIMove, 1000);
-            }
-        }
-
-        function displayCards(elementId, cards) {
-            const element = document.getElementById(elementId);
-            element.innerHTML = cards.map(card => `<span class="card">${card}</span>`).join('');
-        }
-
-        function displayHiddenHand(elementId, cardCount) {
-            const element = document.getElementById(elementId);
-            const hiddenCards = Array(cardCount).fill('🂠').map(card => `<span class="card">${card}</span>`).join('');
-            element.innerHTML = hiddenCards || '<span style="color: #718096;">No cards</span>';
         }
 
         function displayMoves(moves) {
             const panel = document.getElementById('movesPanel');
             const list = document.getElementById('movesList');
 
-            list.innerHTML = moves.map(([action, description]) =>
-                `<button class="move-button" onclick="makeMove(${action})">${description}</button>`
-            ).join('');
+            // Group by type
+            const mountain = [], field = [], discard = [];
+            moves.forEach(([action, desc]) => {
+                if (action < 12) mountain.push([action, desc]);
+                else if (action < 24) field.push([action, desc]);
+                else discard.push([action, desc]);
+            });
 
+            let html = '';
+            if (mountain.length > 0) {
+                html += `<div class="moves-group"><div class="moves-group-label">Mountain</div><div class="moves-list">`;
+                html += mountain.map(([a, d]) => {
+                    const colorIdx = a % 6;
+                    const mIdx = Math.floor(a / 6);
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Mt${mIdx}</button>`;
+                }).join('');
+                html += `</div></div>`;
+            }
+            if (field.length > 0) {
+                html += `<div class="moves-group"><div class="moves-group-label">Field</div><div class="moves-list">`;
+                html += field.map(([a, d]) => {
+                    const off = a - 12;
+                    const colorIdx = off % 6;
+                    const mIdx = Math.floor(off / 6);
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Fd${mIdx}</button>`;
+                }).join('');
+                html += `</div></div>`;
+            }
+            if (discard.length > 0) {
+                html += `<div class="moves-group"><div class="moves-group-label">Discard</div><div class="moves-list">`;
+                html += discard.map(([a, d]) => {
+                    const colorIdx = a - 24;
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Discard</button>`;
+                }).join('');
+                html += `</div></div>`;
+            }
+
+            list.innerHTML = html;
             panel.style.display = 'block';
         }
 
         async function makeMove(action) {
-            try {
-                showStatus('Making move...', 'info');
-                const response = await fetch('/api/move', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action })
-                });
-                currentState = await response.json();
-                displayState();
-                clearStatus();
-            } catch (error) {
-                showStatus('Error making move: ' + error, 'error');
-            }
+            const thinkTime = turnStartTime ? Date.now() - turnStartTime : null;
+            turnStartTime = null;
+
+            document.getElementById('statusBar').textContent = 'Making move...';
+            document.getElementById('statusBar').className = 'status-bar thinking';
+            document.getElementById('movesPanel').style.display = 'none';
+
+            const resp = await fetch(`${BASE_URL}/api/move`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({game_id: gameId, action: action, think_time_ms: thinkTime})
+            });
+            currentState = await resp.json();
+            renderGame();
+            checkAiTurn();
         }
 
-        async function playAIMove() {
-            try {
-                document.getElementById('aiThinking').classList.add('show');
-                const response = await fetch('/api/ai_move', {
+        async function checkAiTurn() {
+            if (!currentState || currentState.is_terminal) return;
+            if (currentState.current_player !== currentState.human_player) {
+                document.getElementById('statusBar').textContent = 'AI is thinking...';
+                document.getElementById('statusBar').className = 'status-bar thinking';
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const resp = await fetch(`${BASE_URL}/api/ai_move`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId})
                 });
-                const result = await response.json();
-                document.getElementById('aiThinking').classList.remove('show');
+                currentState = await resp.json();
 
-                if (result.ai_decision) {
-                    showStatus('🤖 AI played: ' + result.ai_decision.description, 'info');
-
-                    // Wait 2 seconds before updating board so user can read what AI did
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                if (currentState.ai_decision) {
+                    const dec = currentState.ai_decision;
+                    const decEl = document.getElementById('aiDecision');
+                    decEl.style.display = 'block';
+                    let html = `<span class="move">AI: ${dec.description}</span>`;
+                    if (dec.top_moves && dec.top_moves.length > 1) {
+                        html += '<br><small>Top: ' + dec.top_moves.map(m =>
+                            `${m.description} (${m.probability.toFixed(1)}%)`
+                        ).join(', ') + '</small>';
+                    }
+                    decEl.innerHTML = html;
                 }
 
-                currentState = result;
-                displayState();
-
-                setTimeout(clearStatus, 3000);
-            } catch (error) {
-                document.getElementById('aiThinking').classList.remove('show');
-                showStatus('Error getting AI move: ' + error, 'error');
+                renderGame();
+                checkAiTurn();
             }
         }
 
-        async function saveGame() {
-            try {
-                const response = await fetch('/api/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                const result = await response.json();
-                if (result.success) {
-                    showStatus(`Game saved to ${result.filename}! (${result.moves} moves)`, 'success');
-                } else {
-                    showStatus('Error: ' + result.error, 'error');
-                }
-            } catch (error) {
-                showStatus('Error saving game: ' + error, 'error');
-            }
-        }
-
-        async function showGameOver() {
-            const gameOver = document.getElementById('gameOver');
-            const winner = currentState.winner;
-            const scores = currentState.scores;
-
-            document.getElementById('finalScore0').textContent = scores.player0;
-            document.getElementById('finalScore1').textContent = scores.player1;
-
-            if (winner === currentState.human_player) {
-                document.getElementById('gameOverTitle').textContent = '🎉 You Win! 🎉';
-                document.getElementById('winnerText').textContent = 'Congratulations! You beat the AI!';
-            } else if (winner === -1) {
-                document.getElementById('gameOverTitle').textContent = '🤝 Draw! 🤝';
-                document.getElementById('winnerText').textContent = 'The game ended in a tie!';
+        function updateStatus() {
+            const bar = document.getElementById('statusBar');
+            if (currentState.is_terminal) {
+                const s = currentState.scores;
+                bar.textContent = `Game Over! P0: ${s.player0} - P1: ${s.player1}`;
+                bar.className = 'status-bar game-over';
+            } else if (currentState.current_player === currentState.human_player) {
+                bar.textContent = 'Your turn - choose a move';
+                bar.className = 'status-bar your-turn';
             } else {
-                document.getElementById('gameOverTitle').textContent = '🤖 AI Wins! 🤖';
-                document.getElementById('winnerText').textContent = 'Better luck next time!';
+                bar.textContent = 'AI is thinking...';
+                bar.className = 'status-bar thinking';
+            }
+        }
+
+        function showGameOver() {
+            const w = currentState.winner;
+            const hp = currentState.human_player;
+            const s = currentState.scores;
+
+            document.getElementById('finalScore0').textContent = s.player0;
+            document.getElementById('finalScore1').textContent = s.player1;
+
+            if (w === hp) {
+                document.getElementById('gameOverTitle').textContent = 'You Win!';
+                document.getElementById('winnerText').textContent = 'You beat the AI!';
+            } else if (w === -1) {
+                document.getElementById('gameOverTitle').textContent = 'Draw!';
+                document.getElementById('winnerText').textContent = 'The game ended in a tie.';
+            } else {
+                document.getElementById('gameOverTitle').textContent = 'AI Wins';
+                document.getElementById('winnerText').textContent = 'Better luck next time.';
             }
 
-            // Auto-save the game for training data
-            await saveGame();
-
-            gameOver.classList.add('show');
+            // Auto-save
+            saveGame();
+            resetFeedback();
+            document.getElementById('gameOver').classList.add('show');
         }
 
         function closeGameOver() {
             document.getElementById('gameOver').classList.remove('show');
         }
 
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('statusMessage');
-            statusDiv.innerHTML = `<div class="status-message status-${type}">${message}</div>`;
-        }
-
-        function clearStatus() {
-            document.getElementById('statusMessage').innerHTML = '';
+        async function saveGame() {
+            if (!gameId) return;
+            try {
+                await fetch(`${BASE_URL}/api/save`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId})
+                });
+            } catch (e) {
+                console.error('Save failed:', e);
+            }
         }
 
         async function loadCheckpoints() {
             try {
-                const response = await fetch('/api/checkpoints');
-                const checkpoints = await response.json();
-
+                const resp = await fetch(`${BASE_URL}/api/checkpoints`);
+                const checkpoints = await resp.json();
                 const select = document.getElementById('checkpointSelect');
-                select.innerHTML = '<option value="">Select a different checkpoint...</option>';
-
-                checkpoints.forEach((cp, index) => {
-                    const option = document.createElement('option');
-                    option.value = cp.name;
-                    option.textContent = `${cp.name} (Iter: ${cp.iteration}, Games: ${cp.total_games})`;
-
-                    // Mark current checkpoint as selected
+                select.innerHTML = '<option value="">Select checkpoint...</option>';
+                checkpoints.forEach(cp => {
+                    const opt = document.createElement('option');
+                    opt.value = cp.name;
+                    opt.textContent = `${cp.name} (Iter ${cp.iteration}, ${cp.total_games} games)`;
                     if (currentState && currentState.model_info && cp.name === currentState.model_info.checkpoint) {
-                        option.selected = true;
-                    } else if (index === 0 && !currentState) {
-                        option.selected = true;
+                        opt.selected = true;
                     }
-
-                    select.appendChild(option);
+                    select.appendChild(opt);
                 });
-            } catch (error) {
-                console.error('Error loading checkpoints:', error);
+            } catch (e) {
+                console.error('Error loading checkpoints:', e);
             }
         }
 
         async function reloadWithCheckpoint() {
             const select = document.getElementById('checkpointSelect');
-            const checkpoint = select.value;
-
-            if (!checkpoint) return;
-
+            if (!select.value) return;
             try {
-                showStatus('Loading checkpoint: ' + checkpoint, 'info');
-
-                const response = await fetch('/api/load_checkpoint', {
+                const resp = await fetch(`${BASE_URL}/api/load_checkpoint`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ checkpoint })
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({checkpoint: select.value})
                 });
-
-                const result = await response.json();
-
+                const result = await resp.json();
                 if (result.success) {
-                    showStatus(`Loaded checkpoint! Iteration: ${result.iteration}, Games: ${result.total_games}`, 'success');
+                    document.getElementById('statusBar').textContent = `Loaded: Iter ${result.iteration}`;
+                    document.getElementById('statusBar').className = 'status-bar your-turn';
                     await updateState();
-                    setTimeout(clearStatus, 3000);
-                } else {
-                    showStatus('Error: ' + result.error, 'error');
                 }
-            } catch (error) {
-                showStatus('Error loading checkpoint: ' + error, 'error');
+            } catch (e) {
+                console.error('Error loading checkpoint:', e);
             }
         }
 
-        // Initialize on load
-        async function initAll() {
-            await updateState();
-            await loadCheckpoints();
+        async function updateState() {
+            if (!gameId) return;
+            try {
+                const resp = await fetch(`${BASE_URL}/api/state?game_id=${gameId}`);
+                currentState = await resp.json();
+                renderGame();
+            } catch (e) {
+                console.error('Error updating state:', e);
+            }
         }
 
-        initAll();
+        // Star rating + feedback
+        let myPlayRating = 0;
+        let botPlayRating = 0;
+
+        function initStars(containerId, setter) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            let currentRating = 0;
+            for (let i = 1; i <= 5; i++) {
+                const star = document.createElement('span');
+                star.textContent = '\u2605';
+                star.dataset.value = i;
+                star.onmouseenter = () => updateStars(containerId, i);
+                star.onclick = () => {
+                    currentRating = i;
+                    setter(i);
+                    updateStars(containerId, i);
+                };
+                container.appendChild(star);
+            }
+            container.onmouseleave = () => updateStars(containerId, currentRating);
+        }
+
+        function updateStars(containerId, rating) {
+            const stars = document.getElementById(containerId).querySelectorAll('span');
+            stars.forEach(s => {
+                s.classList.toggle('filled', parseInt(s.dataset.value) <= rating);
+            });
+        }
+
+        function resetFeedback() {
+            myPlayRating = 0;
+            botPlayRating = 0;
+            initStars('starsMyPlay', v => { myPlayRating = v; });
+            initStars('starsBotPlay', v => { botPlayRating = v; });
+            document.getElementById('feedbackComment').value = '';
+        }
+
+        async function submitFeedback() {
+            if (!gameId) { closeGameOver(); return; }
+            const payload = { game_id: gameId };
+            if (myPlayRating > 0) payload.my_play_rating = myPlayRating;
+            if (botPlayRating > 0) payload.bot_play_rating = botPlayRating;
+            const comment = document.getElementById('feedbackComment').value.trim();
+            if (comment) payload.comment = comment;
+
+            try {
+                await fetch(`${BASE_URL}/api/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+            } catch (e) {
+                console.error('Feedback submit failed:', e);
+            }
+            closeGameOver();
+        }
+
+        loadCheckpoints();
     </script>
 </body>
 </html>
