@@ -1,8 +1,9 @@
 """Main training loop."""
+import json
+import time
 import torch
 import torch.optim as optim
 import numpy as np
-import subprocess
 import sys
 from pathlib import Path
 from tqdm import tqdm
@@ -42,7 +43,7 @@ class Trainer:
             network: Neural network
             config: Training configuration
             device: PyTorch device
-            config_path: Path to YAML config (for background eval subprocess)
+            config_path: Path to YAML config
         """
         self.game = game
         self.network = network.to(device)
@@ -63,11 +64,12 @@ class Trainer:
             temperature=config.get('temperature', 1.0),
             temperature_threshold=config.get('temperature_threshold', 30),
             c_puct=config.get('c_puct', 1.0),
-            device=device
+            device=device,
+            leaves_per_game=config.get('leaves_per_game', 1),
         )
 
         # Optimizer
-        self.optimizer = optim.Adam(
+        self.optimizer = optim.AdamW(
             network.parameters(),
             lr=config.get('learning_rate', 1e-3),
             weight_decay=config.get('weight_decay', 1e-4)
@@ -118,7 +120,24 @@ class Trainer:
         self.total_games = 0
         self.games_in_current_iteration = 0  # Track progress within iteration
         self.best_checkpoint = None
-        self._eval_process = None  # Background eval subprocess
+
+    def _write_heartbeat(self, phase: str, detail: str = ""):
+        """Write a heartbeat JSON so the observer can show live progress."""
+        num_games = self.config.get('games_per_iteration', 100)
+        hb = {
+            'iteration': self.iteration,
+            'phase': phase,
+            'detail': detail,
+            'game': self.games_in_current_iteration,
+            'games_total': num_games,
+            'total_games': self.total_games,
+            'timestamp': time.time(),
+        }
+        hb_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'heartbeat.json'
+        try:
+            hb_path.write_text(json.dumps(hb))
+        except Exception:
+            pass
 
     def train(self, num_iterations: int):
         """
@@ -146,19 +165,23 @@ class Trainer:
 
             # 1. Self-play
             print("\n[1/3] Generating self-play games...")
+            self._write_heartbeat('selfplay', '0/?')
             games = self._generate_selfplay_games()
             print(f"Generated {len(games)} games")
 
             # 2. Add to replay buffer
             print("\n[2/3] Adding examples to replay buffer...")
+            self._write_heartbeat('training', 'adding to buffer')
             self._add_to_replay_buffer(games)
             print(f"Replay buffer size: {len(self.replay_buffer)}")
 
             # 3. Train network
             print("\n[3/3] Training network...")
+            self._write_heartbeat('training', 'gradient updates')
             self._train_network()
 
             # 4. Save checkpoint
+            self._write_heartbeat('checkpoint', 'saving')
             self._save_checkpoint()
 
             # 5. Evaluate (async — runs on CPU in background, never blocks training)
@@ -196,6 +219,7 @@ class Trainer:
             self.games_in_current_iteration = start_game + game_idx + 1
             self.total_games += 1
             progress.update(1)
+            self._write_heartbeat('selfplay', f'{self.games_in_current_iteration}/{num_games}')
 
             # Save checkpoint every N games
             if self.games_in_current_iteration % checkpoint_every_n_games == 0:
@@ -291,6 +315,19 @@ class Trainer:
               f"Value: {epoch_value_loss:.4f} "
               f"({total_steps} gradient steps)")
 
+        # Append to losses.jsonl for dashboard charts
+        losses_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'losses.jsonl'
+        try:
+            with open(losses_path, 'a') as f:
+                f.write(json.dumps({
+                    'iteration': self.iteration,
+                    'total': round(epoch_total_loss, 4),
+                    'policy': round(epoch_policy_loss, 4),
+                    'value': round(epoch_value_loss, 4),
+                }) + '\n')
+        except Exception:
+            pass
+
     def _save_checkpoint(self, suffix=''):
         """Save network checkpoint and replay buffer.
 
@@ -341,8 +378,8 @@ class Trainer:
         if game_checkpoints:
             print(f"Cleaned up {len(game_checkpoints)} game-level checkpoints")
 
-        # 2. Prune old iteration checkpoints, keep last 20
-        keep_last = 20
+        # 2. Prune old iteration checkpoints, keep last 5
+        keep_last = 5
         iter_checkpoints = sorted(
             checkpoint_dir.glob('model_iter_*.pt'),
             key=lambda f: int(f.stem.split('_')[-1])
@@ -358,8 +395,15 @@ class Trainer:
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
         self._unwrapped_network.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        try:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        except (ValueError, KeyError):
+            print("Optimizer state incompatible, starting fresh")
+        # Reset LR to config value — checkpoint may have decayed LR from old schedule
+        config_lr = self.config.get('learning_rate', 1e-3)
+        for pg in self.optimizer.param_groups:
+            pg['lr'] = config_lr
+        # Skip scheduler state — use fresh schedule from config
         self.iteration = checkpoint['iteration']
         self.total_games = checkpoint['total_games']
 
@@ -377,40 +421,8 @@ class Trainer:
             print(f"Mid-iteration: will continue from game {self.games_in_current_iteration + 1}")
 
     def _start_async_eval(self):
-        """Spawn background eval subprocess on CPU. Never blocks training."""
-        # Skip if previous eval is still running
-        if self._eval_process is not None and self._eval_process.poll() is None:
-            print(f"[EVAL] Skipping iter {self.iteration} — previous eval still running")
-            return
-
-        checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
-        prev_checkpoint = checkpoint_dir / f'model_iter_{self.iteration - 1}.pt'
-        curr_checkpoint = checkpoint_dir / f'model_iter_{self.iteration}.pt'
-
-        if not prev_checkpoint.exists() or not curr_checkpoint.exists():
-            print(f"[EVAL] Skipping iter {self.iteration} — checkpoint not found")
-            return
-
-        eval_script = Path(__file__).parent.parent.parent / 'scripts' / 'eval_worker.py'
-        if not eval_script.exists():
-            print(f"[EVAL] eval_worker.py not found at {eval_script}")
-            return
-
-        cmd = [
-            sys.executable, str(eval_script),
-            '--config', str(self._config_path),
-            '--iteration', str(self.iteration),
-            '--checkpoint-dir', str(checkpoint_dir),
-            '--elo-file', str(self.elo_file),
-            '--log-dir', str(self.config.get('log_dir', 'data/logs')),
-        ]
-
-        log_dir = Path(self.config.get('log_dir', 'data/logs'))
-        log_dir.mkdir(parents=True, exist_ok=True)
-        eval_log = open(log_dir / 'eval_worker.log', 'a')
-
-        self._eval_process = subprocess.Popen(cmd, stdout=eval_log, stderr=subprocess.STDOUT)
-        print(f"[EVAL] Started background eval for iter {self.iteration} (PID {self._eval_process.pid})")
+        """No-op: eval is handled by the standalone eval_daemon.py process."""
+        print(f"[EVAL] Checkpoint saved — eval_daemon will pick up iter {self.iteration}")
 
     def _evaluate_checkpoint(self):
         """Evaluate current model against previous checkpoint (synchronous, legacy)."""

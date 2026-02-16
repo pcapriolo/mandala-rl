@@ -1,55 +1,68 @@
 #!/bin/bash
 # Sync training data from RunPod to local for dashboard monitoring.
-# Uses curl only (no wget dependency). Works on macOS and Linux.
+# Uses SSH/SCP directly (no HTTP file server needed).
 #
 # Usage:
-#   ./scripts/sync_from_runpod.sh https://<pod-id>-8888.proxy.runpod.net
-#
-# On RunPod first:
-#   cd /workspace/mandala-rl
-#   nohup python3 -m http.server 8888 --directory data > fileserver.log 2>&1 &
+#   ./scripts/sync_from_runpod.sh          # dashboard data only (fast, every 30s)
+#   ./scripts/sync_from_runpod.sh 60       # custom interval
+#   SYNC_CHECKPOINTS=1 ./scripts/sync_from_runpod.sh   # also sync checkpoint files
 
-set -e
+REMOTE="root@38.147.83.11"
+PORT="17226"
+KEY="$HOME/.ssh/id_ed25519"
+SSH_OPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=no -o ServerAliveInterval=5"
+SCP="scp $SSH_OPTS -P $PORT -i $KEY -q"
+SSH="ssh $SSH_OPTS -p $PORT -i $KEY"
+REMOTE_BASE="/workspace/mandala-rl/data"
+LOCAL_BASE="data"
+INTERVAL="${1:-30}"
 
-RUNPOD_URL="${1:?Usage: $0 <runpod-data-url>}"
-INTERVAL="${2:-30}"
+mkdir -p "$LOCAL_BASE/logs" "$LOCAL_BASE/replays" "$LOCAL_BASE/checkpoints"
+mkdir -p "$LOCAL_BASE/lost_cities/logs" "$LOCAL_BASE/lost_cities/replays" "$LOCAL_BASE/lost_cities/checkpoints"
 
-mkdir -p data/logs data/replays data/checkpoints
-mkdir -p data/lost_cities/logs data/lost_cities/replays data/lost_cities/checkpoints
-
-# Fetch directory listing and extract filenames matching a pattern
-sync_dir() {
-    local url="$1" local_dir="$2" pattern="$3"
-    local listing
-    listing=$(curl -sf "$url" 2>/dev/null) || return 0
-    echo "$listing" | grep -oE "href=\"[^\"]*${pattern}[^\"]*\"" | sed 's/href="//;s/"//' | while read -r filename; do
-        if [ ! -f "${local_dir}/${filename}" ]; then
-            curl -sf "${url}${filename}" -o "${local_dir}/${filename}" 2>/dev/null || true
-        fi
-    done
+sync_elo() {
+    local remote_path="$1" local_file="$2"
+    local tmp="/tmp/elo_remote_$$.json"
+    $SCP "$REMOTE:$remote_path" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+    local remote_count=$(grep -c "iter_" "$tmp" 2>/dev/null || echo 0)
+    local local_count=$(grep -c "iter_" "$local_file" 2>/dev/null || echo 0)
+    if [ "$remote_count" -ge "$local_count" ]; then
+        mv "$tmp" "$local_file"
+    else
+        rm -f "$tmp"
+    fi
 }
 
-echo "Syncing from $RUNPOD_URL every ${INTERVAL}s..."
-echo "Press Ctrl+C to stop"
+echo "Syncing from RunPod ($REMOTE:$PORT) every ${INTERVAL}s..."
 
 while true; do
-    # Elo ratings (1KB, always overwrite — RunPod has full history)
-    curl -sf "$RUNPOD_URL/elo_ratings.json" -o data/elo_ratings.json 2>/dev/null || true
+    # Small dashboard files (heartbeats, losses, elo)
+    $SCP "$REMOTE:$REMOTE_BASE/heartbeat.json" "$LOCAL_BASE/heartbeat.json" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/eval_heartbeat.json" "$LOCAL_BASE/eval_heartbeat.json" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/losses.jsonl" "$LOCAL_BASE/losses.jsonl" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/lost_cities/heartbeat.json" "$LOCAL_BASE/lost_cities/heartbeat.json" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/lost_cities/eval_heartbeat.json" "$LOCAL_BASE/lost_cities/eval_heartbeat.json" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/lost_cities/losses.jsonl" "$LOCAL_BASE/lost_cities/losses.jsonl" 2>/dev/null || true
 
-    # TensorBoard event files (only download new ones)
-    sync_dir "$RUNPOD_URL/logs/" "data/logs" "events"
+    sync_elo "$REMOTE_BASE/elo_ratings.json" "$LOCAL_BASE/elo_ratings.json"
+    sync_elo "$REMOTE_BASE/lost_cities/elo_ratings.json" "$LOCAL_BASE/lost_cities/elo_ratings.json"
 
-    # Game replays (only download new ones)
-    sync_dir "$RUNPOD_URL/replays/" "data/replays" ".json"
+    # TensorBoard events
+    $SCP "$REMOTE:$REMOTE_BASE/logs/events.*" "$LOCAL_BASE/logs/" 2>/dev/null || true
+    $SCP "$REMOTE:$REMOTE_BASE/lost_cities/logs/events.*" "$LOCAL_BASE/lost_cities/logs/" 2>/dev/null || true
 
-    # Iteration checkpoints (model_iter_*.pt, ~20MB each — skip model_latest.pt which includes replay buffer)
-    sync_dir "$RUNPOD_URL/checkpoints/" "data/checkpoints" "model_iter_"
-
-    # Lost Cities — same structure under data/lost_cities/
-    curl -sf "$RUNPOD_URL/lost_cities/elo_ratings.json" -o data/lost_cities/elo_ratings.json 2>/dev/null || true
-    sync_dir "$RUNPOD_URL/lost_cities/logs/" "data/lost_cities/logs" "events"
-    sync_dir "$RUNPOD_URL/lost_cities/replays/" "data/lost_cities/replays" ".json"
-    sync_dir "$RUNPOD_URL/lost_cities/checkpoints/" "data/lost_cities/checkpoints" "model_iter_"
+    # Checkpoints (optional — large files, only when SYNC_CHECKPOINTS=1)
+    if [ "${SYNC_CHECKPOINTS:-0}" = "1" ]; then
+        for dir_pair in "checkpoints:checkpoints" "lost_cities/checkpoints:lost_cities/checkpoints"; do
+            remote_dir="${dir_pair%%:*}"
+            local_dir="${dir_pair##*:}"
+            remote_files=$($SSH "$REMOTE" "ls $REMOTE_BASE/$remote_dir/model_iter_*.pt 2>/dev/null" 2>/dev/null) || continue
+            for rp in $remote_files; do
+                fn=$(basename "$rp")
+                [ -f "$LOCAL_BASE/$local_dir/$fn" ] || $SCP "$REMOTE:$rp" "$LOCAL_BASE/$local_dir/$fn" 2>/dev/null || true
+            done
+        done
+    fi
 
     echo "[$(date +%H:%M:%S)] Synced"
     sleep "$INTERVAL"
