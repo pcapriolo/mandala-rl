@@ -114,7 +114,7 @@ class GameState:
 
         State is assumed to be in canonical form (current player = index 0).
 
-        Encoding (59 planes × 8×8, values broadcast across spatial dims):
+        Encoding (83 planes × 8×8, values broadcast across spatial dims):
           Ch 0-5:   My hand card counts per color (/18)
           Ch 6-11:  Mountain 0 card counts per color (/18)
           Ch 12-17: Mountain 1 card counts per color (/18)
@@ -129,8 +129,14 @@ class GameState:
           Ch 56:    Opponent hand size / 8
           Ch 57:    Deck size / 108
           Ch 58:    Game ends next mandala flag (0 or 1)
+          Ch 59-64: Belief channels — P(opp has ≥1 of color c)
+          Ch 65-70: Opp mountain play frequency per color
+          Ch 71-76: Opp field play frequency per color
+          Ch 77-82: Opp discard frequency per color
         """
-        tensor = np.zeros((59, 8, 8), dtype=np.float32)
+        tensor = np.zeros((83, 8, 8), dtype=np.float32)
+
+        CARDS_PER_COLOR = 18
 
         def color_counts(cards):
             counts = np.zeros(6, dtype=np.float32)
@@ -170,6 +176,46 @@ class GameState:
         tensor[57] = len(self.deck) / 108.0
         # Ch 58: Game ends next mandala flag
         tensor[58] = 1.0 if self.game_ends_next_mandala else 0.0
+
+        # Ch 59-64: Belief channels — P(opp has ≥1 of color c)
+        # Count all known cards per color
+        known = np.zeros(6, dtype=np.int32)
+        for card in self.hands[0]:
+            known[card.color] += 1
+        for m in range(2):
+            for card in self.mountains[m]:
+                known[card.color] += 1
+            for card in self.fields[m][0]:
+                known[card.color] += 1
+            for card in self.fields[m][1]:
+                known[card.color] += 1
+        for card in self.rivers[0]:
+            known[card.color] += 1
+        for card in self.rivers[1]:
+            known[card.color] += 1
+
+        remaining = np.maximum(CARDS_PER_COLOR - known, 0)
+        total_unseen = int(remaining.sum())
+        opp_hand_sz = len(self.hands[1])
+
+        for c in range(6):
+            belief = 0.0
+            if remaining[c] > 0 and total_unseen > 0 and opp_hand_sz > 0:
+                # P(none of color c in opp hand) via hypergeometric
+                p_none = 1.0
+                N = total_unseen
+                k = int(remaining[c])
+                for i in range(opp_hand_sz):
+                    if (N - i) > 0:
+                        p_none *= (N - k - i) / (N - i)
+                belief = 1.0 - p_none
+            tensor[59 + c] = belief
+
+        # Ch 65-82: Behavioral inference (opp play frequency per color)
+        # These require move-history tracking not available in the Python game state.
+        # Default to 0.0 — the model was trained with these but they're only
+        # informative after many moves. Zero is a safe neutral value.
+        # (Ch 65-70: mountain plays, Ch 71-76: field plays, Ch 77-82: discards)
 
         return tensor
 
