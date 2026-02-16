@@ -2,14 +2,14 @@
 
 # Network Architecture
 network:
-  input_channels: 59
+  input_channels: 83
   num_actions: 30  # 12 BUILD_MOUNTAIN + 12 GROW_FIELD + 6 DISCARD
   num_res_blocks: 8
   channels: 96
 
 # MCTS Parameters
 mcts:
-  num_simulations: 800
+  num_simulations: 1600
   c_puct: 1.0
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
@@ -17,7 +17,8 @@ mcts:
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
-  parallel_games: 8  # Simultaneous games for batched NN inference (1 = sequential)
+  parallel_games: 64  # Simultaneous games for batched NN inference (1 = sequential)
+  leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
   temperature_threshold: 30  # Switch to deterministic play after this move
 
@@ -25,11 +26,11 @@ selfplay:
 training:
   num_iterations: 1000
   batch_size: 256
-  epochs_per_iteration: 10
+  epochs_per_iteration: 1
   learning_rate: 0.001
   weight_decay: 0.0001
-  lr_milestones: [100, 200, 300, 500, 700]
-  lr_gamma: 0.1
+  lr_milestones: [50, 150, 300]
+  lr_gamma: 0.3
   replay_buffer_size: 500000
   checkpoint_frequency: 1  # Save checkpoint every N iterations
   checkpoint_every_n_games: 10  # Save checkpoint every N games within iteration (for resume)
@@ -40,7 +41,8 @@ evaluation:
   win_threshold: 0.55  # Win rate threshold to consider improvement
   eval_frequency: 1  # Evaluate every N iterations (async on CPU, never blocks training)
   eval_num_games: 20  # Games to play during training evaluation (fewer for speed)
-  eval_mcts_simulations: 400  # MCTS sims for evaluation (fewer for speed)
+  eval_mcts_simulations: 800  # MCTS sims for evaluation (match old self-play quality)
+  eval_start_iteration: 1   # Fresh start — evaluate from the beginning
 
 # Paths
 paths:
