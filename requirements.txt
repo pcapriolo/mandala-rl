@@ -1,9 +1,6 @@
-torch>=2.0.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0+cpu
 numpy>=1.24.0
-pybind11>=2.11.0
 pyyaml>=6.0
-tqdm>=4.65.0
-tensorboard>=2.13.0
-scipy>=1.10.0
 flask>=2.3.0
 gunicorn>=21.2.0
