@@ -1,4 +1,4 @@
-front<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -10,6 +10,9 @@ front<!DOCTYPE html>
 
         .header { background: #16213e; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 1.4em; color: #667eea; }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .back-btn { color: #888; text-decoration: none; font-size: 1.2em; padding: 4px 8px; border-radius: 4px; }
+        .back-btn:hover { color: #eee; background: rgba(255,255,255,0.1); }
         .model-info { font-size: 0.85em; color: #888; }
 
         .controls { padding: 8px 20px; background: #0f3460; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -20,8 +23,6 @@ front<!DOCTYPE html>
         .btn-secondary:hover { background: #3e2563; }
         .btn-save { background: #48bb78; color: white; }
         .btn-save:hover { background: #38a169; }
-
-        select { padding: 8px 12px; font-size: 0.9em; border: 2px solid #667eea; border-radius: 6px; background: #16213e; color: #eee; cursor: pointer; min-height: 44px; }
 
         .game-area { display: flex; flex-direction: column; padding: 15px; gap: 12px; max-width: 1100px; margin: 0 auto; }
 
@@ -36,6 +37,9 @@ front<!DOCTYPE html>
         .player-area.active { border-color: #667eea; }
         .player-area.human { border-color: #48bb78; }
         .player-title { font-weight: bold; font-size: 0.95em; margin-bottom: 8px; }
+        .player-tag { font-size: 0.75em; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+        .player-tag.you { background: #48bb78; color: #fff; }
+        .player-tag.ai { background: #e94560; color: #fff; }
         .player-section { margin-bottom: 8px; }
         .player-section .label { font-size: 0.75em; color: #888; margin-bottom: 4px; }
 
@@ -69,8 +73,10 @@ front<!DOCTYPE html>
         .moves-group-label { font-size: 0.75em; color: #888; margin-bottom: 4px; font-weight: bold; }
         .moves-list { display: flex; flex-wrap: wrap; gap: 6px; }
         .move-btn { padding: 8px 14px; background: #16213e; color: #eee; border: 1px solid #333;
-            border-radius: 6px; cursor: pointer; font-size: 0.85em; min-height: 44px; display: flex; align-items: center; gap: 6px; }
+            border-radius: 6px; cursor: pointer; font-size: 0.85em; min-height: 44px; display: flex; align-items: center; gap: 6px;
+            -webkit-tap-highlight-color: transparent; touch-action: manipulation; user-select: none; }
         .move-btn:hover { background: #1a3a6e; border-color: #667eea; }
+        .move-btn:active { background: #2a4a8e; transform: scale(0.97); }
         .move-btn .move-card { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center;
             justify-content: center; font-size: 0.75em; font-weight: bold; border: 1px solid rgba(255,255,255,0.2); }
 
@@ -80,9 +86,24 @@ front<!DOCTYPE html>
         .status-bar.your-turn { color: #48bb78; }
         .status-bar.game-over { color: #e94560; font-weight: bold; }
 
+        /* Thinking animation */
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .thinking-dots { animation: pulse 1.5s ease-in-out infinite; }
+        .think-timer { font-size: 0.8em; color: #888; margin-left: 8px; }
+
         /* AI decision */
         .ai-decision { padding: 8px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; }
         .ai-decision .move { color: #f1c40f; }
+
+        /* How to play tooltip */
+        .help-btn { background: none; border: 1px solid #555; color: #888; padding: 4px 10px; border-radius: 4px;
+            cursor: pointer; font-size: 0.8em; }
+        .help-btn:hover { color: #eee; border-color: #888; }
+        .help-panel { display: none; background: #16213e; border: 1px solid #333; border-radius: 8px; padding: 16px;
+            font-size: 0.85em; line-height: 1.6; color: #ccc; }
+        .help-panel.show { display: block; }
+        .help-panel h3 { color: #667eea; margin-bottom: 8px; font-size: 1em; }
+        .help-panel p { margin-bottom: 8px; }
 
         /* Game over overlay */
         .game-over-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85);
@@ -126,7 +147,7 @@ front<!DOCTYPE html>
         @media (max-width: 480px) {
             .header { flex-direction: column; align-items: flex-start; }
             .controls { flex-direction: column; align-items: stretch; }
-            .controls .btn, .controls select { width: 100%; }
+            .controls .btn { width: 100%; }
             .card { width: 32px; height: 32px; font-size: 0.75em; }
             .move-btn { padding: 6px 10px; font-size: 0.8em; }
         }
@@ -134,20 +155,35 @@ front<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1>Mandala</h1>
-        <div class="model-info" id="modelInfo">Loading...</div>
+        <div class="header-left">
+            <a href="/" class="back-btn" title="Back to game list">&larr;</a>
+            <h1>Mandala</h1>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <button class="help-btn" onclick="toggleHelp()">How to Play</button>
+            <div class="model-info" id="modelInfo">Loading...</div>
+        </div>
     </div>
 
     <div class="controls">
-        <select id="checkpointSelect" onchange="reloadWithCheckpoint()">
-            <option value="">Loading checkpoints...</option>
-        </select>
         <button class="btn btn-primary" onclick="newGame(0)">New Game (You First)</button>
         <button class="btn btn-secondary" onclick="newGame(1)">New Game (AI First)</button>
         <button class="btn btn-save" onclick="saveGame()">Save Game</button>
     </div>
 
     <div class="game-area">
+        <!-- How to play -->
+        <div class="help-panel" id="helpPanel">
+            <h3>Quick Rules</h3>
+            <p><strong>Goal:</strong> Score the most points by collecting colors into your River and Cup.</p>
+            <p><strong>On your turn,</strong> play a card from your hand to either:</p>
+            <p>&bull; A <strong>Mountain</strong> (shared center) &mdash; adds a new color to the mandala</p>
+            <p>&bull; A <strong>Field</strong> (your side) &mdash; commits cards of a color already in the mountain</p>
+            <p>&bull; <strong>Discard</strong> a card to draw a new one</p>
+            <p>When a mandala has all 6 colors in its mountain, it <strong>closes</strong>. The player with more field cards picks first &mdash; the first color goes to your <strong>River</strong> (scoring order), the rest to your <strong>Cup</strong> (points).</p>
+            <p>Colors in your River earlier are worth more points per card in your Cup.</p>
+        </div>
+
         <!-- Info bar -->
         <div class="info-bar">
             <div class="info-item"><div class="value" id="moveCount">-</div><div class="label">Move</div></div>
@@ -161,27 +197,27 @@ front<!DOCTYPE html>
             <div class="mandala" id="mandala0">
                 <h3>Mandala 0 (<span id="m0colors">0</span>/6)</h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain0"></div></div>
-                <div class="mandala-section"><div class="label">P0 Field</div><div class="cards-row" id="field0_0"></div></div>
-                <div class="mandala-section"><div class="label">P1 Field</div><div class="cards-row" id="field0_1"></div></div>
+                <div class="mandala-section"><div class="label" id="field0_0_label">P0 Field</div><div class="cards-row" id="field0_0"></div></div>
+                <div class="mandala-section"><div class="label" id="field0_1_label">P1 Field</div><div class="cards-row" id="field0_1"></div></div>
             </div>
             <div class="mandala" id="mandala1">
                 <h3>Mandala 1 (<span id="m1colors">0</span>/6)</h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain1"></div></div>
-                <div class="mandala-section"><div class="label">P0 Field</div><div class="cards-row" id="field1_0"></div></div>
-                <div class="mandala-section"><div class="label">P1 Field</div><div class="cards-row" id="field1_1"></div></div>
+                <div class="mandala-section"><div class="label" id="field1_0_label">P0 Field</div><div class="cards-row" id="field1_0"></div></div>
+                <div class="mandala-section"><div class="label" id="field1_1_label">P1 Field</div><div class="cards-row" id="field1_1"></div></div>
             </div>
         </div>
 
         <!-- Player areas -->
         <div class="players-grid">
             <div class="player-area" id="player0Area">
-                <div class="player-title">Player 0</div>
+                <div class="player-title">Player 0 <span class="player-tag" id="player0Tag"></span></div>
                 <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand0"></div></div>
                 <div class="player-section"><div class="label">River</div><div class="cards-row" id="river0"></div></div>
                 <div class="player-section"><div class="label">Cup: <span id="cup0">0</span></div></div>
             </div>
             <div class="player-area" id="player1Area">
-                <div class="player-title">Player 1</div>
+                <div class="player-title">Player 1 <span class="player-tag" id="player1Tag"></span></div>
                 <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand1"></div></div>
                 <div class="player-section"><div class="label">River</div><div class="cards-row" id="river1"></div></div>
                 <div class="player-section"><div class="label">Cup: <span id="cup1">0</span></div></div>
@@ -207,8 +243,8 @@ front<!DOCTYPE html>
             <h2 id="gameOverTitle">Game Over</h2>
             <div class="result" id="winnerText"></div>
             <div class="scores-row">
-                <div class="score-box"><div class="player">Player 0</div><div class="score" id="finalScore0">0</div></div>
-                <div class="score-box"><div class="player">Player 1</div><div class="score" id="finalScore1">0</div></div>
+                <div class="score-box"><div class="player" id="score0Label">You</div><div class="score" id="finalScore0">0</div></div>
+                <div class="score-box"><div class="player" id="score1Label">AI</div><div class="score" id="finalScore1">0</div></div>
             </div>
             <div class="feedback-form">
                 <h3>Rate this game (optional)</h3>
@@ -220,7 +256,7 @@ front<!DOCTYPE html>
                     <span class="rating-label">Bot's play</span>
                     <div class="stars" id="starsBotPlay"></div>
                 </div>
-                <textarea class="feedback-comment" id="feedbackComment" placeholder="Any comments?" maxlength="500"></textarea>
+                <textarea class="feedback-comment" id="feedbackComment" placeholder="Any comments? What did the bot do well or poorly?" maxlength="500"></textarea>
                 <div class="feedback-actions">
                     <button class="btn-skip" onclick="closeGameOver()">Skip</button>
                     <button class="btn btn-primary" onclick="submitFeedback()">Submit & Play Again</button>
@@ -236,6 +272,7 @@ front<!DOCTYPE html>
         let currentState = null;
         let turnStartTime = null;
         let gameId = null;
+        let thinkTimerInterval = null;
 
         function renderCard(colorIdx) {
             return `<div class="card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</div>`;
@@ -249,6 +286,15 @@ front<!DOCTYPE html>
             return colors.map(c => renderCard(c)).join('');
         }
 
+        function toggleHelp() {
+            document.getElementById('helpPanel').classList.toggle('show');
+        }
+
+        function playerLabel(playerIdx) {
+            if (!currentState) return `P${playerIdx}`;
+            return playerIdx === currentState.human_player ? 'You' : 'AI';
+        }
+
         async function newGame(humanPlayer) {
             const resp = await fetch(`${BASE_URL}/api/new_game`, {
                 method: 'POST',
@@ -258,6 +304,7 @@ front<!DOCTYPE html>
             currentState = await resp.json();
             gameId = currentState.game_id;
             turnStartTime = null;
+            document.getElementById('aiDecision').style.display = 'none';
             renderGame();
             checkAiTurn();
         }
@@ -274,9 +321,22 @@ front<!DOCTYPE html>
 
             // Info bar
             document.getElementById('moveCount').textContent = currentState.move_count;
-            document.getElementById('currentPlayer').textContent = `P${currentState.current_player}`;
+            document.getElementById('currentPlayer').textContent =
+                currentState.current_player === hp ? 'You' : 'AI';
             document.getElementById('deckSize').textContent = s.deck_size;
             document.getElementById('humanRole').textContent = `P${hp}`;
+
+            // Player tags (You / AI)
+            document.getElementById('player0Tag').textContent = hp === 0 ? 'YOU' : 'AI';
+            document.getElementById('player0Tag').className = 'player-tag ' + (hp === 0 ? 'you' : 'ai');
+            document.getElementById('player1Tag').textContent = hp === 1 ? 'YOU' : 'AI';
+            document.getElementById('player1Tag').className = 'player-tag ' + (hp === 1 ? 'you' : 'ai');
+
+            // Field labels
+            for (let m = 0; m < 2; m++) {
+                document.getElementById(`field${m}_0_label`).textContent = hp === 0 ? 'Your Field' : "AI's Field";
+                document.getElementById(`field${m}_1_label`).textContent = hp === 1 ? 'Your Field' : "AI's Field";
+            }
 
             // Hands: show human's cards, hide opponent's
             if (hp === 0) {
@@ -343,7 +403,7 @@ front<!DOCTYPE html>
 
             let html = '';
             if (mountain.length > 0) {
-                html += `<div class="moves-group"><div class="moves-group-label">Mountain</div><div class="moves-list">`;
+                html += `<div class="moves-group"><div class="moves-group-label">Play to Mountain (add new color)</div><div class="moves-list">`;
                 html += mountain.map(([a, d]) => {
                     const colorIdx = a % 6;
                     const mIdx = Math.floor(a / 6);
@@ -352,7 +412,7 @@ front<!DOCTYPE html>
                 html += `</div></div>`;
             }
             if (field.length > 0) {
-                html += `<div class="moves-group"><div class="moves-group-label">Field</div><div class="moves-list">`;
+                html += `<div class="moves-group"><div class="moves-group-label">Play to Field (your side)</div><div class="moves-list">`;
                 html += field.map(([a, d]) => {
                     const off = a - 12;
                     const colorIdx = off % 6;
@@ -362,7 +422,7 @@ front<!DOCTYPE html>
                 html += `</div></div>`;
             }
             if (discard.length > 0) {
-                html += `<div class="moves-group"><div class="moves-group-label">Discard</div><div class="moves-list">`;
+                html += `<div class="moves-group"><div class="moves-group-label">Discard (draw a new card)</div><div class="moves-list">`;
                 html += discard.map(([a, d]) => {
                     const colorIdx = a - 24;
                     return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Discard</button>`;
@@ -392,36 +452,62 @@ front<!DOCTYPE html>
             checkAiTurn();
         }
 
+        function startThinkTimer() {
+            let seconds = 0;
+            const bar = document.getElementById('statusBar');
+            if (thinkTimerInterval) clearInterval(thinkTimerInterval);
+            thinkTimerInterval = setInterval(() => {
+                seconds++;
+                bar.innerHTML = `<span class="thinking-dots">AI is thinking...</span><span class="think-timer">${seconds}s</span>`;
+            }, 1000);
+        }
+
+        function stopThinkTimer() {
+            if (thinkTimerInterval) {
+                clearInterval(thinkTimerInterval);
+                thinkTimerInterval = null;
+            }
+        }
+
         async function checkAiTurn() {
             if (!currentState || currentState.is_terminal) return;
             if (currentState.current_player !== currentState.human_player) {
-                document.getElementById('statusBar').textContent = 'AI is thinking...';
+                document.getElementById('statusBar').innerHTML = '<span class="thinking-dots">AI is thinking...</span>';
                 document.getElementById('statusBar').className = 'status-bar thinking';
+                startThinkTimer();
 
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 300));
 
-                const resp = await fetch(`${BASE_URL}/api/ai_move`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({game_id: gameId})
-                });
-                currentState = await resp.json();
+                try {
+                    const resp = await fetch(`${BASE_URL}/api/ai_move`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({game_id: gameId})
+                    });
+                    stopThinkTimer();
+                    currentState = await resp.json();
 
-                if (currentState.ai_decision) {
-                    const dec = currentState.ai_decision;
-                    const decEl = document.getElementById('aiDecision');
-                    decEl.style.display = 'block';
-                    let html = `<span class="move">AI: ${dec.description}</span>`;
-                    if (dec.top_moves && dec.top_moves.length > 1) {
-                        html += '<br><small>Top: ' + dec.top_moves.map(m =>
-                            `${m.description} (${m.probability.toFixed(1)}%)`
-                        ).join(', ') + '</small>';
+                    if (currentState.ai_decision) {
+                        const dec = currentState.ai_decision;
+                        const decEl = document.getElementById('aiDecision');
+                        decEl.style.display = 'block';
+                        let html = `<span class="move">AI played: ${dec.description}</span>`;
+                        if (dec.top_moves && dec.top_moves.length > 1) {
+                            html += '<br><small>Considered: ' + dec.top_moves.map(m =>
+                                `${m.description} (${m.probability.toFixed(1)}%)`
+                            ).join(', ') + '</small>';
+                        }
+                        decEl.innerHTML = html;
                     }
-                    decEl.innerHTML = html;
-                }
 
-                renderGame();
-                checkAiTurn();
+                    renderGame();
+                    checkAiTurn();
+                } catch (e) {
+                    stopThinkTimer();
+                    document.getElementById('statusBar').textContent = 'AI error — try starting a new game';
+                    document.getElementById('statusBar').className = 'status-bar game-over';
+                    console.error('AI move failed:', e);
+                }
             }
         }
 
@@ -429,13 +515,16 @@ front<!DOCTYPE html>
             const bar = document.getElementById('statusBar');
             if (currentState.is_terminal) {
                 const s = currentState.scores;
-                bar.textContent = `Game Over! P0: ${s.player0} - P1: ${s.player1}`;
+                const hp = currentState.human_player;
+                const yourScore = hp === 0 ? s.player0 : s.player1;
+                const aiScore = hp === 0 ? s.player1 : s.player0;
+                bar.textContent = `Game Over! You: ${yourScore} - AI: ${aiScore}`;
                 bar.className = 'status-bar game-over';
             } else if (currentState.current_player === currentState.human_player) {
-                bar.textContent = 'Your turn - choose a move';
+                bar.textContent = 'Your turn — choose a move below';
                 bar.className = 'status-bar your-turn';
             } else {
-                bar.textContent = 'AI is thinking...';
+                bar.innerHTML = '<span class="thinking-dots">AI is thinking...</span>';
                 bar.className = 'status-bar thinking';
             }
         }
@@ -445,18 +534,23 @@ front<!DOCTYPE html>
             const hp = currentState.human_player;
             const s = currentState.scores;
 
-            document.getElementById('finalScore0').textContent = s.player0;
-            document.getElementById('finalScore1').textContent = s.player1;
+            const yourScore = hp === 0 ? s.player0 : s.player1;
+            const aiScore = hp === 0 ? s.player1 : s.player0;
+
+            document.getElementById('score0Label').textContent = 'You';
+            document.getElementById('score1Label').textContent = 'AI';
+            document.getElementById('finalScore0').textContent = yourScore;
+            document.getElementById('finalScore1').textContent = aiScore;
 
             if (w === hp) {
                 document.getElementById('gameOverTitle').textContent = 'You Win!';
-                document.getElementById('winnerText').textContent = 'You beat the AI!';
+                document.getElementById('winnerText').textContent = 'Congratulations, you beat the AI!';
             } else if (w === -1) {
                 document.getElementById('gameOverTitle').textContent = 'Draw!';
                 document.getElementById('winnerText').textContent = 'The game ended in a tie.';
             } else {
                 document.getElementById('gameOverTitle').textContent = 'AI Wins';
-                document.getElementById('winnerText').textContent = 'Better luck next time.';
+                document.getElementById('winnerText').textContent = 'The AI got the better of you this time.';
             }
 
             // Auto-save
@@ -479,57 +573,6 @@ front<!DOCTYPE html>
                 });
             } catch (e) {
                 console.error('Save failed:', e);
-            }
-        }
-
-        async function loadCheckpoints() {
-            try {
-                const resp = await fetch(`${BASE_URL}/api/checkpoints`);
-                const checkpoints = await resp.json();
-                const select = document.getElementById('checkpointSelect');
-                select.innerHTML = '<option value="">Select checkpoint...</option>';
-                checkpoints.forEach(cp => {
-                    const opt = document.createElement('option');
-                    opt.value = cp.name;
-                    opt.textContent = `${cp.name} (Iter ${cp.iteration}, ${cp.total_games} games)`;
-                    if (currentState && currentState.model_info && cp.name === currentState.model_info.checkpoint) {
-                        opt.selected = true;
-                    }
-                    select.appendChild(opt);
-                });
-            } catch (e) {
-                console.error('Error loading checkpoints:', e);
-            }
-        }
-
-        async function reloadWithCheckpoint() {
-            const select = document.getElementById('checkpointSelect');
-            if (!select.value) return;
-            try {
-                const resp = await fetch(`${BASE_URL}/api/load_checkpoint`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({checkpoint: select.value})
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    document.getElementById('statusBar').textContent = `Loaded: Iter ${result.iteration}`;
-                    document.getElementById('statusBar').className = 'status-bar your-turn';
-                    await updateState();
-                }
-            } catch (e) {
-                console.error('Error loading checkpoint:', e);
-            }
-        }
-
-        async function updateState() {
-            if (!gameId) return;
-            try {
-                const resp = await fetch(`${BASE_URL}/api/state?game_id=${gameId}`);
-                currentState = await resp.json();
-                renderGame();
-            } catch (e) {
-                console.error('Error updating state:', e);
             }
         }
 
@@ -590,8 +633,6 @@ front<!DOCTYPE html>
             }
             closeGameOver();
         }
-
-        loadCheckpoints();
     </script>
 </body>
 </html>

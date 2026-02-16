@@ -3,28 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mandala RL - Play vs AI</title>
+    <title>Gamer Gym - Play Board Games vs AI</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh;
             display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
 
-        h1 { font-size: 2em; color: #667eea; margin-bottom: 8px; }
-        .subtitle { color: #888; margin-bottom: 40px; font-size: 1.1em; }
+        h1 { font-size: 2.2em; color: #667eea; margin-bottom: 4px; }
+        .subtitle { color: #aaa; margin-bottom: 10px; font-size: 1.1em; }
+        .tagline { color: #667eea; margin-bottom: 40px; font-size: 0.9em; font-style: italic; }
 
         .games { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
 
         .game-card { background: #16213e; border-radius: 12px; padding: 30px; width: 320px;
-            border: 2px solid #333; transition: border-color 0.2s; text-align: center; }
-        .game-card:hover { border-color: #667eea; }
+            border: 2px solid #333; transition: border-color 0.2s, transform 0.2s; text-align: center; }
+        .game-card:hover { border-color: #667eea; transform: translateY(-2px); }
         .game-card h2 { font-size: 1.5em; margin-bottom: 10px; }
         .game-card .desc { color: #aaa; font-size: 0.95em; margin-bottom: 20px; line-height: 1.4; }
         .game-card .model-info { color: #667eea; font-size: 0.85em; margin-bottom: 20px; }
 
         .play-btn { display: inline-block; padding: 14px 40px; background: #667eea; color: white;
             text-decoration: none; border-radius: 8px; font-size: 1.1em; font-weight: 600;
-            transition: background 0.2s; }
-        .play-btn:hover { background: #5568d3; }
+            transition: background 0.2s, transform 0.1s; }
+        .play-btn:hover { background: #5568d3; transform: scale(1.02); }
+        .play-btn:active { transform: scale(0.98); }
 
         .play-btn.lc { background: #e94560; }
         .play-btn.lc:hover { background: #d63851; }
@@ -32,45 +34,58 @@
         .game-card.disabled { opacity: 0.4; pointer-events: none; }
         .game-card.disabled .play-btn { background: #555; }
 
-        .footer { margin-top: 40px; color: #555; font-size: 0.85em; }
+        .footer { margin-top: 40px; color: #555; font-size: 0.85em; text-align: center; line-height: 1.6; }
+        .footer a { color: #667eea; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75em;
+            font-weight: 600; margin-bottom: 12px; }
+        .badge-free { background: #48bb78; color: #fff; }
+        .badge-new { background: #f1c40f; color: #333; }
     </style>
 </head>
 <body>
-    <h1>Mandala RL</h1>
+    <h1>Gamer Gym</h1>
     <p class="subtitle">Play board games against AI trained through self-play</p>
+    <p class="tagline">No signup. No download. Just play.</p>
 
     <div class="games">
         {% if 'mandala' in games %}
         <div class="game-card">
+            <span class="badge badge-free">FREE</span>
             <h2>Mandala</h2>
-            <p class="desc">A 2-player card game of colors, mandalas, and strategic collection. Play cards to mountains and fields, claim colors to your river.</p>
-            <p class="model-info">Iter {{ games.mandala.iteration }} | {{ games.mandala.total_games }} games trained</p>
+            <p class="desc">A beautiful 2-player card game of colors and strategy. Play cards to mandalas, claim colors, and outscore your opponent.</p>
+            <p class="model-info">AI trained on {{ games.mandala.total_games }} self-play games</p>
             <a href="/mandala/" class="play-btn">Play Mandala</a>
         </div>
         {% else %}
         <div class="game-card disabled">
             <h2>Mandala</h2>
-            <p class="desc">No checkpoint available. Train a model first.</p>
-            <span class="play-btn">Unavailable</span>
+            <p class="desc">Coming soon — AI is still training.</p>
+            <span class="play-btn">Coming Soon</span>
         </div>
         {% endif %}
 
         {% if 'lost_cities' in games %}
         <div class="game-card">
+            <span class="badge badge-new">NEW</span>
             <h2>Lost Cities</h2>
-            <p class="desc">The classic 2-player expedition card game. Start expeditions wisely — each costs 20 points to begin, but bonuses await the committed.</p>
-            <p class="model-info">Iter {{ games.lost_cities.iteration }} | {{ games.lost_cities.total_games }} games trained</p>
+            <p class="desc">The classic expedition card game. Start wisely — each expedition costs 20 points to begin, but bonuses await the committed.</p>
+            <p class="model-info">AI trained on {{ games.lost_cities.total_games }} self-play games</p>
             <a href="/lost-cities/" class="play-btn lc">Play Lost Cities</a>
         </div>
         {% else %}
         <div class="game-card disabled">
             <h2>Lost Cities</h2>
-            <p class="desc">No checkpoint available. Train a model first.</p>
-            <span class="play-btn">Unavailable</span>
+            <p class="desc">Coming soon — AI is still training.</p>
+            <span class="play-btn">Coming Soon</span>
         </div>
         {% endif %}
     </div>
 
-    <p class="footer">Models trained via AlphaZero-style self-play with MCTS</p>
+    <div class="footer">
+        AI opponents built with AlphaZero-style self-play &amp; Monte Carlo Tree Search<br>
+        <small>No human games needed — the AI learned entirely by playing against itself</small>
+    </div>
 </body>
 </html>

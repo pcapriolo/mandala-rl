@@ -15,6 +15,8 @@ Usage:
 
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 # Add project paths
@@ -28,7 +30,7 @@ template_dir = project_root / 'templates'
 app = Flask(__name__, template_folder=str(template_dir))
 
 # Configuration from environment (with sensible defaults)
-MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '200'))
+MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '50'))
 MANDALA_CONFIG = os.environ.get('MANDALA_CONFIG', 'configs/default.yaml')
 LC_CONFIG = os.environ.get('LC_CONFIG', 'configs/lost_cities.yaml')
 MANDALA_CHECKPOINT_DIR = os.environ.get('MANDALA_CHECKPOINT_DIR', 'data/checkpoints')
@@ -37,6 +39,8 @@ DEPLOY_DIR = os.environ.get('DEPLOY_DIR', 'data/deploy')
 
 # Track which games loaded successfully
 loaded_games = {}
+_mandala_server = None
+_lc_server = None
 
 
 def find_checkpoint(deploy_dir, checkpoint_dir):
@@ -67,6 +71,7 @@ if mandala_cp:
             checkpoint_dir=MANDALA_CHECKPOINT_DIR
         )
         app.register_blueprint(bp, url_prefix='/mandala')
+        _mandala_server = server
         loaded_games['mandala'] = {
             'iteration': server.iteration,
             'total_games': server.total_games,
@@ -91,6 +96,7 @@ if lc_cp:
             checkpoint_dir=LC_CHECKPOINT_DIR
         )
         app.register_blueprint(bp, url_prefix='/lost-cities')
+        _lc_server = server
         loaded_games['lost_cities'] = {
             'iteration': server.iteration,
             'total_games': server.total_games,
@@ -101,6 +107,79 @@ if lc_cp:
         print(f"[serve] Failed to load Lost Cities: {e}")
 else:
     print("[serve] No Lost Cities checkpoint found, skipping")
+
+
+# --- Auto-reload: watch training dirs for newer checkpoints ---
+AUTO_RELOAD = os.environ.get('AUTO_RELOAD', '1') == '1'
+AUTO_RELOAD_INTERVAL = int(os.environ.get('AUTO_RELOAD_INTERVAL', '60'))
+
+def _find_latest_iter(checkpoint_dir):
+    """Find highest iteration checkpoint in a directory."""
+    cp_dir = Path(checkpoint_dir)
+    if not cp_dir.exists():
+        return None, None
+    best_iter = -1
+    best_path = None
+    for cp in cp_dir.glob("model_iter_*.pt"):
+        try:
+            iter_num = int(cp.stem.split('_')[-1])
+            if iter_num > best_iter:
+                best_iter = iter_num
+                best_path = cp
+        except (ValueError, IndexError):
+            continue
+    return best_iter, best_path
+
+def _auto_reload_worker():
+    """Background thread: checks for newer checkpoints and hot-swaps."""
+    global _mandala_server, _lc_server
+    print(f"[auto-reload] Watching for new checkpoints every {AUTO_RELOAD_INTERVAL}s")
+    while True:
+        time.sleep(AUTO_RELOAD_INTERVAL)
+        try:
+            # Check Mandala
+            if _mandala_server and MANDALA_CHECKPOINT_DIR:
+                latest_iter, latest_path = _find_latest_iter(MANDALA_CHECKPOINT_DIR)
+                current_iter = _mandala_server.iteration
+                if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
+                    print(f"[auto-reload] Mandala: iter {current_iter} → {latest_iter}")
+                    try:
+                        from play_vs_ai_web import MandalaModelServer
+                        new_server = MandalaModelServer(
+                            latest_path, MANDALA_CONFIG, MCTS_SIMULATIONS
+                        )
+                        _mandala_server.__dict__.update(new_server.__dict__)
+                        loaded_games['mandala']['iteration'] = new_server.iteration
+                        loaded_games['mandala']['total_games'] = new_server.total_games
+                        loaded_games['mandala']['checkpoint'] = latest_path.name
+                        print(f"[auto-reload] Mandala reloaded: iter {new_server.iteration}")
+                    except Exception as e:
+                        print(f"[auto-reload] Mandala reload failed: {e}")
+
+            # Check Lost Cities
+            if _lc_server and LC_CHECKPOINT_DIR:
+                latest_iter, latest_path = _find_latest_iter(LC_CHECKPOINT_DIR)
+                current_iter = _lc_server.iteration
+                if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
+                    print(f"[auto-reload] Lost Cities: iter {current_iter} → {latest_iter}")
+                    try:
+                        from play_vs_ai_web_lc import LCModelServer
+                        new_server = LCModelServer(
+                            latest_path, LC_CONFIG, MCTS_SIMULATIONS
+                        )
+                        _lc_server.__dict__.update(new_server.__dict__)
+                        loaded_games['lost_cities']['iteration'] = new_server.iteration
+                        loaded_games['lost_cities']['total_games'] = new_server.total_games
+                        loaded_games['lost_cities']['checkpoint'] = latest_path.name
+                        print(f"[auto-reload] Lost Cities reloaded: iter {new_server.iteration}")
+                    except Exception as e:
+                        print(f"[auto-reload] Lost Cities reload failed: {e}")
+        except Exception as e:
+            print(f"[auto-reload] Error: {e}")
+
+if AUTO_RELOAD:
+    _reload_thread = threading.Thread(target=_auto_reload_worker, daemon=True)
+    _reload_thread.start()
 
 
 @app.route('/')
@@ -114,6 +193,7 @@ def health():
         'status': 'ok',
         'games': list(loaded_games.keys()),
         'mcts_simulations': MCTS_SIMULATIONS,
+        'auto_reload': AUTO_RELOAD,
     })
 
 

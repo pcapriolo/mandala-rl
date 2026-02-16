@@ -1,4 +1,5 @@
 """MCTS algorithm implementation."""
+import time
 import numpy as np
 from typing import Callable
 from .node import MCTSNode
@@ -21,7 +22,8 @@ class MCTS:
         c_puct: float = 1.0,
         temperature: float = 1.0,
         dirichlet_alpha: float = 0.3,
-        dirichlet_epsilon: float = 0.25
+        dirichlet_epsilon: float = 0.25,
+        time_limit: float = 10.0
     ):
         """
         Args:
@@ -32,6 +34,7 @@ class MCTS:
             temperature: Temperature for action selection
             dirichlet_alpha: Dirichlet noise alpha (for exploration at root)
             dirichlet_epsilon: Fraction of Dirichlet noise to add at root
+            time_limit: Maximum seconds for search (0 = no limit)
         """
         self.game = game
         self.network = network
@@ -40,6 +43,7 @@ class MCTS:
         self.temperature = temperature
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
+        self.time_limit = time_limit
 
     def search(self, state: GameState, add_noise: bool = True) -> np.ndarray:
         """
@@ -68,8 +72,12 @@ class MCTS:
         # Expand root
         root.expand(policy, valid_moves, state_hash=hash(state))
 
-        # Run simulations
-        for _ in range(self.num_simulations):
+        # Run simulations (with time limit for web serving)
+        start_time = time.time()
+        for i in range(self.num_simulations):
+            if self.time_limit > 0 and i > 0 and i % 10 == 0:
+                if time.time() - start_time > self.time_limit:
+                    break
             self._simulate(root, state)
 
         # Return visit count distribution
@@ -96,18 +104,6 @@ class MCTS:
         # Selection: traverse to leaf
         while not node.is_leaf() and not self.game.is_terminal(state):
             action, node = node.select_child(self.c_puct)
-            # Debug: check if action is valid for current state
-            valid_now = self.game.get_valid_moves(state)
-            if valid_now[action] == 0:
-                print(f"\n=== MCTS TREE MISMATCH ===")
-                print(f"Action {action} was stored in tree but is now invalid!")
-                print(f"State hash when expanded: {getattr(node, 'expansion_state_hash', 'unknown')}")
-                print(f"State hash now: {hash(state)}")
-                print(f"Current player: {state.current_player}")
-                hand = state.hands[state.current_player]
-                print(f"Hand: {[c.color for c in hand]}")
-                print(f"Valid moves now: {np.where(valid_now > 0)[0]}")
-                print(f"==========================\n")
             state = self.game.get_next_state(state, action)
             search_path.append(node)
 
