@@ -107,8 +107,9 @@ class MandalaModelServer:
         canonical = state.get_canonical_form()
         state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            _, val = self.model(state_tensor)
+            raw_logits, val = self.model(state_tensor)
             value = val.item()
+            raw_policy = torch.softmax(raw_logits, dim=1).cpu().numpy()[0]
 
         valid_moves = self.engine.get_valid_moves(state)
         valid_policy = policy * valid_moves
@@ -124,10 +125,23 @@ class MandalaModelServer:
             for a in top_actions if valid_moves[a]
         ]
 
+        # Raw network policy (before MCTS) for top valid actions
+        raw_valid = raw_policy * valid_moves
+        raw_top = raw_valid.argsort()[-5:][::-1]
+        network_top = [
+            {
+                'action': int(a),
+                'description': action_to_string(a),
+                'probability': float(raw_policy[a] * 100)
+            }
+            for a in raw_top if valid_moves[a]
+        ]
+
         return {
             'action': action,
             'description': action_to_string(action),
             'top_moves': top_moves,
+            'network_top': network_top,
             'policy': [float(p) for p in policy],
             'value': float(value),
             'think_time_ms': think_ms,

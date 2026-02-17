@@ -14,6 +14,10 @@ std::unique_ptr<GameState> LostCitiesState::copy() const {
     s->current_player_ = current_player_;
     s->game_over = game_over;
     s->turns_played = turns_played;
+    s->expedition_plays = expedition_plays;
+    s->color_discards = color_discards;
+    s->discard_pile_draws = discard_pile_draws;
+    s->total_moves = total_moves;
     return s;
 }
 
@@ -97,6 +101,54 @@ void LostCitiesState::to_tensor(std::vector<float>& out) const {
         set_channel(50 + i, (hands[0][i].color + 1) / 6.0f);
         set_channel(58 + i, (hands[0][i].value + 1) / 11.0f);
     }
+
+    // Ch 66-70: Belief channels — P(opp has ≥1 of color c)
+    {
+        // Count known cards per color (my hand + all expeditions + all discard piles)
+        int known[LC_NUM_COLORS] = {};
+        for (auto& card : hands[0]) known[card.color]++;
+        for (int p = 0; p < 2; p++)
+            for (int c = 0; c < LC_NUM_COLORS; c++)
+                known[c] += static_cast<int>(expeditions[p][c].size());
+        for (int c = 0; c < LC_NUM_COLORS; c++)
+            known[c] += static_cast<int>(discard_piles[c].size());
+
+        int total_unseen = 0;
+        int remaining[LC_NUM_COLORS];
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            remaining[c] = LC_CARDS_PER_COLOR - known[c];
+            if (remaining[c] < 0) remaining[c] = 0;
+            total_unseen += remaining[c];
+        }
+
+        int opp_hand_sz = static_cast<int>(hands[1].size());
+
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            float belief = 0.0f;
+            if (remaining[c] > 0 && total_unseen > 0 && opp_hand_sz > 0) {
+                float p_none = 1.0f;
+                int N = total_unseen;
+                int k = remaining[c];
+                for (int i = 0; i < opp_hand_sz && (N - i) > 0; i++) {
+                    p_none *= static_cast<float>(N - k - i) / static_cast<float>(N - i);
+                }
+                belief = 1.0f - p_none;
+            }
+            set_channel(66 + c, belief);
+        }
+    }
+
+    // Ch 71-75: Opp expedition play frequency per color
+    // Ch 76-80: Opp discard frequency per color
+    // Ch 81-85: Opp draw-from-discard frequency per color
+    {
+        float opp_total = static_cast<float>(std::max(total_moves[1], 1));
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            set_channel(71 + c, expedition_plays[1][c] / opp_total);
+            set_channel(76 + c, color_discards[1][c] / opp_total);
+            set_channel(81 + c, discard_pile_draws[1][c] / opp_total);
+        }
+    }
 }
 
 std::unique_ptr<GameState> LostCitiesState::get_canonical() const {
@@ -107,6 +159,10 @@ std::unique_ptr<GameState> LostCitiesState::get_canonical() const {
 
     std::swap(s->hands[0], s->hands[1]);
     std::swap(s->expeditions[0], s->expeditions[1]);
+    std::swap(s->expedition_plays[0], s->expedition_plays[1]);
+    std::swap(s->color_discards[0], s->color_discards[1]);
+    std::swap(s->discard_pile_draws[0], s->discard_pile_draws[1]);
+    std::swap(s->total_moves[0], s->total_moves[1]);
     s->current_player_ = 0;
     return s;
 }
@@ -213,10 +269,13 @@ std::unique_ptr<GameState> LostCitiesGame::get_next_state(const GameState& state
     LCCard card = s.hands[player][hand_pos];
     s.hands[player].erase(s.hands[player].begin() + hand_pos);
 
-    // Play or discard
+    // Track behavioral accumulators
+    s.total_moves[player]++;
     if (dest == 0) {
+        s.expedition_plays[player][card.color]++;
         s.expeditions[player][card.color].push_back(card);
     } else {
+        s.color_discards[player][card.color]++;
         s.discard_piles[card.color].push_back(card);
     }
 
@@ -228,6 +287,7 @@ std::unique_ptr<GameState> LostCitiesGame::get_next_state(const GameState& state
         if (s.deck.empty()) s.game_over = true;
     } else {
         int pile_color = draw_src - 1;
+        s.discard_pile_draws[player][pile_color]++;
         LCCard drawn = s.discard_piles[pile_color].back();
         s.discard_piles[pile_color].pop_back();
         s.hands[player].push_back(drawn);
@@ -244,6 +304,27 @@ std::unique_ptr<GameState> LostCitiesGame::get_next_state(const GameState& state
     return new_state_ptr;
 }
 
+void LostCitiesGame::randomize_hidden(GameState& state_base, std::mt19937& rng) const {
+    auto& s = static_cast<LostCitiesState&>(state_base);
+    int opp = 1 - s.current_player_;
+
+    // Unseen from current player's perspective: opponent hand + deck
+    std::vector<LCCard> unseen;
+    unseen.reserve(s.hands[opp].size() + s.deck.size());
+    unseen.insert(unseen.end(), s.hands[opp].begin(), s.hands[opp].end());
+    unseen.insert(unseen.end(), s.deck.begin(), s.deck.end());
+
+    size_t opp_hand_sz = s.hands[opp].size();
+
+    // Shuffle and re-deal
+    std::shuffle(unseen.begin(), unseen.end(), rng);
+    s.hands[opp].assign(unseen.begin(), unseen.begin() + opp_hand_sz);
+    s.deck.assign(unseen.begin() + opp_hand_sz, unseen.end());
+
+    // Maintain sorted hand invariant
+    std::sort(s.hands[opp].begin(), s.hands[opp].end());
+}
+
 bool LostCitiesGame::is_terminal(const GameState& state_base) const {
     return static_cast<const LostCitiesState&>(state_base).game_over;
 }
@@ -254,8 +335,10 @@ float LostCitiesGame::get_reward(const GameState& state_base, int player) const 
 
     int score_p = s.compute_score(player);
     int score_opp = s.compute_score(1 - player);
+    int margin = score_p - score_opp;
 
-    if (score_p > score_opp) return 1.0f;
-    if (score_p < score_opp) return -1.0f;
-    return 0.0f;
+    // Score-margin reward: teaches value head that thin expeditions are risky
+    // Typical LC margins ±100, so /100 maps to [-1, 1] range
+    float normalized = margin / 100.0f;
+    return std::max(-1.0f, std::min(1.0f, normalized));
 }

@@ -9,18 +9,18 @@ network:
 
 # MCTS Parameters
 mcts:
-  num_simulations: 1600
+  num_simulations: 800  # Reduced from 1600 — ISMCTS wastes zero sims, so 800 effective > 1600 wasteful
   c_puct: 1.0
-  dirichlet_alpha: 0.3
+  dirichlet_alpha: 0.15   # Reduced from 0.3 — determinization provides exploration diversity
   dirichlet_epsilon: 0.25
 
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
-  parallel_games: 64  # Simultaneous games for batched NN inference (1 = sequential)
+  parallel_games: 32  # Simultaneous games for batched NN inference
   leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
-  temperature_threshold: 30
+  temperature_threshold: 15  # Reduced from 30 — LC games ~44 moves, less early-game noise
 
 # Training Parameters
 training:
@@ -29,9 +29,9 @@ training:
   epochs_per_iteration: 1
   learning_rate: 0.001
   weight_decay: 0.0001
-  lr_milestones: [50, 150, 300]
+  lr_milestones: [150, 400, 800]  # Extended from [50, 150, 300] — more budget at high LR
   lr_gamma: 0.3
-  replay_buffer_size: 500000
+  replay_buffer_size: 50000  # Reduced from 100000 — fresher data, less stale targets
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
 
@@ -42,7 +42,7 @@ evaluation:
   eval_frequency: 1
   eval_num_games: 20
   eval_mcts_simulations: 800
-  eval_start_iteration: 1   # Fresh start — evaluate from the beginning
+  eval_start_iteration: 219   # Start from first ISMCTS iteration
 
 # Paths (separate from Mandala)
 paths:
@@ -50,6 +50,9 @@ paths:
   replay_dir: data/lost_cities/replays
   log_dir: data/lost_cities/logs
   elo_file: data/lost_cities/elo_ratings.json
+
+# Deploy
+deploy_frequency: 25  # Auto-export lightweight checkpoint to data/deploy/ every N iterations
 
 # Hardware
 device: auto  # auto-detects: cuda > mps > cpu

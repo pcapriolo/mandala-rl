@@ -187,7 +187,7 @@ class MandalaNet(nn.Module):
         # Value loss (MSE)
         value_loss = F.mse_loss(values.squeeze(), target_values)
 
-        # Total loss (weight value loss higher — policy loss ~1.9, value loss ~0.2)
-        total_loss = policy_loss + 5.0 * value_loss
+        # Total loss
+        total_loss = policy_loss + value_loss
 
         return total_loss, policy_loss, value_loss

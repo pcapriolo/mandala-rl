@@ -17,7 +17,7 @@ mcts:
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
-  parallel_games: 64  # Simultaneous games for batched NN inference (1 = sequential)
+  parallel_games: 32  # Simultaneous games for batched NN inference
   leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
   temperature_threshold: 30  # Switch to deterministic play after this move
@@ -31,7 +31,7 @@ training:
   weight_decay: 0.0001
   lr_milestones: [50, 150, 300]
   lr_gamma: 0.3
-  replay_buffer_size: 500000
+  replay_buffer_size: 100000
   checkpoint_frequency: 1  # Save checkpoint every N iterations
   checkpoint_every_n_games: 10  # Save checkpoint every N games within iteration (for resume)
 
@@ -50,6 +50,9 @@ paths:
   replay_dir: data/replays
   log_dir: data/logs
   elo_file: data/elo_ratings.json
+
+# Deploy
+deploy_frequency: 25  # Auto-export lightweight checkpoint to data/deploy/ every N iterations
 
 # Hardware
 device: auto  # auto-detects: cuda > mps > cpu (or set explicitly: cuda/mps/cpu)

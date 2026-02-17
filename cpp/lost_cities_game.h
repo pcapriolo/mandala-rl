@@ -12,7 +12,7 @@ static constexpr int LC_HAND_SIZE = 8;
 static constexpr int LC_INITIAL_DECK = 44;  // 60 - 2*8
 static constexpr int LC_MAX_TURNS = 150;
 static constexpr int LC_NUM_ACTIONS = 96;
-static constexpr int LC_TENSOR_CHANNELS = 66;
+static constexpr int LC_TENSOR_CHANNELS = 86;
 
 struct LCCard {
     int8_t color;  // 0-4
@@ -35,6 +35,12 @@ public:
     bool game_over = false;
     int turns_played = 0;
 
+    // Behavioral accumulators: [player][color]
+    std::array<std::array<int, LC_NUM_COLORS>, 2> expedition_plays{};
+    std::array<std::array<int, LC_NUM_COLORS>, 2> color_discards{};
+    std::array<std::array<int, LC_NUM_COLORS>, 2> discard_pile_draws{};
+    std::array<int, 2> total_moves{};
+
     int current_player() const override { return current_player_; }
     int tensor_channels() const override { return LC_TENSOR_CHANNELS; }
     std::unique_ptr<GameState> copy() const override;
@@ -54,6 +60,7 @@ public:
     std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const override;
     bool is_terminal(const GameState& state) const override;
     float get_reward(const GameState& state, int player) const override;
+    void randomize_hidden(GameState& state, std::mt19937& rng) const override;
 
 private:
     static bool can_play_on_expedition(const LCCard& card, const std::vector<LCCard>& expedition);

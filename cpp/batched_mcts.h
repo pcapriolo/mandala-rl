@@ -14,19 +14,25 @@ public:
     BatchedMCTS(const std::string& game_type, int seed,
                 int num_simulations = 800, double c_puct = 1.0,
                 double dirichlet_alpha = 0.3, double dirichlet_epsilon = 0.25,
-                double temperature = 1.0, int temperature_threshold = 30);
+                double temperature = 1.0, int temperature_threshold = 30,
+                int leaves_per_game = 1);
 
     void init_games(int num_games);
 
     // Split-phase simulation loop (called from Python)
     py::list begin_move();                           // Returns list of numpy tensors
     void set_root_policies(py::array_t<float> policies); // Expand roots with noise
-    py::list simulate_step();                        // Returns leaf tensors needing NN
+    py::list simulate_step();                        // Returns leaf tensors needing NN (with virtual loss)
     void apply_nn_results(py::array_t<float> policies, py::array_t<float> values);
     std::vector<int> finish_move();                  // Select actions, advance games
     py::tuple get_game_data(int game_idx);           // Get training data
     bool all_done() const;
     int active_count() const;
+
+    // Eval support: expose game metadata for two-model evaluation
+    std::vector<int> get_active_players() const;       // Current player for each active game
+    std::vector<int> get_active_game_indices() const;  // Game indices of active games
+    std::vector<int> get_pending_game_indices() const; // Game index for each pending leaf
 
 private:
     struct PerGame {
@@ -55,6 +61,7 @@ private:
     double dirichlet_epsilon_;
     double temperature_;
     int temperature_threshold_;
+    int leaves_per_game_;
     std::mt19937 rng_;
 
     std::vector<PerGame> games_;

@@ -9,11 +9,12 @@
 BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          int num_simulations, double c_puct,
                          double dirichlet_alpha, double dirichlet_epsilon,
-                         double temperature, int temperature_threshold)
+                         double temperature, int temperature_threshold,
+                         int leaves_per_game)
     : num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
-      rng_(seed)
+      leaves_per_game_(leaves_per_game), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -52,6 +53,8 @@ py::array_t<float> BatchedMCTS::tensor_to_numpy(const std::vector<float>& data, 
 }
 
 void BatchedMCTS::add_dirichlet_noise(std::vector<float>& policy) {
+    if (dirichlet_epsilon_ <= 0.0 || dirichlet_alpha_ <= 0.0) return;
+
     int n = static_cast<int>(policy.size());
     std::gamma_distribution<float> gamma(static_cast<float>(dirichlet_alpha_), 1.0f);
 
@@ -125,32 +128,58 @@ py::list BatchedMCTS::simulate_step() {
     py::list leaf_tensors;
     int channels = game_->tensor_channels();
 
-    for (int idx : active_indices_) {
-        auto& g = games_[idx];
-        if (!g.root) continue;
+    // Collect multiple leaves per game using virtual loss
+    for (int leaf_round = 0; leaf_round < leaves_per_game_; leaf_round++) {
+        for (int idx : active_indices_) {
+            auto& g = games_[idx];
+            if (!g.root) continue;
 
-        // Traverse tree to leaf
-        MCTSNode* node = g.root.get();
-        auto state = g.state->copy();
+            // SO-ISMCTS traversal: determinize, then navigate tree filtering
+            // by valid moves at each node. Never waste a simulation on an
+            // invalid action. Availability tracking in UCB properly weights
+            // actions that are only sometimes legal across determinizations.
+            MCTSNode* node = g.root.get();
+            auto state = g.state->copy();
+            game_->randomize_hidden(*state, rng_);
 
-        while (!node->is_leaf() && !game_->is_terminal(*state)) {
-            auto [action, child] = node->select_child(c_puct_);
-            state = game_->get_next_state(*state, action);
-            node = child;
-        }
+            while (!node->is_leaf() && !game_->is_terminal(*state)) {
+                std::vector<float> valid;
+                game_->get_valid_moves(*state, valid);
 
-        if (game_->is_terminal(*state)) {
-            // Terminal: backup immediately with true reward
-            float value = game_->get_reward(*state, state->current_player());
-            node->backup(value);
-        } else {
-            // Need NN eval: compute canonical tensor
-            auto canonical = state->get_canonical();
-            std::vector<float> tensor_data;
-            canonical->to_tensor(tensor_data);
-            leaf_tensors.append(tensor_to_numpy(tensor_data, channels));
+                // Update availability counts for valid children
+                for (auto& [action, child] : node->children) {
+                    if (action < static_cast<int>(valid.size()) && valid[action] > 0.0f) {
+                        child->availability_count++;
+                    }
+                }
 
-            pending_leaves_.push_back({idx, node, std::move(state)});
+                // Select among valid children using ISMCTS-PUCT
+                auto [action, child] = node->select_child(c_puct_, &valid);
+                if (action < 0) break;  // No valid children in this determinization
+
+                state = game_->get_next_state(*state, action);
+                node = child;
+            }
+
+            if (game_->is_terminal(*state)) {
+                // Terminal: backup immediately with true reward
+                float value = game_->get_reward(*state, state->current_player());
+                node->backup(value);
+            } else if (node->is_leaf()) {
+                // Leaf: needs NN evaluation
+                node->apply_virtual_loss();
+
+                auto canonical = state->get_canonical();
+                std::vector<float> tensor_data;
+                canonical->to_tensor(tensor_data);
+                leaf_tensors.append(tensor_to_numpy(tensor_data, channels));
+
+                pending_leaves_.push_back({idx, node, std::move(state)});
+            } else {
+                // Internal node with no valid children in this determinization.
+                // Backup neutral value — this determinization is uninformative here.
+                node->backup(0.0);
+            }
         }
     }
 
@@ -175,7 +204,8 @@ void BatchedMCTS::apply_nn_results(py::array_t<float> policies, py::array_t<floa
         game_->get_valid_moves(*leaf.state, valid);
         leaf.node->expand(policy, valid);
 
-        // Backup
+        // Remove virtual loss, then backup with real value
+        leaf.node->remove_virtual_loss();
         leaf.node->backup(static_cast<double>(val(j)));
     }
 
@@ -290,4 +320,26 @@ int BatchedMCTS::active_count() const {
         if (!g.finished) count++;
     }
     return count;
+}
+
+std::vector<int> BatchedMCTS::get_active_players() const {
+    std::vector<int> players;
+    players.reserve(active_indices_.size());
+    for (int idx : active_indices_) {
+        players.push_back(games_[idx].state->current_player());
+    }
+    return players;
+}
+
+std::vector<int> BatchedMCTS::get_active_game_indices() const {
+    return active_indices_;
+}
+
+std::vector<int> BatchedMCTS::get_pending_game_indices() const {
+    std::vector<int> indices;
+    indices.reserve(pending_leaves_.size());
+    for (auto& leaf : pending_leaves_) {
+        indices.push_back(leaf.game_index);
+    }
+    return indices;
 }

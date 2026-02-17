@@ -18,6 +18,10 @@ std::unique_ptr<GameState> MandalaState::copy() const {
     s->game_over = game_over;
     s->deck_reshuffled = deck_reshuffled;
     s->game_ends_next_mandala = game_ends_next_mandala;
+    s->mountain_plays = mountain_plays;
+    s->field_plays = field_plays;
+    s->discard_plays = discard_plays;
+    s->total_moves = total_moves;
     return s;
 }
 
@@ -100,6 +104,57 @@ void MandalaState::to_tensor(std::vector<float>& out) const {
     set_channel(57, static_cast<float>(deck.size()) / 108.0f);
     // Ch 58: Game ends next mandala flag
     set_channel(58, game_ends_next_mandala ? 1.0f : 0.0f);
+
+    // Ch 59-64: Belief channels — P(opp has ≥1 of color c)
+    {
+        // Count known cards per color (my hand + all public zones)
+        int known[M_NUM_COLORS] = {};
+        for (int c : hands[0]) known[c]++;
+        for (int m = 0; m < 2; m++) {
+            for (int c : mountains[m]) known[c]++;
+            for (int c : fields[m][0]) known[c]++;
+            for (int c : fields[m][1]) known[c]++;
+        }
+        for (int c : rivers[0]) known[c]++;
+        for (int c : rivers[1]) known[c]++;
+
+        int total_unseen = 0;
+        int remaining[M_NUM_COLORS];
+        for (int c = 0; c < M_NUM_COLORS; c++) {
+            remaining[c] = M_CARDS_PER_COLOR - known[c];
+            if (remaining[c] < 0) remaining[c] = 0;
+            total_unseen += remaining[c];
+        }
+
+        int opp_hand_sz = static_cast<int>(hands[1].size());
+
+        for (int c = 0; c < M_NUM_COLORS; c++) {
+            float belief = 0.0f;
+            if (remaining[c] > 0 && total_unseen > 0 && opp_hand_sz > 0) {
+                // P(none of color c in opp hand) = prod_{i=0}^{n-1} (N-k-i)/(N-i)
+                float p_none = 1.0f;
+                int N = total_unseen;
+                int k = remaining[c];
+                for (int i = 0; i < opp_hand_sz && (N - i) > 0; i++) {
+                    p_none *= static_cast<float>(N - k - i) / static_cast<float>(N - i);
+                }
+                belief = 1.0f - p_none;
+            }
+            set_channel(59 + c, belief);
+        }
+    }
+
+    // Ch 65-70: Opp mountain play frequency per color
+    // Ch 71-76: Opp field play frequency per color
+    // Ch 77-82: Opp discard frequency per color
+    {
+        float opp_total = static_cast<float>(std::max(total_moves[1], 1));
+        for (int c = 0; c < M_NUM_COLORS; c++) {
+            set_channel(65 + c, mountain_plays[1][c] / opp_total);
+            set_channel(71 + c, field_plays[1][c] / opp_total);
+            set_channel(77 + c, discard_plays[1][c] / opp_total);
+        }
+    }
 }
 
 std::unique_ptr<GameState> MandalaState::get_canonical() const {
@@ -116,6 +171,10 @@ std::unique_ptr<GameState> MandalaState::get_canonical() const {
     for (int m = 0; m < 2; m++) {
         std::swap(s->fields[m][0], s->fields[m][1]);
     }
+    std::swap(s->mountain_plays[0], s->mountain_plays[1]);
+    std::swap(s->field_plays[0], s->field_plays[1]);
+    std::swap(s->discard_plays[0], s->discard_plays[1]);
+    std::swap(s->total_moves[0], s->total_moves[1]);
     s->current_player_ = 0;
     return s;
 }
@@ -198,7 +257,8 @@ std::unique_ptr<GameState> MandalaGame::create_initial_state(std::mt19937& rng) 
 }
 
 bool MandalaGame::can_play_to_mountain(const MandalaState& s, int color, int mandala) const {
-    // Color cannot already be in either Field of this Mandala
+    // Color cannot already be anywhere in this Mandala (Mountain or either Field)
+    for (int c : s.mountains[mandala]) if (c == color) return false;
     for (int c : s.fields[mandala][0]) if (c == color) return false;
     for (int c : s.fields[mandala][1]) if (c == color) return false;
     return true;
@@ -258,10 +318,14 @@ std::unique_ptr<GameState> MandalaGame::get_next_state(const GameState& state_ba
     int player = s.current_player_;
     int completed_mandala = -1;
 
+    // Track behavioral accumulators
+    s.total_moves[player]++;
+
     if (action_id < 12) {
         // BUILD_MOUNTAIN
         int mandala = action_id / 6;
         int color = action_id % 6;
+        s.mountain_plays[player][color]++;
 
         // Remove one card of this color from hand
         auto& hand = s.hands[player];
@@ -288,6 +352,7 @@ std::unique_ptr<GameState> MandalaGame::get_next_state(const GameState& state_ba
         int a = action_id - 12;
         int mandala = a / 6;
         int color = a % 6;
+        s.field_plays[player][color]++;
 
         // Remove all cards of this color (but keep at least 1 card total)
         auto& hand = s.hands[player];
@@ -310,6 +375,7 @@ std::unique_ptr<GameState> MandalaGame::get_next_state(const GameState& state_ba
     } else {
         // DISCARD: action = 24 + color
         int color = action_id - 24;
+        s.discard_plays[player][color]++;
 
         auto& hand = s.hands[player];
         std::vector<int> to_discard, remaining;
@@ -448,6 +514,41 @@ bool MandalaGame::should_game_end(const MandalaState& s) const {
     if (s.rivers[0].size() >= 6 || s.rivers[1].size() >= 6) return true;
     if (s.game_ends_next_mandala) return true;
     return false;
+}
+
+void MandalaGame::randomize_hidden(GameState& state_base, std::mt19937& rng) const {
+    auto& s = static_cast<MandalaState&>(state_base);
+    int opp = 1 - s.current_player_;
+
+    // Collect all cards hidden from current player:
+    // opponent hand + deck + both cups + discard
+    std::vector<int> unseen;
+    unseen.reserve(s.hands[opp].size() + s.deck.size() +
+                   s.cups[0].size() + s.cups[1].size() + s.discard.size());
+    unseen.insert(unseen.end(), s.hands[opp].begin(), s.hands[opp].end());
+    unseen.insert(unseen.end(), s.deck.begin(), s.deck.end());
+    unseen.insert(unseen.end(), s.cups[0].begin(), s.cups[0].end());
+    unseen.insert(unseen.end(), s.cups[1].begin(), s.cups[1].end());
+    unseen.insert(unseen.end(), s.discard.begin(), s.discard.end());
+
+    // Remember original sizes
+    size_t opp_hand_sz = s.hands[opp].size();
+    size_t deck_sz = s.deck.size();
+    size_t cup0_sz = s.cups[0].size();
+    size_t cup1_sz = s.cups[1].size();
+
+    // Shuffle and re-deal
+    std::shuffle(unseen.begin(), unseen.end(), rng);
+    size_t pos = 0;
+    s.hands[opp].assign(unseen.begin() + pos, unseen.begin() + pos + opp_hand_sz);
+    pos += opp_hand_sz;
+    s.deck.assign(unseen.begin() + pos, unseen.begin() + pos + deck_sz);
+    pos += deck_sz;
+    s.cups[0].assign(unseen.begin() + pos, unseen.begin() + pos + cup0_sz);
+    pos += cup0_sz;
+    s.cups[1].assign(unseen.begin() + pos, unseen.begin() + pos + cup1_sz);
+    pos += cup1_sz;
+    s.discard.assign(unseen.begin() + pos, unseen.end());
 }
 
 bool MandalaGame::is_terminal(const GameState& state_base) const {

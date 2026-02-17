@@ -2,6 +2,7 @@
 import json
 import time
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import sys
@@ -64,6 +65,8 @@ class Trainer:
             temperature=config.get('temperature', 1.0),
             temperature_threshold=config.get('temperature_threshold', 30),
             c_puct=config.get('c_puct', 1.0),
+            dirichlet_alpha=config.get('dirichlet_alpha', 0.3),
+            dirichlet_epsilon=config.get('dirichlet_epsilon', 0.25),
             device=device,
             leaves_per_game=config.get('leaves_per_game', 1),
         )
@@ -184,12 +187,17 @@ class Trainer:
             self._write_heartbeat('checkpoint', 'saving')
             self._save_checkpoint()
 
-            # 5. Evaluate (async — runs on CPU in background, never blocks training)
+            # 5. Auto-export deploy checkpoint
+            deploy_freq = self.config.get('deploy_frequency', 0)
+            if deploy_freq > 0 and self.iteration % deploy_freq == 0:
+                self._export_deploy_checkpoint()
+
+            # 6. Evaluate (async — runs on CPU in background, never blocks training)
             eval_freq = self.config.get('eval_frequency', 10)
             if eval_freq > 0 and self.iteration > 0 and self.iteration % eval_freq == 0:
                 self._start_async_eval()
 
-            # 6. Clean up disk
+            # 7. Clean up disk
             self._cleanup_checkpoints()
 
             # Step scheduler
@@ -310,6 +318,16 @@ class Trainer:
                              self.optimizer.param_groups[0]['lr'],
                              self.iteration)
 
+        # Log policy entropy (network health monitor)
+        self.network.eval()
+        with torch.no_grad():
+            policy_logits, _ = self.network(states)
+            network_policy = F.softmax(policy_logits, dim=1)
+            entropy = -torch.sum(network_policy * torch.log(network_policy + 1e-8), dim=1).mean()
+            max_prob = torch.max(network_policy, dim=1)[0].mean()
+            self.writer.add_scalar('Network/PolicyEntropy', entropy.item(), self.iteration)
+            self.writer.add_scalar('Network/MaxActionProb', max_prob.item(), self.iteration)
+
         print(f"Loss - Total: {epoch_total_loss:.4f}, "
               f"Policy: {epoch_policy_loss:.4f}, "
               f"Value: {epoch_value_loss:.4f} "
@@ -352,9 +370,12 @@ class Trainer:
             torch.save(checkpoint, checkpoint_dir / f'model_latest{suffix}.pt')
         else:
             # Full checkpoint: save model_latest with replay buffer for resume
+            # Use atomic write (temp file + rename) to prevent 0-byte corruption on crash
             latest_checkpoint = dict(checkpoint)
             latest_checkpoint['replay_buffer'] = self.replay_buffer.get_all_data()
-            torch.save(latest_checkpoint, checkpoint_dir / 'model_latest.pt')
+            tmp_path = checkpoint_dir / 'model_latest.pt.tmp'
+            torch.save(latest_checkpoint, tmp_path)
+            tmp_path.rename(checkpoint_dir / 'model_latest.pt')
 
             # Save periodic iteration checkpoint (lightweight, no replay buffer)
             if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
@@ -364,6 +385,21 @@ class Trainer:
         if self.games_in_current_iteration > 0:
             status += f", game {self.games_in_current_iteration}/{self.config.get('games_per_iteration', 100)}"
         print(f"Saved checkpoint to {checkpoint_dir} ({status}, buffer: {len(self.replay_buffer)})")
+
+    def _export_deploy_checkpoint(self):
+        """Export lightweight checkpoint to data/deploy/ for Railway."""
+        checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
+        game_name = 'lost_cities' if self.config.get('network', {}).get('num_actions', 30) != 30 else 'mandala'
+        deploy_dir = checkpoint_dir.parent / 'deploy' / game_name
+        deploy_dir.mkdir(parents=True, exist_ok=True)
+
+        lightweight = {
+            'model_state_dict': self._unwrapped_network.state_dict(),
+            'iteration': self.iteration,
+            'total_games': self.total_games,
+        }
+        torch.save(lightweight, deploy_dir / 'model.pt')
+        print(f"[DEPLOY] Exported deploy checkpoint: iter {self.iteration} -> {deploy_dir / 'model.pt'}")
 
     def _cleanup_checkpoints(self):
         """Remove stale checkpoints to prevent disk from filling up."""
@@ -378,17 +414,8 @@ class Trainer:
         if game_checkpoints:
             print(f"Cleaned up {len(game_checkpoints)} game-level checkpoints")
 
-        # 2. Prune old iteration checkpoints, keep last 5
-        keep_last = 5
-        iter_checkpoints = sorted(
-            checkpoint_dir.glob('model_iter_*.pt'),
-            key=lambda f: int(f.stem.split('_')[-1])
-        )
-        if len(iter_checkpoints) > keep_last:
-            to_delete = iter_checkpoints[:-keep_last]
-            for f in to_delete:
-                f.unlink()
-            print(f"Pruned {len(to_delete)} old iteration checkpoints")
+        # 2. Keep all iteration checkpoints (needed for Elo evaluation)
+        # Each is ~7MB (weights only), so 500 iters = ~3.5 GB — acceptable.
 
     def load_checkpoint(self, filepath: Path):
         """Load training checkpoint and replay buffer."""

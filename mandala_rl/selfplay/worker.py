@@ -42,7 +42,8 @@ class SelfPlayWorker:
         c_puct: float = 1.0,
         dirichlet_alpha: float = 0.3,
         dirichlet_epsilon: float = 0.25,
-        device: str = "mps"
+        device: str = "mps",
+        leaves_per_game: int = 1
     ):
         self.game = game
         self.network = network.to(device)
@@ -54,6 +55,7 @@ class SelfPlayWorker:
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
         self.device = device
+        self.leaves_per_game = leaves_per_game
 
         # Detect game type for C++ engine
         self._game_type = "mandala" if network.num_actions == 30 else "lost_cities"
@@ -95,6 +97,7 @@ class SelfPlayWorker:
             dirichlet_epsilon=self.dirichlet_epsilon,
             temperature=self.temperature,
             temperature_threshold=self.temperature_threshold,
+            leaves_per_game=self.leaves_per_game,
         )
         mgr.init_games(num_games)
 
@@ -113,8 +116,9 @@ class SelfPlayWorker:
                 policies = F.softmax(logits, dim=1).cpu().numpy()
             mgr.set_root_policies(policies)
 
-            # Run MCTS simulations
-            for _ in range(self.mcts_simulations):
+            # Run MCTS simulations (each step collects leaves_per_game leaves per game)
+            sim_steps = max(1, self.mcts_simulations // self.leaves_per_game)
+            for _ in range(sim_steps):
                 leaf_tensors = mgr.simulate_step()
                 if len(leaf_tensors) > 0:
                     with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):

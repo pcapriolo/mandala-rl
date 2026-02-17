@@ -11,7 +11,7 @@ static constexpr int M_CARDS_PER_COLOR = 18;
 static constexpr int M_TOTAL_CARDS = 108;
 static constexpr int M_MAX_HAND = 8;
 static constexpr int M_NUM_ACTIONS = 30;
-static constexpr int M_TENSOR_CHANNELS = 59;
+static constexpr int M_TENSOR_CHANNELS = 83;
 
 class MandalaState : public GameState {
 public:
@@ -26,6 +26,12 @@ public:
     bool game_over = false;
     bool deck_reshuffled = false;
     bool game_ends_next_mandala = false;
+
+    // Behavioral accumulators: [player][color]
+    std::array<std::array<int, M_NUM_COLORS>, 2> mountain_plays{};
+    std::array<std::array<int, M_NUM_COLORS>, 2> field_plays{};
+    std::array<std::array<int, M_NUM_COLORS>, 2> discard_plays{};
+    std::array<int, 2> total_moves{};
 
     int current_player() const override { return current_player_; }
     int tensor_channels() const override { return M_TENSOR_CHANNELS; }
@@ -49,6 +55,7 @@ public:
     std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const override;
     bool is_terminal(const GameState& state) const override;
     float get_reward(const GameState& state, int player) const override;
+    void randomize_hidden(GameState& state, std::mt19937& rng) const override;
 
 private:
     bool can_play_to_mountain(const MandalaState& s, int color, int mandala) const;

@@ -30,7 +30,7 @@ template_dir = project_root / 'templates'
 app = Flask(__name__, template_folder=str(template_dir))
 
 # Configuration from environment (with sensible defaults)
-MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '50'))
+MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '30'))
 MANDALA_CONFIG = os.environ.get('MANDALA_CONFIG', 'configs/default.yaml')
 LC_CONFIG = os.environ.get('LC_CONFIG', 'configs/lost_cities.yaml')
 MANDALA_CHECKPOINT_DIR = os.environ.get('MANDALA_CHECKPOINT_DIR', 'data/checkpoints')

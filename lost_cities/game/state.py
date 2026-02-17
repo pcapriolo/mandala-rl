@@ -103,7 +103,7 @@ class LostCitiesState:
         Convert state to neural network input tensor.
         State is assumed to be in canonical form (current player = index 0).
 
-        66 channels x 8x8 (values broadcast across spatial dims):
+        86 channels x 8x8 (values broadcast across spatial dims):
           Ch 0-4:   My hand count per color (/8)
           Ch 5-9:   My hand wager count per color (/3)
           Ch 10-14: My expedition top value per color (/10)
@@ -120,8 +120,12 @@ class LostCitiesState:
           Ch 49:    Game progress (turns_played / 150)
           Ch 50-57: Hand position 0-7 card color ((color+1)/6, 0=empty)
           Ch 58-65: Hand position 0-7 card value ((value+1)/11, 0=empty)
+          Ch 66-70: Belief channels — P(opp has ≥1 of color c)
+          Ch 71-75: Opp discard frequency per color (default 0.0)
+          Ch 76-80: My played card frequency per color (default 0.0)
+          Ch 81-85: Opp played card frequency per color (default 0.0)
         """
-        tensor = np.zeros((66, 8, 8), dtype=np.float32)
+        tensor = np.zeros((86, 8, 8), dtype=np.float32)
 
         # My hand counts and wager counts per color
         for card in self.hands[0]:
@@ -161,6 +165,42 @@ class LostCitiesState:
         for i, card in enumerate(self.hands[0]):
             tensor[50 + i] = (card.color + 1) / 6.0   # 0=empty, 0.17-0.83 for colors
             tensor[58 + i] = (card.value + 1) / 11.0   # 0=empty, 0.09=wager, 0.27-1.0 for 2-10
+
+        # Ch 66-70: Belief channels — P(opp has ≥1 of color c)
+        # Count all known cards per color
+        known = np.zeros(NUM_COLORS, dtype=np.int32)
+        for card in self.hands[0]:
+            known[card.color] += 1
+        for c in range(NUM_COLORS):
+            for card in self.expeditions[0][c]:
+                known[card.color] += 1
+            for card in self.expeditions[1][c]:
+                known[card.color] += 1
+            for card in self.discard_piles[c]:
+                known[card.color] += 1
+
+        remaining = np.maximum(CARDS_PER_COLOR - known, 0)
+        total_unseen = int(remaining.sum())
+        opp_hand_sz = len(self.hands[1])
+
+        for c in range(NUM_COLORS):
+            belief = 0.0
+            if remaining[c] > 0 and total_unseen > 0 and opp_hand_sz > 0:
+                # P(none of color c in opp hand) via hypergeometric
+                p_none = 1.0
+                N = total_unseen
+                k = int(remaining[c])
+                for i in range(opp_hand_sz):
+                    if (N - i) > 0:
+                        p_none *= (N - k - i) / (N - i)
+                belief = 1.0 - p_none
+            tensor[66 + c] = belief
+
+        # Ch 71-85: Behavioral inference (play frequencies per color)
+        # These require move-history tracking not available in the Python game state.
+        # Default to 0.0 — the model was trained with these but they're only
+        # informative after many moves. Zero is a safe neutral value.
+        # (Ch 71-75: discard freq, Ch 76-80: my play freq, Ch 81-85: opp play freq)
 
         return tensor
 

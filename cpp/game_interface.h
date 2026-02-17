@@ -26,4 +26,8 @@ public:
     virtual float get_reward(const GameState& state, int player) const = 0;
     virtual int num_actions() const = 0;
     virtual int tensor_channels() const = 0;
+
+    // Determinized MCTS: randomize hidden information from current player's perspective.
+    // Default: no-op (perfect information games).
+    virtual void randomize_hidden(GameState& state, std::mt19937& rng) const {}
 };

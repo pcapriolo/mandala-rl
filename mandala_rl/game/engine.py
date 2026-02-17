@@ -121,11 +121,12 @@ class MandalaGame:
 
     def _can_play_to_mountain(self, state: GameState, color: int, mandala_idx: int) -> bool:
         """Check if color can be played to Mountain (Rule of Color)."""
-        # Color cannot already be in either Field of this Mandala
-        colors_in_fields = set()
-        colors_in_fields.update(c.color for c in state.fields[mandala_idx][0])
-        colors_in_fields.update(c.color for c in state.fields[mandala_idx][1])
-        return color not in colors_in_fields
+        # Color cannot already be anywhere in this Mandala (Mountain or either Field)
+        colors_in_mandala = set()
+        colors_in_mandala.update(c.color for c in state.mountains[mandala_idx])
+        colors_in_mandala.update(c.color for c in state.fields[mandala_idx][0])
+        colors_in_mandala.update(c.color for c in state.fields[mandala_idx][1])
+        return color not in colors_in_mandala
 
     def _can_play_to_field(self, state: GameState, color: int, mandala_idx: int, player: int) -> bool:
         """Check if color can be played to Field (Rule of Color)."""

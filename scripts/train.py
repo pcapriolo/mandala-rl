@@ -91,12 +91,15 @@ def main():
         # MCTS
         'mcts_simulations': config['mcts']['num_simulations'],
         'c_puct': config['mcts']['c_puct'],
+        'dirichlet_alpha': config['mcts'].get('dirichlet_alpha', 0.3),
+        'dirichlet_epsilon': config['mcts'].get('dirichlet_epsilon', 0.25),
         'temperature': config['selfplay']['temperature'],
         'temperature_threshold': config['selfplay']['temperature_threshold'],
 
         # Self-play
         'games_per_iteration': config['selfplay']['games_per_iteration'],
         'parallel_games': config['selfplay'].get('parallel_games', 8),
+        'leaves_per_game': config['selfplay'].get('leaves_per_game', 1),
         'batch_size': config['training']['batch_size'],
         'epochs_per_iteration': config['training']['epochs_per_iteration'],
         'learning_rate': config['training']['learning_rate'],

@@ -64,7 +64,7 @@ def test_to_tensor():
     state = game.get_initial_state()
 
     tensor = state.to_tensor()
-    assert tensor.shape == (50, 8, 8)
+    assert tensor.shape == (86, 8, 8)
     assert np.any(tensor != 0), "Tensor should not be all zeros"
 
     # Hand channels should have values
