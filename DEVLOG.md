@@ -308,3 +308,10 @@ Lost Cities training failed catastrophically — policy loss regressed from 1.58
 **Complementary config changes** for Lost Cities: `dirichlet_alpha` 0.3→0.15 (determinization provides exploration), `temperature_threshold` 30→15 (less early-game noise), `lr_milestones` [50,150,300]→[150,400,800] (more budget at high LR), `replay_buffer_size` 100K→50K (fresher data). Also wired `dirichlet_alpha`/`epsilon` from YAML to the worker — previously dead config that was ignored.
 
 **Backward compatible**: For Mandala (where most tree actions are valid in all determinizations), `availability_count ≈ N_parent`, so behavior is nearly identical. Both games benefit at opponent-move nodes deeper in the tree where determinization shuffles hands.
+
+## #26 — Score-Based Reward + Entropy Logging + Auto-Deploy
+**Feb 17, 2026**
+
+CEO playtesting revealed LC bot opens 3-5 thin expeditions and gets crushed by -20 base penalties. Root cause: `get_reward()` returned binary +1/-1 (win/loss). The value head couldn't distinguish "risky thin-expedition win" from "safe thick-expedition win" — both gave identical +1.0 training targets. Fix: score-margin reward normalized to [-1, 1] via `margin / 100.0f`. The value head now receives richer signal about position quality. Training resumed from existing checkpoint (iter 257) — value head recalibrates, policy head unaffected.
+
+Also: production MCTS sims reduced 50→30 to cap LC response time under 5s. Policy entropy and max action probability now logged to tensorboard for monitoring network health. Raw network policy exposed in web UI alongside MCTS visit distribution (fixes misleading "100% confidence" — that was just temp=0 one-hot from MCTS, not collapsed entropy). Auto-export deploy checkpoints every 25 iterations via `deploy_frequency` config. Fixed stale test expecting 66 channels (should be 86).
