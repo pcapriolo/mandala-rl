@@ -333,3 +333,12 @@ Fix: added `_strip_checkpoint()` function that auto-reload calls before hot-swap
 Score-margin reward (`margin/100`) caused a degenerate equilibrium: both players converged on "never start expeditions." Evidence from replay buffer analysis: 99.3% of actions were discards, 96.3% draws from discard piles, every game hit 150-turn cap, value targets mean=0.000. The bot learned that not playing guarantees score=0, which under pure margin reward is a "safe draw" (reward=0.0) — better than risking a -0.2 from a bad expedition.
 
 Fix: hybrid reward — binary win/loss (±0.8-1.0) + small margin tiebreaker (±0.2). Drawing is now 0.0, clearly worse than winning (~0.9). `LC_MAX_TURNS` reduced 150→60 to kill infinite discard loops. Timeout penalty makes stalling suboptimal. Replay buffer flushed (50K poisoned examples). Added `--flush-buffer` flag to train.py for future reward changes. Also synced Python engine (production) to match C++ changes: MAX_TURNS=60, reward function, and added hard 5s time limit to LC web MCTS.
+
+---
+
+## #29 — Switch Production to ONNX Runtime (PyTorch Can't Run on Railway)
+**Feb 18, 2026**
+
+PyTorch forward passes hang indefinitely on Railway's resource-constrained containers. A `/debug/bench` endpoint confirmed: 121s timeout on a single forward pass (gunicorn 120s limit). Root cause: PyTorch's CPU runtime has ~400MB memory overhead that causes severe thrashing on Railway's limited containers (likely 512MB-1GB RAM shared with OS + other processes).
+
+Fix: complete rewrite of `serve.py` to use **ONNX Runtime** instead of PyTorch. Exported both models to ONNX format via `scripts/export_onnx.py` (Mandala: 6.6MB, LC: 7.1MB). ONNX Runtime has ~50MB memory overhead vs PyTorch's ~400MB, and inference is 3.5ms per forward pass locally. No more auto-reload thread, quantization hacks, or MCTS — raw network policy only (0 MCTS sims). Requirements changed from `torch>=2.0.0+cpu` to `onnxruntime>=1.16.0` + `scipy>=1.10.0` (for softmax). Gunicorn timeout reduced from 120s to 30s. Session management classes inlined in serve.py to avoid importing PyTorch-dependent modules.
