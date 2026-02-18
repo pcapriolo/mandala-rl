@@ -24,7 +24,10 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 from flask import Flask, Blueprint, render_template, jsonify, request
-from scipy.special import softmax
+def softmax(x):
+    """Numpy softmax (replaces scipy.special.softmax)."""
+    e = np.exp(x - np.max(x))
+    return e / e.sum()
 
 # Add project paths
 project_root = Path(__file__).parent
@@ -410,36 +413,33 @@ class MandalaGameSession:
 
     def _format_state(self):
         s = self.state
-        def _color_counts(card_list):
-            """Convert List[Card] to color count dict."""
-            counts = [0] * 6
-            for card in card_list:
-                counts[card.color] += 1
-            return counts
-        def hand_repr(hand):
-            counts = _color_counts(hand)
-            return [{'color': i, 'count': counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if counts[i] > 0]
+        def cards_to_colors(card_list):
+            """Convert List[Card] to flat list of color indices."""
+            return [card.color for card in card_list]
         def mandala_repr(m_idx):
-            mt_counts = _color_counts(s.mountains[m_idx])
+            mt_colors = cards_to_colors(s.mountains[m_idx])
+            unique_colors = len(set(mt_colors))
             return {
-                'mountain': [{'color': i, 'count': mt_counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if mt_counts[i] > 0],
-                'fields': [
-                    [{'color': i, 'count': fc[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if fc[i] > 0]
-                    for fc in [_color_counts(s.fields[m_idx][p]) for p in range(2)]
-                ],
+                'mountain': mt_colors,
+                'field_p0': cards_to_colors(s.fields[m_idx][0]),
+                'field_p1': cards_to_colors(s.fields[m_idx][1]),
+                'colors': unique_colors,
             }
-        def cup_repr(cup):
-            counts = _color_counts(cup)
-            return [{'color': i, 'count': counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if counts[i] > 0]
         return {
-            'hands': [hand_repr(s.hands[p]) for p in range(2)],
+            'hands': {
+                'player0': cards_to_colors(s.hands[0]),
+                'player1': cards_to_colors(s.hands[1]),
+            },
             'mandalas': [mandala_repr(m_idx) for m_idx in range(2)],
-            'rivers': [
-                [{'color': card.color, 'name': MANDALA_COLOR_NAMES[card.color]} for card in s.rivers[p]]
-                for p in range(2)
-            ],
-            'cups': [cup_repr(s.cups[p]) for p in range(2)],
-            'deck_remaining': len(s.deck),
+            'rivers': {
+                'player0': cards_to_colors(s.rivers[0]),
+                'player1': cards_to_colors(s.rivers[1]),
+            },
+            'cups': {
+                'player0': len(s.cups[0]),
+                'player1': len(s.cups[1]),
+            },
+            'deck_size': len(s.deck),
         }
 
     def make_move(self, action, think_time_ms=None, ai_data=None):
