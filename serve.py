@@ -130,8 +130,26 @@ def _find_latest_iter(checkpoint_dir):
             continue
     return best_iter, best_path
 
+def _strip_checkpoint(source_path, deploy_dir):
+    """Strip training checkpoint to model_state_dict only, save to deploy dir."""
+    import torch
+    checkpoint = torch.load(source_path, map_location='cpu', weights_only=False)
+    lightweight = {
+        'model_state_dict': checkpoint['model_state_dict'],
+        'iteration': checkpoint.get('iteration', 'unknown'),
+        'total_games': checkpoint.get('total_games', 'unknown'),
+    }
+    deploy_path = Path(deploy_dir) / 'model.pt'
+    deploy_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(lightweight, deploy_path)
+    src_mb = source_path.stat().st_size / (1024 * 1024)
+    dst_mb = deploy_path.stat().st_size / (1024 * 1024)
+    print(f"[auto-reload] Stripped {src_mb:.1f}MB → {dst_mb:.1f}MB: {deploy_path}")
+    return deploy_path, lightweight['iteration'], lightweight['total_games']
+
+
 def _auto_reload_worker():
-    """Background thread: checks for newer checkpoints and hot-swaps."""
+    """Background thread: checks for newer checkpoints, strips to lightweight, hot-swaps."""
     global _mandala_server, _lc_server
     print(f"[auto-reload] Watching for new checkpoints every {AUTO_RELOAD_INTERVAL}s")
     while True:
@@ -144,15 +162,18 @@ def _auto_reload_worker():
                 if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
                     print(f"[auto-reload] Mandala: iter {current_iter} → {latest_iter}")
                     try:
+                        deploy_path, iteration, total_games = _strip_checkpoint(
+                            latest_path, f"{DEPLOY_DIR}/mandala"
+                        )
                         from play_vs_ai_web import MandalaModelServer
                         new_server = MandalaModelServer(
-                            latest_path, MANDALA_CONFIG, MCTS_SIMULATIONS
+                            deploy_path, MANDALA_CONFIG, MCTS_SIMULATIONS
                         )
                         _mandala_server.__dict__.update(new_server.__dict__)
-                        loaded_games['mandala']['iteration'] = new_server.iteration
-                        loaded_games['mandala']['total_games'] = new_server.total_games
-                        loaded_games['mandala']['checkpoint'] = latest_path.name
-                        print(f"[auto-reload] Mandala reloaded: iter {new_server.iteration}")
+                        loaded_games['mandala']['iteration'] = iteration
+                        loaded_games['mandala']['total_games'] = total_games
+                        loaded_games['mandala']['checkpoint'] = deploy_path.name
+                        print(f"[auto-reload] Mandala reloaded: iter {iteration}")
                     except Exception as e:
                         print(f"[auto-reload] Mandala reload failed: {e}")
 
@@ -163,15 +184,18 @@ def _auto_reload_worker():
                 if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
                     print(f"[auto-reload] Lost Cities: iter {current_iter} → {latest_iter}")
                     try:
+                        deploy_path, iteration, total_games = _strip_checkpoint(
+                            latest_path, f"{DEPLOY_DIR}/lost_cities"
+                        )
                         from play_vs_ai_web_lc import LCModelServer
                         new_server = LCModelServer(
-                            latest_path, LC_CONFIG, MCTS_SIMULATIONS
+                            deploy_path, LC_CONFIG, MCTS_SIMULATIONS
                         )
                         _lc_server.__dict__.update(new_server.__dict__)
-                        loaded_games['lost_cities']['iteration'] = new_server.iteration
-                        loaded_games['lost_cities']['total_games'] = new_server.total_games
-                        loaded_games['lost_cities']['checkpoint'] = latest_path.name
-                        print(f"[auto-reload] Lost Cities reloaded: iter {new_server.iteration}")
+                        loaded_games['lost_cities']['iteration'] = iteration
+                        loaded_games['lost_cities']['total_games'] = total_games
+                        loaded_games['lost_cities']['checkpoint'] = deploy_path.name
+                        print(f"[auto-reload] Lost Cities reloaded: iter {iteration}")
                     except Exception as e:
                         print(f"[auto-reload] Lost Cities reload failed: {e}")
         except Exception as e:
