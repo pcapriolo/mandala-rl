@@ -324,3 +324,12 @@ Also: production MCTS sims reduced 50→30 to cap LC response time under 5s. Pol
 Both games broken on production — AI timing out after 60-80s. Root cause: `_auto_reload_worker()` in `serve.py` was loading raw training checkpoints (~20MB with optimizer state, scheduler, replay buffer metadata) directly into the model server. On Railway's limited CPU instance, `torch.load()` on these bloated files caused massive memory pressure and slow inference.
 
 Fix: added `_strip_checkpoint()` function that auto-reload calls before hot-swapping. When a newer training iteration is found, it loads the full checkpoint, extracts only `model_state_dict` + iteration metadata, saves the stripped version (~7MB) to `data/deploy/`, then passes that lightweight file to the model server. This ensures the deploy directory always stays current and the server never touches the full training checkpoint. Fresh deploy checkpoints pushed: Mandala iter 491, LC iter 285.
+
+---
+
+## #28 — Fix LC Degenerate Self-Play Equilibrium
+**Feb 18, 2026**
+
+Score-margin reward (`margin/100`) caused a degenerate equilibrium: both players converged on "never start expeditions." Evidence from replay buffer analysis: 99.3% of actions were discards, 96.3% draws from discard piles, every game hit 150-turn cap, value targets mean=0.000. The bot learned that not playing guarantees score=0, which under pure margin reward is a "safe draw" (reward=0.0) — better than risking a -0.2 from a bad expedition.
+
+Fix: hybrid reward — binary win/loss (±0.8-1.0) + small margin tiebreaker (±0.2). Drawing is now 0.0, clearly worse than winning (~0.9). `LC_MAX_TURNS` reduced 150→60 to kill infinite discard loops. Timeout penalty makes stalling suboptimal. Replay buffer flushed (50K poisoned examples). Added `--flush-buffer` flag to train.py for future reward changes. Also synced Python engine (production) to match C++ changes: MAX_TURNS=60, reward function, and added hard 5s time limit to LC web MCTS.
