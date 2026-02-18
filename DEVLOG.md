@@ -351,3 +351,16 @@ Fix: complete rewrite of `serve.py` to use **ONNX Runtime** instead of PyTorch. 
 The hybrid reward fix (#28) failed to break the degenerate equilibrium after 137 iterations. Replay buffer analysis at iter 442 showed 98.2% discards, 1.8% expedition plays, entropy 0.452 — identical to pre-fix behavior. Root cause: the network's policy had collapsed to near-deterministic "always discard" and there was **no loss term to penalize this**. Even with correct reward signals, the policy gradient always reinforced the same 98% confident action.
 
 Fix: added entropy regularization to `get_loss()` in model.py. Loss becomes `policy_loss + value_loss - entropy_weight * H(pi)`, where H(pi) is the policy entropy. This creates gradient pressure against over-confident policies. Set `entropy_weight: 0.02` for LC. Also increased exploration: Dirichlet alpha 0.15→0.3, epsilon 0.25→0.35, c_puct 1.0→1.5, temperature_threshold 15→30. Flushed replay buffer again. After 3 iterations, policy entropy nearly doubled from 0.452 to 0.870 — the regularization is working. Expedition plays should rise as the buffer fills with higher-entropy exploratory data.
+
+---
+
+## #31 — Fix Mandala Overtraining: 500K Buffer, Absolute LR, GPU Eval
+**Feb 18, 2026**
+
+Mandala Elo was regressing — iter 500 (1373) and iter 550 (1396) scored below iter 95-107 (~1500-1550). Loss was decreasing but play quality declining: classic overtraining. Three root causes addressed:
+
+**1. Replay buffer 100K→500K.** DEVLOG #19 identified 500K as necessary, but #22 reduced it to 100K due to memory constraints ("two trainers + eval = ~22 GB"). Those constraints are gone — current RunPod has 410 GiB free RAM. At 100K, each example was seen ~33x before FIFO eviction. At 500K, that drops to ~6.6x. Training phase time increases from ~35s to ~175s per iteration (1953 vs 391 gradient steps), but the diversity gain is worth it.
+
+**2. Restart-resilient LR schedule.** `MultiStepLR` milestones fired relative to `scheduler.step()` call count, which reset to 0 on every pod restart (the scheduler state was deliberately not loaded from checkpoints). This meant the LR oscillated unpredictably between 0.001 and 0.000027 depending on restart history. Replaced with `_get_lr_for_iteration()` — a simple function that computes LR from the absolute iteration number, making it deterministic regardless of restarts. Updated Mandala milestones from [50, 150, 300] to [200, 500, 800] to give the model recovery headroom (LR = 9e-5 at iter 680 instead of 2.7e-5).
+
+**3. Eval daemons CPU→GPU.** Both eval daemons were running `--device cpu --mcts-sims 100` while 47 GiB VRAM sat idle. Switched to `--device cuda --mcts-sims 200` in `start_training.sh`. Mandala had only 41/674 models evaluated; LC had 7/514. GPU eval should catch up within hours instead of days.

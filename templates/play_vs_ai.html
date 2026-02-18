@@ -230,6 +230,7 @@
 
         <!-- AI decision -->
         <div class="ai-decision" id="aiDecision" style="display:none"></div>
+        <div id="aiDecisionNote" style="display:none; font-size:0.7em; color:#888; margin-top:2px">Percentages show raw network policy (no MCTS search)</div>
 
         <!-- Moves -->
         <div class="moves-panel" id="movesPanel" style="display:none">
@@ -306,6 +307,7 @@
             gameId = currentState.game_id;
             turnStartTime = null;
             document.getElementById('aiDecision').style.display = 'none';
+            document.getElementById('aiDecisionNote').style.display = 'none';
             renderGame();
             checkAiTurn();
         }
@@ -492,6 +494,7 @@
                         const dec = currentState.ai_decision;
                         const decEl = document.getElementById('aiDecision');
                         decEl.style.display = 'block';
+                        document.getElementById('aiDecisionNote').style.display = 'block';
                         let html = `<span class="move">AI played: ${dec.description}</span>`;
                         if (dec.top_moves && dec.top_moves.length > 1) {
                             html += '<br><small>Considered: ' + dec.top_moves.map(m =>

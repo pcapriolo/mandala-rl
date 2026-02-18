@@ -182,6 +182,7 @@
 
         <!-- AI decision info -->
         <div class="ai-decision" id="aiDecision" style="display:none"></div>
+        <div id="aiDecisionNote" style="display:none; font-size:0.7em; color:#888; margin-top:2px">Percentages show raw network policy (no MCTS search)</div>
 
         <!-- Action list (for complex moves) -->
         <div class="action-panel" id="actionPanel" style="display:none">
@@ -237,6 +238,8 @@
             selectedCard = null;
             turnStartTime = null;
             gameOverShown = false;
+            document.getElementById('aiDecision').style.display = 'none';
+            document.getElementById('aiDecisionNote').style.display = 'none';
             renderGame();
             checkAiTurn();
         }
@@ -452,6 +455,7 @@
                     const dec = gameState.ai_decision;
                     const decEl = document.getElementById('aiDecision');
                     decEl.style.display = 'block';
+                    document.getElementById('aiDecisionNote').style.display = 'block';
                     let html = `<span class="move">AI: ${dec.description}</span>`;
                     if (dec.top_moves && dec.top_moves.length > 1) {
                         html += '<br><small>Top: ' + dec.top_moves.map(m =>
