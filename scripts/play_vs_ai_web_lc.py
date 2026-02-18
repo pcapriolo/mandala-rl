@@ -92,7 +92,8 @@ class LCModelServer:
             game=self.engine,
             network=network_fn,
             num_simulations=mcts_simulations,
-            c_puct=self.config['mcts']['c_puct']
+            c_puct=self.config['mcts']['c_puct'],
+            time_limit=5.0  # Hard 5s cap for web serving
         )
 
     def get_ai_move(self, state):

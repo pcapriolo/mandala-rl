@@ -159,11 +159,17 @@ class LostCitiesGame:
 
         score_p = state.compute_score(player)
         score_opp = state.compute_score(1 - player)
+        margin = score_p - score_opp
 
-        if score_p > score_opp:
-            return 1.0
-        elif score_p < score_opp:
-            return -1.0
+        # Timeout penalty: discourage stalling
+        if state.turns_played >= MAX_TURNS:
+            if margin > 0: return 0.3
+            if margin < 0: return -0.5
+            return -0.2
+
+        # Binary win/loss + small margin tiebreaker
+        if margin > 0: return 0.8 + min(0.2, margin / 200.0)
+        if margin < 0: return -0.8 + max(-0.2, margin / 200.0)
         return 0.0
 
     def _calculate_score(self, state: LostCitiesState, player: int) -> int:

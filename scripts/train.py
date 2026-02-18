@@ -38,6 +38,8 @@ def main():
     parser.add_argument('--game', type=str, default='mandala',
                       choices=['mandala', 'lost_cities'],
                       help='Game to train (default: mandala)')
+    parser.add_argument('--flush-buffer', action='store_true',
+                      help='Discard replay buffer from checkpoint (keep weights)')
     args = parser.parse_args()
 
     # Load config
@@ -155,6 +157,11 @@ def main():
             trainer.load_checkpoint(latest_checkpoint)
         else:
             print("No checkpoint found, starting from scratch")
+
+    # Flush replay buffer if requested (keep weights, discard poisoned data)
+    if args.flush_buffer:
+        trainer.replay_buffer.buffer.clear()
+        print("Flushed replay buffer (keeping network weights)")
 
     # Train
     num_iterations = args.iterations or config['training']['num_iterations']

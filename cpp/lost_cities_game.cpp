@@ -337,8 +337,16 @@ float LostCitiesGame::get_reward(const GameState& state_base, int player) const 
     int score_opp = s.compute_score(1 - player);
     int margin = score_p - score_opp;
 
-    // Score-margin reward: teaches value head that thin expeditions are risky
-    // Typical LC margins ±100, so /100 maps to [-1, 1] range
-    float normalized = margin / 100.0f;
-    return std::max(-1.0f, std::min(1.0f, normalized));
+    // Timeout penalty: discourage stalling (degenerate discard loops)
+    if (s.turns_played >= LC_MAX_TURNS) {
+        if (margin > 0) return 0.3f;
+        if (margin < 0) return -0.5f;
+        return -0.2f;  // Draw on timeout is penalized
+    }
+
+    // Binary win/loss + small margin tiebreaker
+    // Win: [0.8, 1.0], Loss: [-1.0, -0.8], Draw: 0.0
+    if (margin > 0) return 0.8f + std::min(0.2f, margin / 200.0f);
+    if (margin < 0) return -0.8f + std::max(-0.2f, margin / 200.0f);
+    return 0.0f;
 }

@@ -15,7 +15,7 @@ CARDS_PER_COLOR = 12  # 3 wagers + 9 numbered (2-10)
 TOTAL_CARDS = 60
 HAND_SIZE = 8
 INITIAL_DECK_SIZE = TOTAL_CARDS - 2 * HAND_SIZE  # 44
-MAX_TURNS = 150  # Safety limit to prevent infinite games
+MAX_TURNS = 60  # Safety limit to prevent infinite discard loops (normal games ~22 turns)
 
 
 @dataclass
