@@ -1,0 +1,7 @@
+{
+  "iteration": 285,
+  "total_games": 28500,
+  "source": "data/deploy/lost_cities/model.pt",
+  "input_channels": 86,
+  "num_actions": 96
+}

@@ -2,223 +2,678 @@
 """
 Combined production server for Mandala RL games.
 
+Uses ONNX Runtime for inference (no PyTorch dependency).
 Serves both Mandala and Lost Cities from a single Flask app.
-Designed for Railway deployment via gunicorn.
 
 Usage:
     # Local dev:
     python serve.py --port 5000
 
     # Production (Railway):
-    gunicorn serve:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+    gunicorn serve:app --bind 0.0.0.0:$PORT --timeout 30 --workers 1
 """
 
+import json
 import os
 import sys
-import threading
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
+
+import numpy as np
+import onnxruntime as ort
+from flask import Flask, Blueprint, render_template, jsonify, request
+from scipy.special import softmax
 
 # Add project paths
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(project_root / 'scripts'))
-
-from flask import Flask, render_template, jsonify
 
 template_dir = project_root / 'templates'
 app = Flask(__name__, template_folder=str(template_dir))
 
-# Configuration from environment (with sensible defaults)
-MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '30'))
-LC_MCTS_SIMULATIONS = int(os.environ.get('LC_MCTS_SIMULATIONS', '0'))  # 0 = raw network policy (fast)
-MANDALA_CONFIG = os.environ.get('MANDALA_CONFIG', 'configs/default.yaml')
-LC_CONFIG = os.environ.get('LC_CONFIG', 'configs/lost_cities.yaml')
-MANDALA_CHECKPOINT_DIR = os.environ.get('MANDALA_CHECKPOINT_DIR', 'data/checkpoints')
-LC_CHECKPOINT_DIR = os.environ.get('LC_CHECKPOINT_DIR', 'data/lost_cities/checkpoints')
-DEPLOY_DIR = os.environ.get('DEPLOY_DIR', 'data/deploy')
-
-# Track which games loaded successfully
+# Configuration
+DEPLOY_DIR = Path(os.environ.get('DEPLOY_DIR', 'data/deploy'))
 loaded_games = {}
-_mandala_server = None
-_lc_server = None
+
+# ──────────────────────────────────────────────────────────────
+# ONNX Model Server — lightweight inference, no PyTorch needed
+# ──────────────────────────────────────────────────────────────
+
+class OnnxModelServer:
+    """Game-agnostic ONNX inference server."""
+
+    def __init__(self, onnx_path, meta_path, engine):
+        self.engine = engine
+        self.onnx_path = str(onnx_path)
+        self.session = ort.InferenceSession(str(onnx_path))
+
+        with open(meta_path) as f:
+            meta = json.load(f)
+        self.iteration = meta.get('iteration', 'unknown')
+        self.total_games = meta.get('total_games', 'unknown')
+        self.checkpoint_path = str(onnx_path)
+
+        # Warmup
+        input_shape = self.session.get_inputs()[0].shape
+        channels = input_shape[1] if isinstance(input_shape[1], int) else meta.get('input_channels', 86)
+        dummy = np.random.randn(1, channels, 8, 8).astype(np.float32)
+        t0 = time.time()
+        self.session.run(None, {'state': dummy})
+        print(f"[serve] ONNX warmup: {(time.time()-t0)*1000:.1f}ms ({onnx_path.name})")
+
+    def predict(self, state_tensor):
+        """Run ONNX inference on a single state tensor. Returns (policy, value)."""
+        inp = state_tensor[np.newaxis].astype(np.float32) if state_tensor.ndim == 3 else state_tensor.astype(np.float32)
+        policy_logits, value = self.session.run(None, {'state': inp})
+        policy = softmax(policy_logits[0])
+        return policy, float(value[0, 0])
 
 
-def find_checkpoint(deploy_dir, checkpoint_dir):
-    """Find best checkpoint: prefer deploy/, fall back to checkpoints/."""
-    deploy_path = Path(deploy_dir)
-    if deploy_path.exists():
-        pts = sorted(deploy_path.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True)
-        if pts:
-            return pts[0]
-    cp_path = Path(checkpoint_dir)
-    if cp_path.exists():
-        pts = sorted(cp_path.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True)
-        if pts:
-            return pts[0]
-    return None
+# ──────────────────────────────────────────────────────────────
+# Lost Cities
+# ──────────────────────────────────────────────────────────────
+
+from lost_cities.game.engine import LostCitiesGame, COLOR_NAMES, NUM_ACTIONS
+from lost_cities.game.state import NUM_COLORS
+
+def _lc_action_to_display(action, state):
+    hand_pos = action // 12
+    dest = (action % 12) // 6
+    draw_src = action % 6
+    hand = state.hands[state.current_player]
+    if hand_pos < len(hand):
+        card = hand[hand_pos]
+        card_str = f"{'W' if card.value == 0 else card.value} {COLOR_NAMES[card.color]}"
+    else:
+        card_str = f"Hand[{hand_pos}]"
+    dest_str = f"Play to {COLOR_NAMES[hand[hand_pos].color] if hand_pos < len(hand) else '?'} expedition" if dest == 0 else "Discard"
+    draw_str = "Draw from deck" if draw_src == 0 else f"Draw from {COLOR_NAMES[draw_src - 1]} pile"
+    return f"{card_str}: {dest_str}, {draw_str}"
 
 
-# Load Mandala
-mandala_cp = find_checkpoint(f"{DEPLOY_DIR}/mandala", MANDALA_CHECKPOINT_DIR)
-if mandala_cp:
-    try:
-        from play_vs_ai_web import create_mandala_blueprint
-        bp, server = create_mandala_blueprint(
-            checkpoint_path=mandala_cp,
-            config_path=MANDALA_CONFIG,
-            simulations=MCTS_SIMULATIONS,
-            base_url='/mandala',
-            checkpoint_dir=MANDALA_CHECKPOINT_DIR
-        )
-        app.register_blueprint(bp, url_prefix='/mandala')
-        _mandala_server = server
-        loaded_games['mandala'] = {
-            'iteration': server.iteration,
+class LCGameSession:
+    def __init__(self, server, human_player=0):
+        self.server = server
+        self.state = server.engine.get_initial_state()
+        self.human_player = human_player
+        self.move_count = 0
+        self.game_history = []
+        self.game_start_time = datetime.now().isoformat()
+        self.last_activity = time.time()
+        self.last_save_filepath = None
+
+    def get_game_state_dict(self):
+        engine = self.server.engine
+        valid_moves = engine.get_valid_moves(self.state)
+        valid_actions = [
+            {'action': int(i), 'description': _lc_action_to_display(i, self.state)}
+            for i, valid in enumerate(valid_moves) if valid
+        ]
+        is_terminal = engine.is_terminal(self.state)
+        winner, scores = None, None
+        if is_terminal:
+            s0 = self.state.compute_score(0)
+            s1 = self.state.compute_score(1)
+            scores = {'player0': s0, 'player1': s1}
+            winner = 0 if s0 > s1 else (1 if s1 > s0 else -1)
+        return {
+            'state': self._format_state(),
+            'current_player': self.state.current_player,
+            'human_player': self.human_player,
+            'valid_moves': valid_actions,
+            'is_terminal': is_terminal,
+            'winner': winner,
+            'scores': scores,
+            'move_count': self.move_count,
+            'model_info': {
+                'iteration': self.server.iteration,
+                'total_games': self.server.total_games,
+                'checkpoint': Path(self.server.checkpoint_path).name,
+            }
+        }
+
+    def _format_state(self):
+        def cards_to_list(cards):
+            return [{'color': c.color, 'value': c.value, 'display': repr(c)} for c in cards]
+        def exp_summary(exp):
+            if not exp:
+                return {'cards': [], 'wagers': 0, 'top': 0, 'count': 0}
+            return {
+                'cards': cards_to_list(exp),
+                'wagers': sum(1 for c in exp if c.value == 0),
+                'top': max(c.value for c in exp),
+                'count': len(exp),
+            }
+        return {
+            'hands': {f'player{p}': cards_to_list(self.state.hands[p]) for p in range(2)},
+            'expeditions': {
+                f'player{p}': {COLOR_NAMES[c].lower(): exp_summary(self.state.expeditions[p][c]) for c in range(NUM_COLORS)}
+                for p in range(2)
+            },
+            'discard_piles': {COLOR_NAMES[c].lower(): cards_to_list(self.state.discard_piles[c]) for c in range(NUM_COLORS)},
+            'deck_size': len(self.state.deck),
+            'scores': {f'player{p}': self.state.compute_score(p) for p in range(2)},
+            'turns_played': self.state.turns_played,
+        }
+
+    def make_move(self, action, think_time_ms=None, ai_data=None):
+        engine = self.server.engine
+        if engine.is_terminal(self.state):
+            return {'error': 'No active game'}
+        valid_moves = engine.get_valid_moves(self.state)
+        if not valid_moves[action]:
+            return {'error': f'Invalid move: {action}'}
+        move_record = {
+            'move_num': self.move_count + 1,
+            'player': int(self.state.current_player),
+            'is_human': self.state.current_player == self.human_player,
+            'action': int(action),
+            'action_description': _lc_action_to_display(action, self.state),
+            'timestamp': datetime.now().isoformat(),
+            'think_time_ms': think_time_ms,
+        }
+        if ai_data:
+            move_record['ai_value'] = ai_data.get('value')
+            move_record['ai_top_moves'] = ai_data.get('top_moves')
+            move_record['think_time_ms'] = ai_data.get('think_time_ms')
+        self.game_history.append(move_record)
+        self.state = engine.get_next_state(self.state, action)
+        self.move_count += 1
+        return self.get_game_state_dict()
+
+    def save_game(self):
+        if not self.game_history:
+            return {'error': 'No game to save'}
+        save_dir = Path("data/human_games/lost_cities")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        game_id = f"lost_cities_{timestamp}"
+        filepath = save_dir / f"{game_id}.json"
+        is_terminal = self.server.engine.is_terminal(self.state)
+        winner, final_scores = None, None
+        if is_terminal:
+            s0 = self.state.compute_score(0)
+            s1 = self.state.compute_score(1)
+            final_scores = {'player0': s0, 'player1': s1}
+            winner = 0 if s0 > s1 else (1 if s1 > s0 else -1)
+        game_data = {
+            'game_id': game_id, 'game': 'lost_cities',
+            'timestamp': self.game_start_time,
+            'model_iteration': self.server.iteration,
+            'human_player': self.human_player,
+            'winner': winner, 'final_scores': final_scores,
+            'total_moves': len(self.game_history),
+            'is_complete': is_terminal,
+            'moves': self.game_history,
+        }
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        self.last_save_filepath = str(filepath)
+        return {'success': True, 'filename': filepath.name, 'moves': len(self.game_history)}
+
+
+def create_lc_blueprint(server):
+    bp = Blueprint('lost_cities', __name__, template_folder=str(template_dir))
+    sessions = {}
+
+    def get_session(game_id):
+        s = sessions.get(game_id)
+        if s:
+            s.last_activity = time.time()
+        return s
+
+    def cleanup():
+        now = time.time()
+        for gid in [g for g, s in sessions.items() if now - s.last_activity > 3600]:
+            del sessions[gid]
+
+    @bp.route('/')
+    def index():
+        return render_template('play_vs_ai_lc.html', base_url='/lost-cities')
+
+    @bp.route('/api/info')
+    def info():
+        return jsonify({
+            'game': 'lost_cities', 'iteration': server.iteration,
             'total_games': server.total_games,
             'checkpoint': Path(server.checkpoint_path).name,
+            'active_sessions': len(sessions),
+        })
+
+    @bp.route('/api/new_game', methods=['POST'])
+    def new_game():
+        cleanup()
+        data = request.json or {}
+        game_id = str(uuid.uuid4())
+        sessions[game_id] = LCGameSession(server, data.get('human_player', 0))
+        state = sessions[game_id].get_game_state_dict()
+        state['game_id'] = game_id
+        return jsonify(state)
+
+    @bp.route('/api/state')
+    def get_state():
+        session = get_session(request.args.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        state = session.get_game_state_dict()
+        state['game_id'] = request.args.get('game_id')
+        return jsonify(state)
+
+    @bp.route('/api/move', methods=['POST'])
+    def make_move():
+        data = request.json
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        result['game_id'] = data.get('game_id')
+        return jsonify(result)
+
+    @bp.route('/api/ai_move', methods=['POST'])
+    def ai_move():
+        t_req = time.time()
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+
+        state = session.state
+        canonical = state.get_canonical_form()
+        tensor = canonical.to_tensor()
+        t_infer = time.time()
+        policy, value = server.predict(tensor)
+        t_done = time.time()
+
+        valid_moves = server.engine.get_valid_moves(state)
+        valid_policy = policy * valid_moves
+        action = int(valid_policy.argmax())
+
+        top_actions = valid_policy.argsort()[-5:][::-1]
+        top_moves = [
+            {'action': int(a), 'description': _lc_action_to_display(a, state),
+             'probability': float(policy[a] * 100)}
+            for a in top_actions if valid_moves[a]
+        ]
+
+        think_ms = int((t_done - t_req) * 1000)
+        print(f"[LC AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
+
+        ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
+        result = session.make_move(action, ai_data=ai_data)
+        result['ai_decision'] = {'action': action, 'description': _lc_action_to_display(action, state), 'top_moves': top_moves}
+        result['game_id'] = data.get('game_id')
+        return jsonify(result)
+
+    @bp.route('/api/save', methods=['POST'])
+    def save_game():
+        session = get_session((request.json or {}).get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        return jsonify(session.save_game())
+
+    @bp.route('/api/feedback', methods=['POST'])
+    def submit_feedback():
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        if not session.last_save_filepath:
+            return jsonify({'error': 'Game not saved yet'}), 400
+        filepath = Path(session.last_save_filepath)
+        if not filepath.exists():
+            return jsonify({'error': 'Save file not found'}), 404
+        feedback = {'submitted_at': datetime.now().isoformat()}
+        for key in ['my_play_rating', 'bot_play_rating']:
+            val = data.get(key)
+            if val is not None:
+                feedback[key] = max(1, min(5, int(val)))
+        comment = data.get('comment', '').strip()
+        if comment:
+            feedback['comment'] = comment
+        with open(filepath, 'r') as f:
+            game_data = json.load(f)
+        game_data['feedback'] = feedback
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        return jsonify({'success': True})
+
+    @bp.route('/api/checkpoints')
+    def list_checkpoints():
+        return jsonify([{
+            'name': Path(server.checkpoint_path).name,
+            'path': server.checkpoint_path,
+            'iteration': server.iteration,
+            'total_games': server.total_games,
+        }])
+
+    return bp
+
+
+# ──────────────────────────────────────────────────────────────
+# Mandala
+# ──────────────────────────────────────────────────────────────
+
+from mandala_rl.game.engine import MandalaGame
+
+COLOR_SHORT = ['R', 'G', 'P', 'O', 'Y', 'W']
+MANDALA_COLOR_NAMES = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White']
+
+def _mandala_action_to_string(action):
+    if action < 12:
+        return f"{COLOR_SHORT[action % 6]} → Mt{action // 6}"
+    elif action < 24:
+        a = action - 12
+        return f"{COLOR_SHORT[a % 6]} → Fd{a // 6}"
+    else:
+        return f"Discard {COLOR_SHORT[action - 24]}"
+
+
+class MandalaGameSession:
+    def __init__(self, server, human_player=0):
+        self.server = server
+        self.state = server.engine.get_initial_state()
+        self.human_player = human_player
+        self.move_count = 0
+        self.game_history = []
+        self.game_start_time = datetime.now().isoformat()
+        self.last_activity = time.time()
+        self.last_save_filepath = None
+
+    def get_game_state_dict(self):
+        engine = self.server.engine
+        valid_moves = engine.get_valid_moves(self.state)
+        valid_actions = [(i, _mandala_action_to_string(i)) for i, valid in enumerate(valid_moves) if valid]
+        is_terminal = engine.is_terminal(self.state)
+        winner, scores = None, None
+        if is_terminal:
+            s0 = engine._calculate_score(self.state, 0)
+            s1 = engine._calculate_score(self.state, 1)
+            scores = {'player0': s0, 'player1': s1}
+            winner = 0 if s0 > s1 else (1 if s1 > s0 else -1)
+        return {
+            'state': self._format_state(),
+            'current_player': self.state.current_player,
+            'human_player': self.human_player,
+            'valid_moves': valid_actions,
+            'is_terminal': is_terminal,
+            'winner': winner,
+            'scores': scores,
+            'move_count': self.move_count,
+            'model_info': {
+                'iteration': self.server.iteration,
+                'total_games': self.server.total_games,
+                'checkpoint': Path(self.server.checkpoint_path).name,
+            }
         }
-        print(f"[serve] Mandala loaded: iter {server.iteration}")
+
+    def _format_state(self):
+        s = self.state
+        def hand_repr(hand):
+            return [{'color': i, 'count': int(hand[i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if hand[i] > 0]
+        def mandala_repr(m):
+            return {
+                'mountain': [{'color': i, 'count': int(m.mountain[i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if m.mountain[i] > 0],
+                'fields': [
+                    [{'color': i, 'count': int(m.fields[p][i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if m.fields[p][i] > 0]
+                    for p in range(2)
+                ],
+            }
+        return {
+            'hands': [hand_repr(s.hands[p]) for p in range(2)],
+            'mandalas': [mandala_repr(m) for m in s.mandalas],
+            'rivers': [
+                [{'color': i, 'name': MANDALA_COLOR_NAMES[i]} for i in s.rivers[p]]
+                for p in range(2)
+            ],
+            'cups': [
+                [{'color': i, 'count': int(s.cups[p][i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if s.cups[p][i] > 0]
+                for p in range(2)
+            ],
+            'deck_remaining': int(s.deck_remaining),
+        }
+
+    def make_move(self, action, think_time_ms=None, ai_data=None):
+        engine = self.server.engine
+        if engine.is_terminal(self.state):
+            return {'error': 'No active game'}
+        valid_moves = engine.get_valid_moves(self.state)
+        if not valid_moves[action]:
+            return {'error': f'Invalid move: {action}'}
+        move_record = {
+            'move_num': self.move_count + 1,
+            'player': int(self.state.current_player),
+            'is_human': self.state.current_player == self.human_player,
+            'action': int(action),
+            'action_description': _mandala_action_to_string(action),
+            'timestamp': datetime.now().isoformat(),
+            'think_time_ms': think_time_ms,
+        }
+        if ai_data:
+            move_record['ai_value'] = ai_data.get('value')
+            move_record['ai_top_moves'] = ai_data.get('top_moves')
+            move_record['think_time_ms'] = ai_data.get('think_time_ms')
+        self.game_history.append(move_record)
+        self.state = engine.get_next_state(self.state, action)
+        self.move_count += 1
+        return self.get_game_state_dict()
+
+    def save_game(self):
+        if not self.game_history:
+            return {'error': 'No game to save'}
+        save_dir = Path("data/human_games/mandala")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        game_id = f"mandala_{timestamp}"
+        filepath = save_dir / f"{game_id}.json"
+        engine = self.server.engine
+        is_terminal = engine.is_terminal(self.state)
+        winner, final_scores = None, None
+        if is_terminal:
+            s0 = engine._calculate_score(self.state, 0)
+            s1 = engine._calculate_score(self.state, 1)
+            final_scores = {'player0': s0, 'player1': s1}
+            winner = 0 if s0 > s1 else (1 if s1 > s0 else -1)
+        game_data = {
+            'game_id': game_id, 'game': 'mandala',
+            'timestamp': self.game_start_time,
+            'model_iteration': self.server.iteration,
+            'human_player': self.human_player,
+            'winner': winner, 'final_scores': final_scores,
+            'total_moves': len(self.game_history),
+            'is_complete': is_terminal,
+            'moves': self.game_history,
+        }
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        self.last_save_filepath = str(filepath)
+        return {'success': True, 'filename': filepath.name, 'moves': len(self.game_history)}
+
+
+def create_mandala_blueprint(server):
+    bp = Blueprint('mandala', __name__, template_folder=str(template_dir))
+    sessions = {}
+
+    def get_session(game_id):
+        s = sessions.get(game_id)
+        if s:
+            s.last_activity = time.time()
+        return s
+
+    def cleanup():
+        now = time.time()
+        for gid in [g for g, s in sessions.items() if now - s.last_activity > 3600]:
+            del sessions[gid]
+
+    @bp.route('/')
+    def index():
+        return render_template('play_vs_ai.html', base_url='/mandala')
+
+    @bp.route('/api/info')
+    def info():
+        return jsonify({
+            'game': 'mandala', 'iteration': server.iteration,
+            'total_games': server.total_games,
+            'checkpoint': Path(server.checkpoint_path).name,
+            'active_sessions': len(sessions),
+        })
+
+    @bp.route('/api/new_game', methods=['POST'])
+    def new_game():
+        cleanup()
+        data = request.json or {}
+        game_id = str(uuid.uuid4())
+        sessions[game_id] = MandalaGameSession(server, data.get('human_player', 0))
+        state = sessions[game_id].get_game_state_dict()
+        state['game_id'] = game_id
+        return jsonify(state)
+
+    @bp.route('/api/state')
+    def get_state():
+        session = get_session(request.args.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        state = session.get_game_state_dict()
+        state['game_id'] = request.args.get('game_id')
+        return jsonify(state)
+
+    @bp.route('/api/move', methods=['POST'])
+    def make_move():
+        data = request.json
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        result['game_id'] = data.get('game_id')
+        return jsonify(result)
+
+    @bp.route('/api/ai_move', methods=['POST'])
+    def ai_move():
+        t_req = time.time()
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+
+        state = session.state
+        canonical = state.get_canonical_form()
+        tensor = canonical.to_tensor()
+        t_infer = time.time()
+        policy, value = server.predict(tensor)
+        t_done = time.time()
+
+        valid_moves = server.engine.get_valid_moves(state)
+        valid_policy = policy * valid_moves
+        action = int(valid_policy.argmax())
+
+        top_actions = valid_policy.argsort()[-5:][::-1]
+        top_moves = [
+            {'action': int(a), 'description': _mandala_action_to_string(a),
+             'probability': float(policy[a] * 100)}
+            for a in top_actions if valid_moves[a]
+        ]
+
+        think_ms = int((t_done - t_req) * 1000)
+        print(f"[Mandala AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
+
+        ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
+        result = session.make_move(action, ai_data=ai_data)
+        result['ai_decision'] = {'action': action, 'description': _mandala_action_to_string(action), 'top_moves': top_moves}
+        result['game_id'] = data.get('game_id')
+        return jsonify(result)
+
+    @bp.route('/api/save', methods=['POST'])
+    def save_game():
+        session = get_session((request.json or {}).get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        return jsonify(session.save_game())
+
+    @bp.route('/api/feedback', methods=['POST'])
+    def submit_feedback():
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        if not session.last_save_filepath:
+            return jsonify({'error': 'Game not saved yet'}), 400
+        filepath = Path(session.last_save_filepath)
+        if not filepath.exists():
+            return jsonify({'error': 'Save file not found'}), 404
+        feedback = {'submitted_at': datetime.now().isoformat()}
+        for key in ['my_play_rating', 'bot_play_rating']:
+            val = data.get(key)
+            if val is not None:
+                feedback[key] = max(1, min(5, int(val)))
+        comment = data.get('comment', '').strip()
+        if comment:
+            feedback['comment'] = comment
+        with open(filepath, 'r') as f:
+            game_data = json.load(f)
+        game_data['feedback'] = feedback
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        return jsonify({'success': True})
+
+    @bp.route('/api/checkpoints')
+    def list_checkpoints():
+        return jsonify([{
+            'name': Path(server.checkpoint_path).name,
+            'path': server.checkpoint_path,
+            'iteration': server.iteration,
+            'total_games': server.total_games,
+        }])
+
+    return bp
+
+
+# ──────────────────────────────────────────────────────────────
+# Load games
+# ──────────────────────────────────────────────────────────────
+
+def _load_onnx_game(name, deploy_subdir, engine):
+    onnx_path = DEPLOY_DIR / deploy_subdir / 'model.onnx'
+    meta_path = DEPLOY_DIR / deploy_subdir / 'model.json'
+    if not onnx_path.exists():
+        print(f"[serve] No ONNX model for {name} at {onnx_path}")
+        return None
+    if not meta_path.exists():
+        print(f"[serve] No metadata for {name} at {meta_path}")
+        return None
+    try:
+        server = OnnxModelServer(onnx_path, meta_path, engine)
+        print(f"[serve] {name} loaded: iter {server.iteration}")
+        return server
     except Exception as e:
-        print(f"[serve] Failed to load Mandala: {e}")
-else:
-    print("[serve] No Mandala checkpoint found, skipping")
+        print(f"[serve] Failed to load {name}: {e}")
+        return None
+
 
 # Load Lost Cities
-lc_cp = find_checkpoint(f"{DEPLOY_DIR}/lost_cities", LC_CHECKPOINT_DIR)
-if lc_cp:
-    try:
-        from play_vs_ai_web_lc import create_lc_blueprint
-        bp, server = create_lc_blueprint(
-            checkpoint_path=lc_cp,
-            config_path=LC_CONFIG,
-            simulations=LC_MCTS_SIMULATIONS,
-            base_url='/lost-cities',
-            checkpoint_dir=LC_CHECKPOINT_DIR
-        )
-        app.register_blueprint(bp, url_prefix='/lost-cities')
-        _lc_server = server
-        loaded_games['lost_cities'] = {
-            'iteration': server.iteration,
-            'total_games': server.total_games,
-            'checkpoint': Path(server.checkpoint_path).name,
-        }
-        print(f"[serve] Lost Cities loaded: iter {server.iteration}")
-    except Exception as e:
-        print(f"[serve] Failed to load Lost Cities: {e}")
-else:
-    print("[serve] No Lost Cities checkpoint found, skipping")
-
-# Warmup: prepare models for fast CPU inference
-import torch, numpy as np
-for name, server in [('Mandala', _mandala_server), ('Lost Cities', _lc_server)]:
-    if server:
-        # Warmup inference (skip quantization — crashes on many CPU builds)
-        try:
-            t0 = time.time()
-            dummy = torch.randn(1, server.model.input_channels, 8, 8).to(server.device)
-            with torch.no_grad():
-                server.model(dummy)
-            print(f"[serve] {name} warmed up: {time.time()-t0:.3f}s on {server.device}")
-        except Exception as e:
-            print(f"[serve] {name} warmup failed: {e}")
-
-# --- Auto-reload: watch training dirs for newer checkpoints ---
-AUTO_RELOAD = os.environ.get('AUTO_RELOAD', '1') == '1'
-AUTO_RELOAD_INTERVAL = int(os.environ.get('AUTO_RELOAD_INTERVAL', '60'))
-
-def _find_latest_iter(checkpoint_dir):
-    """Find highest iteration checkpoint in a directory."""
-    cp_dir = Path(checkpoint_dir)
-    if not cp_dir.exists():
-        return None, None
-    best_iter = -1
-    best_path = None
-    for cp in cp_dir.glob("model_iter_*.pt"):
-        try:
-            iter_num = int(cp.stem.split('_')[-1])
-            if iter_num > best_iter:
-                best_iter = iter_num
-                best_path = cp
-        except (ValueError, IndexError):
-            continue
-    return best_iter, best_path
-
-def _strip_checkpoint(source_path, deploy_dir):
-    """Strip training checkpoint to model_state_dict only, save to deploy dir."""
-    import torch
-    checkpoint = torch.load(source_path, map_location='cpu', weights_only=False)
-    lightweight = {
-        'model_state_dict': checkpoint['model_state_dict'],
-        'iteration': checkpoint.get('iteration', 'unknown'),
-        'total_games': checkpoint.get('total_games', 'unknown'),
+_lc_server = _load_onnx_game('Lost Cities', 'lost_cities', LostCitiesGame())
+if _lc_server:
+    app.register_blueprint(create_lc_blueprint(_lc_server), url_prefix='/lost-cities')
+    loaded_games['lost_cities'] = {
+        'iteration': _lc_server.iteration,
+        'total_games': _lc_server.total_games,
+        'checkpoint': Path(_lc_server.checkpoint_path).name,
     }
-    deploy_path = Path(deploy_dir) / 'model.pt'
-    deploy_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(lightweight, deploy_path)
-    src_mb = source_path.stat().st_size / (1024 * 1024)
-    dst_mb = deploy_path.stat().st_size / (1024 * 1024)
-    print(f"[auto-reload] Stripped {src_mb:.1f}MB → {dst_mb:.1f}MB: {deploy_path}")
-    return deploy_path, lightweight['iteration'], lightweight['total_games']
+
+# Load Mandala
+_mandala_server = _load_onnx_game('Mandala', 'mandala', MandalaGame())
+if _mandala_server:
+    app.register_blueprint(create_mandala_blueprint(_mandala_server), url_prefix='/mandala')
+    loaded_games['mandala'] = {
+        'iteration': _mandala_server.iteration,
+        'total_games': _mandala_server.total_games,
+        'checkpoint': Path(_mandala_server.checkpoint_path).name,
+    }
 
 
-def _auto_reload_worker():
-    """Background thread: checks for newer checkpoints, strips to lightweight, hot-swaps."""
-    global _mandala_server, _lc_server
-    print(f"[auto-reload] Watching for new checkpoints every {AUTO_RELOAD_INTERVAL}s")
-    while True:
-        time.sleep(AUTO_RELOAD_INTERVAL)
-        try:
-            # Check Mandala
-            if _mandala_server and MANDALA_CHECKPOINT_DIR:
-                latest_iter, latest_path = _find_latest_iter(MANDALA_CHECKPOINT_DIR)
-                current_iter = _mandala_server.iteration
-                if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
-                    print(f"[auto-reload] Mandala: iter {current_iter} → {latest_iter}")
-                    try:
-                        deploy_path, iteration, total_games = _strip_checkpoint(
-                            latest_path, f"{DEPLOY_DIR}/mandala"
-                        )
-                        from play_vs_ai_web import MandalaModelServer
-                        new_server = MandalaModelServer(
-                            deploy_path, MANDALA_CONFIG, MCTS_SIMULATIONS
-                        )
-                        _mandala_server.__dict__.update(new_server.__dict__)
-                        loaded_games['mandala']['iteration'] = iteration
-                        loaded_games['mandala']['total_games'] = total_games
-                        loaded_games['mandala']['checkpoint'] = deploy_path.name
-                        print(f"[auto-reload] Mandala reloaded: iter {iteration}")
-                    except Exception as e:
-                        print(f"[auto-reload] Mandala reload failed: {e}")
-
-            # Check Lost Cities
-            if _lc_server and LC_CHECKPOINT_DIR:
-                latest_iter, latest_path = _find_latest_iter(LC_CHECKPOINT_DIR)
-                current_iter = _lc_server.iteration
-                if latest_iter is not None and isinstance(current_iter, int) and latest_iter > current_iter:
-                    print(f"[auto-reload] Lost Cities: iter {current_iter} → {latest_iter}")
-                    try:
-                        deploy_path, iteration, total_games = _strip_checkpoint(
-                            latest_path, f"{DEPLOY_DIR}/lost_cities"
-                        )
-                        from play_vs_ai_web_lc import LCModelServer
-                        new_server = LCModelServer(
-                            deploy_path, LC_CONFIG, LC_MCTS_SIMULATIONS
-                        )
-                        _lc_server.__dict__.update(new_server.__dict__)
-                        loaded_games['lost_cities']['iteration'] = iteration
-                        loaded_games['lost_cities']['total_games'] = total_games
-                        loaded_games['lost_cities']['checkpoint'] = deploy_path.name
-                        print(f"[auto-reload] Lost Cities reloaded: iter {iteration}")
-                    except Exception as e:
-                        print(f"[auto-reload] Lost Cities reload failed: {e}")
-        except Exception as e:
-            print(f"[auto-reload] Error: {e}")
-
-if AUTO_RELOAD:
-    _reload_thread = threading.Thread(target=_auto_reload_worker, daemon=True)
-    _reload_thread.start()
-
+# ──────────────────────────────────────────────────────────────
+# Routes
+# ──────────────────────────────────────────────────────────────
 
 @app.route('/')
 def landing():
@@ -230,36 +685,29 @@ def health():
     return jsonify({
         'status': 'ok',
         'games': list(loaded_games.keys()),
-        'mcts_simulations': MCTS_SIMULATIONS,
-        'lc_mcts_simulations': LC_MCTS_SIMULATIONS,
-        'auto_reload': AUTO_RELOAD,
+        'inference': 'onnx',
     })
 
 
 @app.route('/debug/bench')
 def debug_bench():
-    """Benchmark forward pass for each loaded model."""
     results = {}
     for name, server in [('mandala', _mandala_server), ('lost_cities', _lc_server)]:
         if server is None:
             continue
         try:
-            dummy = torch.randn(1, server.model.input_channels, 8, 8).to(server.device)
-            # Warmup
-            with torch.no_grad():
-                server.model(dummy)
-            # Benchmark 5 passes
+            inp_shape = server.session.get_inputs()[0].shape
+            channels = inp_shape[1] if isinstance(inp_shape[1], int) else 86
+            dummy = np.random.randn(1, channels, 8, 8).astype(np.float32)
+            server.session.run(None, {'state': dummy})  # warmup
             times = []
-            for _ in range(5):
+            for _ in range(10):
                 t0 = time.time()
-                with torch.no_grad():
-                    server.model(dummy)
+                server.session.run(None, {'state': dummy})
                 times.append(time.time() - t0)
             results[name] = {
-                'device': str(server.device),
                 'times_ms': [round(t * 1000, 2) for t in times],
-                'mean_ms': round(sum(times) / len(times) * 1000, 2),
-                'mcts_sims': server.mcts_simulations,
+                'mean_ms': round(np.mean(times) * 1000, 2),
             }
         except Exception as e:
             results[name] = {'error': str(e)}
@@ -268,21 +716,20 @@ def debug_bench():
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Combined game server")
+    parser = argparse.ArgumentParser(description="Combined game server (ONNX)")
     parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', '5000')))
     parser.add_argument('--host', type=str, default='127.0.0.1')
     args = parser.parse_args()
 
     if not loaded_games:
-        print("\nNo games loaded! Make sure checkpoints exist in data/deploy/ or data/checkpoints/")
-        print("Run: python scripts/create_deploy_checkpoint.py")
+        print("\nNo games loaded! Export ONNX models first:")
+        print("  python scripts/export_onnx.py <checkpoint> --config <config> --output data/deploy/<game>/model.onnx")
         sys.exit(1)
 
     print(f"\n{'='*60}")
-    print(f"MANDALA RL GAME SERVER")
+    print(f"MANDALA RL GAME SERVER (ONNX)")
     print(f"{'='*60}")
     print(f"Games: {', '.join(loaded_games.keys())}")
-    print(f"MCTS simulations: {MCTS_SIMULATIONS}")
     print(f"\nhttp://{args.host}:{args.port}")
     print(f"Press Ctrl+C to stop\n")
 

@@ -1,0 +1,7 @@
+{
+  "iteration": 491,
+  "total_games": 49100,
+  "source": "data/deploy/mandala/model.pt",
+  "input_channels": 83,
+  "num_actions": 30
+}
