@@ -631,7 +631,16 @@
             closeGameOver();
         }
 
-        loadCheckpoints();
+        loadCheckpoints().then(() => {
+            // Show model info from loaded checkpoint (before game starts)
+            const select = document.getElementById('checkpointSelect');
+            if (select.options.length > 1) {
+                const opt = select.options[1]; // First real checkpoint
+                document.getElementById('modelInfo').textContent = opt.textContent;
+            } else {
+                document.getElementById('modelInfo').textContent = 'Ready — click New Game to play';
+            }
+        });
     </script>
 </body>
 </html>
