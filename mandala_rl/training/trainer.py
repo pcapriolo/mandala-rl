@@ -78,13 +78,6 @@ class Trainer:
             weight_decay=config.get('weight_decay', 1e-4)
         )
 
-        # Scheduler
-        self.scheduler = optim.lr_scheduler.MultiStepLR(
-            self.optimizer,
-            milestones=config.get('lr_milestones', [100, 200, 300]),
-            gamma=config.get('lr_gamma', 0.1)
-        )
-
         # Tensorboard
         self.writer = SummaryWriter(log_dir=config.get('log_dir', 'data/logs'))
 
@@ -141,6 +134,15 @@ class Trainer:
             hb_path.write_text(json.dumps(hb))
         except Exception:
             pass
+
+    def _get_lr_for_iteration(self, iteration: int) -> float:
+        """Compute LR based on absolute iteration (restart-resilient)."""
+        lr = self.config.get('learning_rate', 1e-3)
+        gamma = self.config.get('lr_gamma', 0.3)
+        for milestone in sorted(self.config.get('lr_milestones', [200, 500, 800])):
+            if iteration >= milestone:
+                lr *= gamma
+        return lr
 
     def train(self, num_iterations: int):
         """
@@ -200,8 +202,10 @@ class Trainer:
             # 7. Clean up disk
             self._cleanup_checkpoints()
 
-            # Step scheduler
-            self.scheduler.step()
+            # Set LR based on absolute iteration (restart-resilient)
+            lr = self._get_lr_for_iteration(self.iteration)
+            for pg in self.optimizer.param_groups:
+                pg['lr'] = lr
 
     def _generate_selfplay_games(self) -> list:
         """Generate self-play games using batched parallel play."""
@@ -363,7 +367,6 @@ class Trainer:
             'games_in_current_iteration': self.games_in_current_iteration,
             'model_state_dict': self._unwrapped_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
         }
 
         if suffix:
@@ -442,12 +445,12 @@ class Trainer:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         except (ValueError, KeyError):
             print("Optimizer state incompatible, starting fresh")
-        # Reset LR to config value — checkpoint may have decayed LR from old schedule
-        config_lr = self.config.get('learning_rate', 1e-3)
-        for pg in self.optimizer.param_groups:
-            pg['lr'] = config_lr
-        # Skip scheduler state — use fresh schedule from config
         self.iteration = checkpoint['iteration']
+        # Set LR based on absolute iteration (restart-resilient)
+        lr = self._get_lr_for_iteration(self.iteration)
+        for pg in self.optimizer.param_groups:
+            pg['lr'] = lr
+        print(f"LR set to {lr:.6f} for iteration {self.iteration}")
         self.total_games = checkpoint['total_games']
 
         # NEW: Restore game progress within iteration

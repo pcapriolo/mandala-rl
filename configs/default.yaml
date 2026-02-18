@@ -29,9 +29,9 @@ training:
   epochs_per_iteration: 1
   learning_rate: 0.001
   weight_decay: 0.0001
-  lr_milestones: [50, 150, 300]
+  lr_milestones: [200, 500, 800]
   lr_gamma: 0.3
-  replay_buffer_size: 100000
+  replay_buffer_size: 500000
   checkpoint_frequency: 1  # Save checkpoint every N iterations
   checkpoint_every_n_games: 10  # Save checkpoint every N games within iteration (for resume)
 

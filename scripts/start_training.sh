@@ -53,13 +53,15 @@ else
 fi
 echo "  PID: $!"
 
-# Start BOTH eval daemons
+# Start BOTH eval daemons (GPU for speed — 47 GiB VRAM free, eval uses ~200 MB)
 echo "Starting Mandala eval daemon..."
-nohup python3 scripts/eval_daemon.py --config configs/default.yaml > /tmp/eval_daemon.log 2>&1 &
+nohup python3 scripts/eval_daemon.py --config configs/default.yaml \
+    --device cuda --mcts-sims 200 > /tmp/eval_daemon.log 2>&1 &
 echo "  PID: $!"
 
 echo "Starting Lost Cities eval daemon..."
-nohup python3 scripts/eval_daemon.py --config configs/lost_cities.yaml > /tmp/eval_daemon_lc.log 2>&1 &
+nohup python3 scripts/eval_daemon.py --config configs/lost_cities.yaml \
+    --device cuda --mcts-sims 200 > /tmp/eval_daemon_lc.log 2>&1 &
 echo "  PID: $!"
 
 sleep 3
