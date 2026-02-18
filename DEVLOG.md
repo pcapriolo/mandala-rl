@@ -315,3 +315,12 @@ Lost Cities training failed catastrophically — policy loss regressed from 1.58
 CEO playtesting revealed LC bot opens 3-5 thin expeditions and gets crushed by -20 base penalties. Root cause: `get_reward()` returned binary +1/-1 (win/loss). The value head couldn't distinguish "risky thin-expedition win" from "safe thick-expedition win" — both gave identical +1.0 training targets. Fix: score-margin reward normalized to [-1, 1] via `margin / 100.0f`. The value head now receives richer signal about position quality. Training resumed from existing checkpoint (iter 257) — value head recalibrates, policy head unaffected.
 
 Also: production MCTS sims reduced 50→30 to cap LC response time under 5s. Policy entropy and max action probability now logged to tensorboard for monitoring network health. Raw network policy exposed in web UI alongside MCTS visit distribution (fixes misleading "100% confidence" — that was just temp=0 one-hot from MCTS, not collapsed entropy). Auto-export deploy checkpoints every 25 iterations via `deploy_frequency` config. Fixed stale test expecting 66 channels (should be 86).
+
+---
+
+## #27 — Fix Production Timeout: Auto-Reload Checkpoint Stripping
+**Feb 18, 2026**
+
+Both games broken on production — AI timing out after 60-80s. Root cause: `_auto_reload_worker()` in `serve.py` was loading raw training checkpoints (~20MB with optimizer state, scheduler, replay buffer metadata) directly into the model server. On Railway's limited CPU instance, `torch.load()` on these bloated files caused massive memory pressure and slow inference.
+
+Fix: added `_strip_checkpoint()` function that auto-reload calls before hot-swapping. When a newer training iteration is found, it loads the full checkpoint, extracts only `model_state_dict` + iteration metadata, saves the stripped version (~7MB) to `data/deploy/`, then passes that lightweight file to the model server. This ensures the deploy directory always stays current and the server never touches the full training checkpoint. Fresh deploy checkpoints pushed: Mandala iter 491, LC iter 285.
