@@ -31,6 +31,7 @@ app = Flask(__name__, template_folder=str(template_dir))
 
 # Configuration from environment (with sensible defaults)
 MCTS_SIMULATIONS = int(os.environ.get('MCTS_SIMULATIONS', '30'))
+LC_MCTS_SIMULATIONS = int(os.environ.get('LC_MCTS_SIMULATIONS', '0'))  # 0 = raw network policy (fast)
 MANDALA_CONFIG = os.environ.get('MANDALA_CONFIG', 'configs/default.yaml')
 LC_CONFIG = os.environ.get('LC_CONFIG', 'configs/lost_cities.yaml')
 MANDALA_CHECKPOINT_DIR = os.environ.get('MANDALA_CHECKPOINT_DIR', 'data/checkpoints')
@@ -91,7 +92,7 @@ if lc_cp:
         bp, server = create_lc_blueprint(
             checkpoint_path=lc_cp,
             config_path=LC_CONFIG,
-            simulations=MCTS_SIMULATIONS,
+            simulations=LC_MCTS_SIMULATIONS,
             base_url='/lost-cities',
             checkpoint_dir=LC_CHECKPOINT_DIR
         )

@@ -97,11 +97,10 @@ class LCModelServer:
         )
 
     def get_ai_move(self, state):
-        """Run MCTS on state, return decision dict."""
+        """Get AI move using network policy (with optional MCTS refinement)."""
         t0 = time.time()
-        policy, _ = self.mcts.get_action_prob(state, temperature=0.0, add_noise=False)
-        think_ms = int((time.time() - t0) * 1000)
 
+        # Always compute raw network policy (fast, single forward pass)
         canonical = state.get_canonical_form()
         state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
         with torch.no_grad():
@@ -110,6 +109,15 @@ class LCModelServer:
             raw_policy = torch.softmax(raw_logits, dim=1).cpu().numpy()[0]
 
         valid_moves = self.engine.get_valid_moves(state)
+
+        # Use MCTS if sims > 0 and time permits, otherwise use raw network policy
+        if self.mcts_simulations > 0:
+            policy, _ = self.mcts.get_action_prob(state, temperature=0.0, add_noise=False)
+        else:
+            policy = raw_policy
+
+        think_ms = int((time.time() - t0) * 1000)
+
         valid_policy = policy * valid_moves
         action = int(valid_policy.argmax())
 
