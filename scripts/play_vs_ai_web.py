@@ -464,24 +464,30 @@ def create_mandala_blueprint(checkpoint_path, config_path, simulations=400,
 
     @bp.route('/api/checkpoints', methods=['GET'])
     def list_checkpoints():
-        cp_dir = Path(checkpoint_dir)
-        if not cp_dir.exists():
-            return jsonify([])
         checkpoints = []
-        for cp in sorted(cp_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True):
-            try:
-                data = torch.load(cp, map_location='cpu', weights_only=False)
-                checkpoints.append({
-                    'name': cp.name,
-                    'path': str(cp),
-                    'iteration': data.get('iteration', '?'),
-                    'total_games': data.get('total_games', '?')
-                })
-            except Exception:
-                checkpoints.append({
-                    'name': cp.name, 'path': str(cp),
-                    'iteration': '?', 'total_games': '?'
-                })
+        seen = set()
+        # Scan both training and deploy directories
+        dirs = [Path(checkpoint_dir), Path(checkpoint_path).parent]
+        for cp_dir in dirs:
+            if not cp_dir.exists():
+                continue
+            for cp in sorted(cp_dir.glob("*.pt"), key=lambda x: x.stat().st_mtime, reverse=True):
+                if cp.resolve() in seen:
+                    continue
+                seen.add(cp.resolve())
+                try:
+                    data = torch.load(cp, map_location='cpu', weights_only=False)
+                    checkpoints.append({
+                        'name': cp.name,
+                        'path': str(cp),
+                        'iteration': data.get('iteration', '?'),
+                        'total_games': data.get('total_games', '?')
+                    })
+                except Exception:
+                    checkpoints.append({
+                        'name': cp.name, 'path': str(cp),
+                        'iteration': '?', 'total_games': '?'
+                    })
         return jsonify(checkpoints)
 
     @bp.route('/api/load_checkpoint', methods=['POST'])
@@ -492,6 +498,9 @@ def create_mandala_blueprint(checkpoint_path, config_path, simulations=400,
         if not checkpoint_name:
             return jsonify({'error': 'No checkpoint specified'}), 400
         cp_path = Path(checkpoint_dir) / checkpoint_name
+        if not cp_path.exists():
+            # Also check deploy directory
+            cp_path = Path(checkpoint_path).parent / checkpoint_name
         if not cp_path.exists():
             return jsonify({'error': f'Checkpoint not found: {checkpoint_name}'}), 404
         try:
