@@ -75,7 +75,7 @@ class MCTS:
         # Run simulations (with time limit for web serving)
         start_time = time.time()
         for i in range(self.num_simulations):
-            if self.time_limit > 0 and i > 0 and i % 10 == 0:
+            if self.time_limit > 0 and i > 0:
                 if time.time() - start_time > self.time_limit:
                     break
             self._simulate(root, state)
