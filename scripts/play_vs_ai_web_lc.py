@@ -101,20 +101,30 @@ class LCModelServer:
         t0 = time.time()
 
         # Always compute raw network policy (fast, single forward pass)
+        t_canon = time.time()
         canonical = state.get_canonical_form()
+        t_tensor = time.time()
         state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
+        t_fwd = time.time()
         with torch.no_grad():
             raw_logits, val = self.model(state_tensor)
             value = val.item()
             raw_policy = torch.softmax(raw_logits, dim=1).cpu().numpy()[0]
+        t_valid = time.time()
 
         valid_moves = self.engine.get_valid_moves(state)
+        t_mcts = time.time()
 
         # Use MCTS if sims > 0 and time permits, otherwise use raw network policy
         if self.mcts_simulations > 0:
             policy, _ = self.mcts.get_action_prob(state, temperature=0.0, add_noise=False)
         else:
             policy = raw_policy
+        t_done = time.time()
+
+        print(f"[LC AI] Timing: canon={t_tensor-t_canon:.3f}s tensor={t_fwd-t_tensor:.3f}s "
+              f"fwd={t_valid-t_fwd:.3f}s valid={t_mcts-t_valid:.3f}s "
+              f"mcts={t_done-t_mcts:.3f}s total={t_done-t0:.3f}s (sims={self.mcts_simulations})")
 
         think_ms = int((time.time() - t0) * 1000)
 
@@ -397,13 +407,16 @@ def create_lc_blueprint(checkpoint_path, config_path, simulations=400,
 
     @bp.route('/api/ai_move', methods=['POST'])
     def ai_move():
+        t_req = time.time()
         data = request.json or {}
         game_id = data.get('game_id')
         session = get_session(game_id)
         if not session:
             return jsonify({'error': 'Game not found'}), 404
 
+        t_ai = time.time()
         ai_decision = server.get_ai_move(session.state)
+        t_after_ai = time.time()
         if 'error' in ai_decision:
             return jsonify(ai_decision), 400
 
@@ -420,6 +433,9 @@ def create_lc_blueprint(checkpoint_path, config_path, simulations=400,
             'top_moves': ai_decision['top_moves'],
         }
         result['game_id'] = game_id
+        t_resp = time.time()
+        print(f"[LC /api/ai_move] parse={t_ai-t_req:.3f}s ai={t_after_ai-t_ai:.3f}s "
+              f"response={t_resp-t_after_ai:.3f}s total={t_resp-t_req:.3f}s")
         return jsonify(result)
 
     @bp.route('/api/save', methods=['POST'])

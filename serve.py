@@ -109,23 +109,19 @@ if lc_cp:
 else:
     print("[serve] No Lost Cities checkpoint found, skipping")
 
-# Warmup + quantize: prepare models for fast CPU inference
+# Warmup: prepare models for fast CPU inference
 import torch, numpy as np
 for name, server in [('Mandala', _mandala_server), ('Lost Cities', _lc_server)]:
     if server:
+        # Warmup inference (skip quantization — crashes on many CPU builds)
         try:
-            # Dynamic int8 quantization for CPU inference (~2-4x faster)
-            server.model = torch.quantization.quantize_dynamic(
-                server.model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
-            )
-            # Warmup inference
             t0 = time.time()
-            dummy = torch.randn(1, server.model.input_channels, 8, 8)
+            dummy = torch.randn(1, server.model.input_channels, 8, 8).to(server.device)
             with torch.no_grad():
                 server.model(dummy)
-            print(f"[serve] {name} quantized + warmed up: {time.time()-t0:.2f}s")
+            print(f"[serve] {name} warmed up: {time.time()-t0:.3f}s on {server.device}")
         except Exception as e:
-            print(f"[serve] {name} quantization/warmup failed: {e}")
+            print(f"[serve] {name} warmup failed: {e}")
 
 # --- Auto-reload: watch training dirs for newer checkpoints ---
 AUTO_RELOAD = os.environ.get('AUTO_RELOAD', '1') == '1'
@@ -207,7 +203,7 @@ def _auto_reload_worker():
                         )
                         from play_vs_ai_web_lc import LCModelServer
                         new_server = LCModelServer(
-                            deploy_path, LC_CONFIG, MCTS_SIMULATIONS
+                            deploy_path, LC_CONFIG, LC_MCTS_SIMULATIONS
                         )
                         _lc_server.__dict__.update(new_server.__dict__)
                         loaded_games['lost_cities']['iteration'] = iteration
@@ -235,8 +231,39 @@ def health():
         'status': 'ok',
         'games': list(loaded_games.keys()),
         'mcts_simulations': MCTS_SIMULATIONS,
+        'lc_mcts_simulations': LC_MCTS_SIMULATIONS,
         'auto_reload': AUTO_RELOAD,
     })
+
+
+@app.route('/debug/bench')
+def debug_bench():
+    """Benchmark forward pass for each loaded model."""
+    results = {}
+    for name, server in [('mandala', _mandala_server), ('lost_cities', _lc_server)]:
+        if server is None:
+            continue
+        try:
+            dummy = torch.randn(1, server.model.input_channels, 8, 8).to(server.device)
+            # Warmup
+            with torch.no_grad():
+                server.model(dummy)
+            # Benchmark 5 passes
+            times = []
+            for _ in range(5):
+                t0 = time.time()
+                with torch.no_grad():
+                    server.model(dummy)
+                times.append(time.time() - t0)
+            results[name] = {
+                'device': str(server.device),
+                'times_ms': [round(t * 1000, 2) for t in times],
+                'mean_ms': round(sum(times) / len(times) * 1000, 2),
+                'mcts_sims': server.mcts_simulations,
+            }
+        except Exception as e:
+            results[name] = {'error': str(e)}
+    return jsonify(results)
 
 
 if __name__ == '__main__':
