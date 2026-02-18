@@ -55,6 +55,132 @@
             margin-bottom: 30px;
         }
         .elo-chart-container h2 { margin-bottom: 15px; color: #4a9eff; font-size: 18px; }
+
+        /* Status Dashboard */
+        .status-dashboard {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #3a3a3a;
+            margin-bottom: 30px;
+        }
+        .status-dashboard h2 {
+            color: #4a9eff;
+            font-size: 18px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .status-dashboard h2 .updated {
+            font-size: 12px;
+            font-weight: normal;
+            color: #666;
+        }
+        .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .status-game {
+            background: #222;
+            border-radius: 6px;
+            padding: 14px 16px;
+            border: 1px solid #333;
+        }
+        .status-game-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .status-game-header .color-bar {
+            width: 4px;
+            height: 20px;
+            border-radius: 2px;
+        }
+        .status-row {
+            display: flex;
+            align-items: center;
+            padding: 5px 0;
+            font-size: 13px;
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        .status-indicator.green { background: #4caf50; box-shadow: 0 0 6px #4caf5088; }
+        .status-indicator.yellow { background: #ff9800; box-shadow: 0 0 6px #ff980088; }
+        .status-indicator.red { background: #f44336; box-shadow: 0 0 6px #f4433688; }
+        .status-indicator.gray { background: #555; }
+        .status-label { color: #aaa; width: 70px; }
+        .status-value { color: #ddd; flex: 1; }
+        .status-age { color: #666; font-size: 12px; margin-left: auto; }
+
+        /* Activity Feed */
+        .activity-feed {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .activity-feed::-webkit-scrollbar { width: 6px; }
+        .activity-feed::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        .feed-entry { padding: 3px 12px; border-bottom: 1px solid #2a2a2a; }
+        .feed-entry:last-child { border-bottom: none; }
+        .feed-entry .ts { color: #555; }
+        .feed-entry .game-tag { font-weight: 600; }
+        .feed-entry .game-tag.mandala { color: #4a9eff; }
+        .feed-entry .game-tag.lost-cities { color: #ff6b6b; }
+        .feed-entry .msg { color: #aaa; }
+        .feed-entry .highlight { color: #4caf50; }
+        .feed-entry .warn { color: #ff9800; }
+        .feed-entry .err { color: #f44336; }
+
+        /* KPI Watchdog */
+        .kpi-section {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #3a3a3a;
+            margin-bottom: 30px;
+        }
+        .kpi-section h2 { color: #4a9eff; font-size: 18px; margin-bottom: 16px; }
+        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .kpi-game {
+            background: #222;
+            border-radius: 6px;
+            padding: 14px 16px;
+            border: 1px solid #333;
+        }
+        .kpi-row {
+            display: flex;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .kpi-name { color: #aaa; width: 140px; }
+        .kpi-value { color: #ddd; flex: 1; }
+        .milestone-list { margin-top: 10px; border-top: 1px solid #333; padding-top: 8px; }
+        .milestone-row {
+            display: flex;
+            align-items: center;
+            padding: 3px 0;
+            font-size: 12px;
+        }
+        .milestone-icon { width: 18px; text-align: center; margin-right: 6px; font-size: 13px; }
+        .milestone-icon.achieved { color: #4caf50; }
+        .milestone-icon.pending { color: #555; }
+        .milestone-icon.triggered { color: #ff9800; }
+        .milestone-icon.inactive { color: #333; }
+        .milestone-label { color: #aaa; flex: 1; }
+        .milestone-detail { color: #666; font-size: 11px; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
@@ -84,8 +210,34 @@
         </div>
 
         <div class="elo-chart-container">
-            <h2>Elo Ratings by Iteration</h2>
+            <h2>Training Loss by Iteration</h2>
+            <canvas id="loss-chart" height="100"></canvas>
+        </div>
+
+        <div class="elo-chart-container">
+            <h2>Elo Ratings &amp; Benchmarks by Iteration</h2>
             <canvas id="elo-chart" height="100"></canvas>
+        </div>
+
+
+        <div class="kpi-section">
+            <h2>Training KPIs</h2>
+            <div class="kpi-grid" id="kpi-grid">
+                <div class="kpi-game" style="color:#666;">Loading...</div>
+                <div class="kpi-game" style="color:#666;">Loading...</div>
+            </div>
+        </div>
+
+        <div class="status-dashboard">
+            <h2>
+                System Health
+                <span class="updated" id="last-check">checking...</span>
+            </h2>
+            <div class="status-grid" id="status-grid">
+                <div class="status-game" style="color:#666;">Loading...</div>
+                <div class="status-game" style="color:#666;">Loading...</div>
+            </div>
+            <div class="activity-feed" id="activity-feed"></div>
         </div>
 
         <div class="replays-grid">
@@ -102,8 +254,76 @@
     </div>
 
     <script>
+        function timeAgo(ts) {
+            const s = Math.floor(Date.now() / 1000 - ts);
+            if (s < 60) return 'just now';
+            if (s < 3600) return Math.floor(s / 60) + 'min ago';
+            if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+            return Math.floor(s / 86400) + 'd ago';
+        }
+
         const COLORS = { 'Mandala': '#4a9eff', 'Lost Cities': '#ff6b6b' };
         let eloChart = null;
+        let lossChart = null;
+
+        async function loadLosses() {
+            try {
+                const response = await fetch('/api/losses');
+                const games = await response.json();
+                const ctx = document.getElementById('loss-chart').getContext('2d');
+
+                const datasets = [];
+                for (const [name, entries] of Object.entries(games)) {
+                    const color = COLORS[name] || '#aaa';
+                    datasets.push({
+                        label: name + ' Policy',
+                        data: entries.map(e => ({ x: e.iteration, y: e.policy })),
+                        borderColor: color,
+                        borderWidth: 2,
+                        tension: 0.3,
+                        pointRadius: 1,
+                        fill: false,
+                    });
+                    datasets.push({
+                        label: name + ' Value',
+                        data: entries.map(e => ({ x: e.iteration, y: e.value })),
+                        borderColor: color,
+                        borderWidth: 1,
+                        borderDash: [4, 4],
+                        tension: 0.3,
+                        pointRadius: 1,
+                        fill: false,
+                    });
+                }
+
+                if (lossChart) {
+                    lossChart.data.datasets = datasets;
+                    lossChart.update('none');
+                } else {
+                    lossChart = new Chart(ctx, {
+                        type: 'line',
+                        data: { datasets },
+                        options: {
+                            scales: {
+                                x: { type: 'linear', title: { display: true, text: 'Iteration', color: '#888' },
+                                     ticks: { color: '#888' }, grid: { color: '#333' } },
+                                y: { title: { display: true, text: 'Loss', color: '#888' },
+                                     ticks: { color: '#888' }, grid: { color: '#333' },
+                                     suggestedMin: 0 }
+                            },
+                            plugins: {
+                                legend: { labels: { color: '#e0e0e0' } },
+                                tooltip: { mode: 'index', intersect: false }
+                            },
+                            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                            responsive: true,
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading losses:', error);
+            }
+        }
 
         async function loadElo() {
             try {
@@ -111,34 +331,108 @@
                 const games = await response.json();
                 const ctx = document.getElementById('elo-chart').getContext('2d');
 
-                const datasets = Object.entries(games).map(([name, points]) => ({
-                    label: name,
-                    data: points.map(p => ({ x: p.iter, y: p.elo })),
-                    borderColor: COLORS[name] || '#aaa',
-                    backgroundColor: (COLORS[name] || '#aaa') + '22',
-                    tension: 0.3,
-                    pointRadius: 3,
-                    fill: false,
-                }));
+                const datasets = [];
+                for (const [name, points] of Object.entries(games)) {
+                    const color = COLORS[name] || '#aaa';
+
+                    // Elo line (left y-axis)
+                    datasets.push({
+                        label: name + ' Elo',
+                        type: 'line',
+                        data: points.map(p => ({
+                            x: p.iter, y: p.elo,
+                            wins: p.wins, losses: p.losses, draws: p.draws,
+                            vs_random: p.vs_random, vs_strategy: p.vs_strategy,
+                        })),
+                        borderColor: color,
+                        tension: 0.3,
+                        pointRadius: 3,
+                        fill: false,
+                        yAxisID: 'y',
+                        order: 1,
+                    });
+
+                    // vs Random bars (right y-axis, offset left)
+                    const randomPts = points.filter(p => p.vs_random);
+                    if (randomPts.length > 0) {
+                        datasets.push({
+                            label: name + ' vs Random',
+                            type: 'bar',
+                            data: randomPts.map(p => ({
+                                x: p.iter - 0.2,
+                                y: p.vs_random.wins / (p.vs_random.wins + p.vs_random.losses + p.vs_random.draws) * 100,
+                            })),
+                            backgroundColor: color + '55',
+                            borderColor: color + '99',
+                            borderWidth: 1,
+                            yAxisID: 'y1',
+                            barThickness: 6,
+                            order: 2,
+                        });
+                    }
+
+                    // vs Strategy bars (right y-axis, offset right)
+                    const stratPts = points.filter(p => p.vs_strategy);
+                    if (stratPts.length > 0) {
+                        datasets.push({
+                            label: name + ' vs Strategy',
+                            type: 'bar',
+                            data: stratPts.map(p => ({
+                                x: p.iter + 0.2,
+                                y: p.vs_strategy.wins / (p.vs_strategy.wins + p.vs_strategy.losses + p.vs_strategy.draws) * 100,
+                            })),
+                            backgroundColor: color + '33',
+                            borderColor: color + '66',
+                            borderWidth: 1,
+                            yAxisID: 'y1',
+                            barThickness: 6,
+                            order: 2,
+                        });
+                    }
+                }
 
                 if (eloChart) {
                     eloChart.data.datasets = datasets;
                     eloChart.update('none');
                 } else {
                     eloChart = new Chart(ctx, {
-                        type: 'line',
+                        type: 'bar',
                         data: { datasets },
                         options: {
                             scales: {
                                 x: { type: 'linear', title: { display: true, text: 'Iteration', color: '#888' },
                                      ticks: { color: '#888', stepSize: 1 }, grid: { color: '#333' } },
-                                y: { title: { display: true, text: 'Elo', color: '#888' },
+                                y: { position: 'left', title: { display: true, text: 'Elo', color: '#888' },
                                      ticks: { color: '#888' }, grid: { color: '#333' },
-                                     suggestedMin: 1300, suggestedMax: 1700 }
+                                     suggestedMin: 1300, suggestedMax: 1700 },
+                                y1: { position: 'right', title: { display: true, text: 'Win Rate %', color: '#666' },
+                                      ticks: { color: '#666' }, grid: { drawOnChartArea: false },
+                                      min: 0, max: 100 },
                             },
                             plugins: {
                                 legend: { labels: { color: '#e0e0e0' } },
-                                tooltip: { mode: 'index', intersect: false }
+                                tooltip: {
+                                    mode: 'index', intersect: false,
+                                    callbacks: {
+                                        label: function(ctx) {
+                                            const p = ctx.raw;
+                                            if (ctx.dataset.yAxisID === 'y1') {
+                                                return `${ctx.dataset.label}: ${p.y.toFixed(0)}%`;
+                                            }
+                                            let lines = [`${ctx.dataset.label}: ${p.y.toFixed(0)}`];
+                                            if (p.wins != null) {
+                                                lines[0] += ` (${p.wins}W ${p.losses}L ${p.draws}D)`;
+                                            }
+                                            if (p.vs_random) {
+                                                lines.push(`  vs Random: ${p.vs_random.wins}W/${p.vs_random.losses}L/${p.vs_random.draws}D`);
+                                            }
+                                            if (p.vs_strategy) {
+                                                lines.push(`  vs Strategy: ${p.vs_strategy.wins}W/${p.vs_strategy.losses}L/${p.vs_strategy.draws}D`);
+                                            }
+                                            return lines;
+                                        }
+                                    }
+                                }
                             },
                             interaction: { mode: 'nearest', axis: 'x', intersect: false },
                             responsive: true,
@@ -165,6 +459,7 @@
                         <div class="replay-meta">
                             <span>${r.num_moves} moves</span>
                             <span class="winner">${r.winner !== null ? 'P' + r.winner + ' won' : 'Draw'}</span>
+                            <span style="color:#666;">${r.timestamp ? timeAgo(r.timestamp) : ''}</span>
                         </div>
                     </div>
                 `).join('');
@@ -184,17 +479,276 @@
             }
         }
 
-        // Auto-refresh every 5 seconds
+        // ──── Heartbeat / Activity Feed ────
+
+        let prevState = null;
+        const activityLog = [];
+        const MAX_LOG = 50;
+
+        function fmtAge(seconds) {
+            if (seconds == null) return 'never';
+            if (seconds < 60) return seconds + 's ago';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's ago';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return h + 'h ' + m + 'm ago';
+        }
+
+        function fmtTime() {
+            const d = new Date();
+            return d.toLocaleTimeString('en-US', { hour12: false });
+        }
+
+        function statusColor(status) {
+            if (status === 'active') return 'green';
+            if (status === 'slow') return 'yellow';
+            if (status === 'stale') return 'red';
+            return 'gray';
+        }
+
+        function statusLabel(status) {
+            if (status === 'active') return 'running';
+            if (status === 'slow') return 'slow';
+            if (status === 'stale') return 'STALE';
+            return 'unknown';
+        }
+
+        function addEvent(gameTag, cssClass, msg, cls) {
+            activityLog.unshift({ ts: fmtTime(), gameTag, cssClass, msg, cls: cls || 'msg' });
+            if (activityLog.length > MAX_LOG) activityLog.pop();
+        }
+
+        function detectChanges(cur) {
+            if (!prevState) {
+                // First load — log initial state
+                for (const [key, label, css] of [['mandala', 'Mandala', 'mandala'], ['lost_cities', 'Lost Cities', 'lost-cities']]) {
+                    const g = cur[key];
+                    const t = g.training, e = g.eval;
+                    addEvent(label, css,
+                        `Training at iter ${t.iteration} (${statusLabel(t.status)}), ` +
+                        `Eval at iter ${e.iteration}/${t.iteration} (${e.pending} pending, ${statusLabel(e.status)})`);
+                }
+                prevState = cur;
+                return;
+            }
+
+            for (const [key, label, css] of [['mandala', 'Mandala', 'mandala'], ['lost_cities', 'Lost Cities', 'lost-cities']]) {
+                const prev = prevState[key], now = cur[key];
+
+                // Training iteration advanced
+                if (now.training.iteration > prev.training.iteration) {
+                    addEvent(label, css,
+                        `New checkpoint: iter ${now.training.iteration}`, 'highlight');
+                }
+
+                // Training status changed
+                if (now.training.status !== prev.training.status) {
+                    const cls = now.training.status === 'stale' ? 'err' : (now.training.status === 'slow' ? 'warn' : 'highlight');
+                    addEvent(label, css,
+                        `Training status: ${statusLabel(prev.training.status)} -> ${statusLabel(now.training.status)}`, cls);
+                }
+
+                // Eval iteration advanced (new Elo entry!)
+                if (now.eval.iteration > prev.eval.iteration) {
+                    addEvent(label, css,
+                        `New Elo: iter ${now.eval.iteration} evaluated (${now.eval.pending} still pending)`, 'highlight');
+                }
+
+                // Eval status changed
+                if (now.eval.status !== prev.eval.status) {
+                    const cls = now.eval.status === 'stale' ? 'err' : (now.eval.status === 'slow' ? 'warn' : 'highlight');
+                    addEvent(label, css,
+                        `Eval status: ${statusLabel(prev.eval.status)} -> ${statusLabel(now.eval.status)}`, cls);
+                }
+            }
+
+            // Always log a heartbeat with live progress
+            const m = cur.mandala, lc = cur.lost_cities;
+            const mTrain = m.training.phase === 'selfplay' && m.training.games_total
+                ? `self-play ${m.training.game}/${m.training.games_total}`
+                : (m.training.phase || `iter ${m.training.iteration}`);
+            const lcTrain = lc.training.phase === 'selfplay' && lc.training.games_total
+                ? `self-play ${lc.training.game}/${lc.training.games_total}`
+                : (lc.training.phase || `iter ${lc.training.iteration}`);
+            addEvent('System', 'mandala',
+                `M: iter ${m.training.iteration} ${mTrain} (${fmtAge(m.training.seconds_ago)}), eval ${m.eval.iteration}/${m.training.iteration} (${m.eval.pending} pending) | ` +
+                `LC: iter ${lc.training.iteration} ${lcTrain} (${fmtAge(lc.training.seconds_ago)}), eval ${lc.eval.iteration}/${lc.training.iteration} (${lc.eval.pending} pending)`);
+
+            prevState = cur;
+        }
+
+        function fmtTraining(t, key) {
+            let base = `iter ${t.iteration}`;
+            if (t.phase === 'selfplay' && t.games_total > 0) {
+                base += ` &mdash; ${t.game}/${t.games_total}`;
+            } else if (t.phase === 'training') {
+                base += ` &mdash; ${t.detail || 'training'}`;
+            } else if (t.phase === 'checkpoint') {
+                base += ` &mdash; saving`;
+            } else {
+                base += ` &mdash; ${statusLabel(t.status)}`;
+            }
+            // Show game delta since last refresh
+            if (prevState && t.total_games > 0) {
+                const prev = prevState[key]?.training?.total_games || 0;
+                const delta = t.total_games - prev;
+                if (delta > 0) {
+                    base += ` <span style="color:#4caf50">(+${delta})</span>`;
+                }
+            }
+            return base;
+        }
+
+        function fmtEval(e, trainIter) {
+            let base = `iter ${e.iteration} / ${trainIter}`;
+            if (e.evaluating_iter > 0 && e.eval_total > 0 && e.eval_batch_start > 0) {
+                const elapsed = Date.now() / 1000 - e.eval_batch_start;
+                const elapsedMin = Math.floor(elapsed / 60);
+                if (e.eval_completed > 0) {
+                    const perEval = elapsed / e.eval_completed;
+                    const remaining = perEval * (e.eval_total - e.eval_completed);
+                    const remMin = Math.ceil(remaining / 60);
+                    base += ` &mdash; started ${elapsedMin}m ago, ~${remMin}m left`;
+                } else {
+                    base += ` &mdash; started ${elapsedMin}m ago`;
+                }
+            } else if (e.pending > 0) {
+                base += ` <span style="color:#ff9800">(${e.pending} pending)</span>`;
+            } else {
+                base += ` <span style="color:#4caf50">(caught up)</span>`;
+            }
+            return base;
+        }
+
+        function renderStatusGrid(data) {
+            const grid = document.getElementById('status-grid');
+            let html = '';
+
+            for (const [key, label, barColor] of [['mandala', 'Mandala', '#4a9eff'], ['lost_cities', 'Lost Cities', '#ff6b6b']]) {
+                const g = data[key];
+                const t = g.training, e = g.eval;
+                html += `
+                    <div class="status-game">
+                        <div class="status-game-header">
+                            <span class="color-bar" style="background:${barColor}"></span>
+                            ${label}
+                        </div>
+                        <div class="status-row">
+                            <span class="status-indicator ${statusColor(t.status)}"></span>
+                            <span class="status-label">Training</span>
+                            <span class="status-value">${fmtTraining(t, key)}</span>
+                            <span class="status-age">${fmtAge(t.seconds_ago)}</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-indicator ${statusColor(e.status)}"></span>
+                            <span class="status-label">Eval</span>
+                            <span class="status-value">${fmtEval(e, t.iteration)}</span>
+                            <span class="status-age">${fmtAge(e.seconds_ago)}</span>
+                        </div>
+                    </div>`;
+            }
+            grid.innerHTML = html;
+        }
+
+        function renderActivityFeed() {
+            const feed = document.getElementById('activity-feed');
+            feed.innerHTML = activityLog.map(e =>
+                `<div class="feed-entry">` +
+                `<span class="ts">[${e.ts}]</span> ` +
+                `<span class="game-tag ${e.cssClass}">${e.gameTag}</span> ` +
+                `<span class="${e.cls}">${e.msg}</span>` +
+                `</div>`
+            ).join('');
+        }
+
+        function kpiRow(name, kpi) {
+            return `<div class="kpi-row">
+                <span class="status-indicator ${kpi.status}"></span>
+                <span class="kpi-name">${name}</span>
+                <span class="kpi-value">${kpi.label}</span>
+            </div>`;
+        }
+
+        function milestoneRow(name, ms) {
+            const icons = { achieved: '&#10003;', pending: '&#9675;', triggered: '&#9888;', inactive: '&#8212;' };
+            return `<div class="milestone-row">
+                <span class="milestone-icon ${ms.status}">${icons[ms.status] || '?'}</span>
+                <span class="milestone-label">${name}</span>
+                <span class="milestone-detail">${ms.detail || ''}</span>
+            </div>`;
+        }
+
+        async function loadKPIs() {
+            try {
+                const response = await fetch('/api/kpis');
+                const data = await response.json();
+                const grid = document.getElementById('kpi-grid');
+                let html = '';
+                for (const [key, label, barColor] of [['mandala', 'Mandala', '#4a9eff'], ['lost_cities', 'Lost Cities', '#ff6b6b']]) {
+                    const g = data[key];
+                    if (!g) { html += `<div class="kpi-game" style="color:#666;">No data</div>`; continue; }
+                    const k = g.kpis, m = g.milestones;
+                    html += `
+                        <div class="kpi-game">
+                            <div class="status-game-header">
+                                <span class="color-bar" style="background:${barColor}"></span>
+                                ${label}
+                            </div>
+                            ${kpiRow('Elo Trend', k.elo_trend)}
+                            ${kpiRow('Value Loss', k.value_loss)}
+                            ${kpiRow('Buffer Diversity', k.overtraining_ratio)}
+                            ${kpiRow('Eval Lag', k.eval_lag)}
+                            <div class="kpi-row">
+                                <span class="status-indicator" style="background:#4a9eff;box-shadow:0 0 6px #4a9eff88;"></span>
+                                <span class="kpi-name">Peak Elo</span>
+                                <span class="kpi-value">${k.peak_elo.label}</span>
+                            </div>
+                            <div class="milestone-list">
+                                ${milestoneRow('Recovery', m.recovery)}
+                                ${milestoneRow('Plateau Alert', m.plateau)}
+                                ${milestoneRow('Strong Play', m.strong_play)}
+                            </div>
+                        </div>`;
+                }
+                grid.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading KPIs:', error);
+            }
+        }
+
+        async function loadHeartbeat() {
+            try {
+                const response = await fetch('/api/heartbeat');
+                const data = await response.json();
+                detectChanges(data);
+                renderStatusGrid(data);
+                renderActivityFeed();
+                document.getElementById('last-check').textContent = 'updated ' + fmtTime();
+            } catch (error) {
+                addEvent('System', 'mandala', 'Failed to fetch heartbeat: ' + error.message, 'err');
+                renderActivityFeed();
+                console.error('Error loading heartbeat:', error);
+            }
+        }
+
+        // Auto-refresh: heartbeat every 30s, data every 30s
+        const REFRESH_MS = 30000;
         setInterval(() => {
             loadStatus();
+            loadLosses();
             loadElo();
+            loadKPIs();
+            loadHeartbeat();
             loadReplays('mandala', 'mandala-replays-list');
             loadReplays('lost_cities', 'lc-replays-list');
-        }, 5000);
+        }, REFRESH_MS);
 
         // Initial load
         loadStatus();
+        loadLosses();
         loadElo();
+        loadKPIs();
+        loadHeartbeat();
         loadReplays('mandala', 'mandala-replays-list');
         loadReplays('lost_cities', 'lc-replays-list');
     </script>

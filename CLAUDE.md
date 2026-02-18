@@ -24,9 +24,13 @@ Before writing ANY code, the monk:
 
 ## Project Overview
 
-AlphaZero-style reinforcement learning system for training a strong Mandala bot through 100% self-play. Uses MCTS + policy/value neural network, optimized for Apple Silicon (MPS backend).
+AlphaZero-style reinforcement learning system for training strong game-playing bots through 100% self-play. Uses C++ MCTS + policy/value neural network with batched GPU inference. Trains on RunPod (NVIDIA A100/RTX A6000), also runs on Apple Silicon (MPS backend).
 
-**Mandala** is a 2-player card game with 6 colors (18 cards each = 108 total). Players play cards to 2 Mandalas, each with a Mountain and 2 Fields. When all 6 colors are present in a Mandala, players claim cards to their River and Cup. Scoring is based on River positions (1-6 points). First to 6 River colors or deck exhaustion triggers game end.
+Supports two games:
+
+**Mandala** is a 2-player card game with 6 colors (18 cards each = 108 total). Players play cards to 2 Mandalas, each with a Mountain and 2 Fields. When all 6 colors are present in a Mandala, players claim cards to their River and Cup. Scoring is based on River positions (1-6 points). First to 6 River colors or deck exhaustion triggers game end. Action space: 30 moves. Input: 83 tensor channels (includes belief channels + behavioral inference).
+
+**Lost Cities** is a 2-player card game with 60 cards (5 colors x 12), expeditions with ascending-value constraints, and wager multipliers. Action space: 96 compound actions. Input: 86 tensor channels (includes belief channels + behavioral inference).
 
 ## Key Commands
 
@@ -38,7 +42,17 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-### Training
+### Training (RunPod)
+```bash
+# After pod restart — one command starts everything:
+# installs deps, recovers corrupted checkpoints, starts both trainers + both eval daemons
+bash /workspace/mandala-rl/scripts/start_training.sh
+
+# Or from local machine via SSH:
+ssh root@38.147.83.11 -p 17226 -i ~/.ssh/id_ed25519 "bash /workspace/mandala-rl/scripts/start_training.sh"
+```
+
+### Training (manual)
 ```bash
 # Start training from scratch
 python scripts/train.py --config configs/default.yaml
@@ -157,7 +171,7 @@ tensorboard --logdir data/logs
 - `state.py`: Immutable game state representation with 36-card deck, hands, mountains, fields, river, cups
 - `engine.py`: Rules engine handling move generation, validation, state transitions, terminal detection, scoring
 - State uses canonical form (always from current player's perspective) for neural network symmetry
-- `to_tensor()` converts state to neural network input (50 planes × 8×8)
+- `to_tensor()` converts state to neural network input (83 planes × 8×8 for Mandala, 86 planes × 8×8 for Lost Cities)
 
 **2. MCTS (`mandala_rl/mcts/`)**
 - `node.py`: UCB-based node with visit counts, Q-values, prior probabilities
@@ -171,7 +185,7 @@ tensorboard --logdir data/logs
 - Architecture: Input conv → N residual blocks → Policy head + Value head
 - Policy head: Conv → FC → Softmax (action probabilities)
 - Value head: Conv → FC → FC → Tanh (outcome prediction in [-1, 1])
-- Default: 10 residual blocks, 128 channels, ~2M parameters
+- Current: 8 residual blocks, 96 channels, ~2M parameters
 - Loss = CrossEntropy(policy, MCTS_pi) + MSE(value, outcome)
 
 **4. Self-Play (`mandala_rl/selfplay/`)**
@@ -185,17 +199,20 @@ tensorboard --logdir data/logs
 - `trainer.py`: Main training loop orchestrating self-play → buffer → training → checkpoint
 - `replay_buffer.py`: Circular buffer storing up to 500K training examples
 - Training iteration:
-  1. Generate N self-play games (default: 100 games)
+  1. Generate 100 self-play games (64 parallel via C++ BatchedMCTS, 1600 MCTS sims)
   2. Extract (state, policy, value) tuples and add to replay buffer
-  3. Train network on random batches from buffer (default: 10 epochs)
+  3. Train network on random batches from buffer (1 epoch per iteration)
   4. Save checkpoint
-- Uses Adam optimizer with MultiStepLR scheduler
+- Uses AdamW optimizer with MultiStepLR scheduler (milestones at 50/150/300 post-resume, gamma=0.3)
 - Gradient clipping (max_norm=1.0) for stability
+- Mixed precision (AMP fp16) + torch.compile on CUDA
 
 **6. Evaluation (`mandala_rl/evaluation/`)**
-- `arena.py`: Plays matches between models with alternating colors (deterministic, T=0, no noise)
+- `fast_arena.py`: C++ BatchedMCTS arena for fast parallel evaluation with multi-model routing
+- `arena.py`: Legacy Python MCTS arena (unused in production)
 - `elo.py`: Maintains Elo rating ladder for tracking model strength over time
-- Win threshold default: 55% to consider new model better
+- Tournament-style eval: every 5 iterations, current checkpoint plays 3 games each against ~10 spread-out prior checkpoints (30 parallel games per tournament, 200 MCTS sims)
+- Eval daemon (`scripts/eval_daemon.py`) runs independently on GPU alongside training
 - Elo updates use K-factor=32, initial rating=1500
 
 ### Training Loop Flow
@@ -224,7 +241,7 @@ Loop (for N iterations):
 ### Data Flow
 
 ```
-GameState → to_tensor() → [50×8×8] tensor
+GameState → to_tensor() → [83×8×8] tensor (Mandala) / [86×8×8] (Lost Cities)
                               ↓
                         Neural Network
                          ↓         ↓
@@ -296,73 +313,80 @@ GameState → to_tensor() → [50×8×8] tensor
 ## Configuration (`configs/default.yaml`)
 
 Key hyperparameters:
-- **MCTS simulations**: 800 (balance between strength and speed)
+- **MCTS simulations**: 1600 (self-play), 200 (eval tournaments)
 - **c_puct**: 1.0 (exploration constant)
-- **Games per iteration**: 100 (data generation rate)
+- **Games per iteration**: 100 with 64 parallel games via C++ BatchedMCTS
 - **Batch size**: 256 (training stability)
-- **Learning rate**: 0.001 with MultiStepLR decay
-- **Replay buffer**: 500K examples (memory vs. sample diversity)
-- **ResNet blocks**: 10 (model capacity)
-- **Channels**: 128 (representational power)
+- **Learning rate**: 0.001 with MultiStepLR decay (milestones [50, 150, 300] post-resume, gamma 0.3)
+- **Epochs per iteration**: 1 (critical — higher values cause overtraining on the replay buffer)
+- **Replay buffer**: 500K examples (critical — smaller buffers cause memorization and Elo regression)
+- **ResNet blocks**: 8 (model capacity)
+- **Channels**: 96 (representational power)
 
-## Automatic Elo Evaluation
+### Overtraining Prevention
+The training-to-data ratio is the most important hyperparameter to get right. Each iteration generates ~3,000 new examples. With a 500K buffer and 1 epoch, each example is seen ~2.6x before replacement. **Never increase epochs_per_iteration or decrease replay_buffer_size without understanding the overtraining ratio.** At 3 epochs / 100K buffer, the model memorizes the buffer within ~150 iterations, causing value head saturation and Elo collapse (see DEVLOG #19).
 
-The training loop includes automatic Elo evaluation:
+## Elo Evaluation System
+
+Evaluation runs as a standalone daemon, decoupled from training:
+
+```bash
+# Start eval daemon (runs forever, polls for new checkpoints):
+python scripts/eval_daemon.py --config configs/default.yaml --device cuda \
+    --tournament-freq 5 --num-opponents 10 --games-per-opponent 3 --mcts-sims 200
+
+# Single pass:
+python scripts/eval_daemon.py --config configs/default.yaml --once
+```
 
 **How it works:**
-- Every 10 iterations (configurable via `eval_frequency`)
-- Current model plays 20 games vs previous checkpoint
-- Elo ratings updated based on results
-- Logged to Tensorboard: `Evaluation/CurrentElo`, `Evaluation/WinRate`
-- Saved to `data/elo_ratings.json`
+- Tournament-style: every 5 iterations, current checkpoint plays 3 games each against ~10 opponents spread across training history (30 parallel games via C++ BatchedMCTS)
+- All games run in one `BatchedMCTS` session with multi-model routing (`FastArena.play_tournament()`)
+- All participants' Elo ratings update from results (K=32, initial 1500)
+- Results saved to `data/elo_ratings.json` with `tournament_evaluated` tracking
+- Heartbeat written to `data/eval_heartbeat.json`
 
 **What to watch:**
-- Elo should increase over training (newer > older)
-- Win rate >50% means improving
-- Tensorboard shows live Elo curve
+- Elo should trend upward over training (newer > older)
+- Flat Elo = no improvement, declining Elo = regression (check overtraining ratio)
+- Tournament win rates: 50% against neighbors is expected, >50% against early iters shows learning
 
 **View Elo ratings:**
 ```bash
 cat data/elo_ratings.json | python3 -m json.tool
 ```
 
-## Known TODOs
+## Deployment
 
-These areas need implementation:
+**Public play-testing server** (runs on RunPod):
+```bash
+# On RunPod, serves both games on port 8888:
+python3 serve.py --port 8888 --host 0.0.0.0
 
-1. **Game Engine (`mandala_rl/game/engine.py`)**:
-   - Complete move encoding/decoding (currently placeholder)
-   - Implement full move validation
-   - Implement mountain completion logic
-   - Implement field collection mechanics
-   - Implement cup scoring
+# Public URL (Railway deployment):
+# https://mandala-rl-production.up.railway.app
+```
 
-2. **State Representation (`mandala_rl/game/state.py`)**:
-   - Finalize `to_tensor()` representation (currently returns zeros)
-   - Optimize tensor encoding for card locations
-   - Consider hand encoding strategies
+**Deploy checkpoint creation** (lightweight, network-only):
+```bash
+python scripts/create_deploy_checkpoint.py
+```
 
-3. **Symmetries (`mandala_rl/game/engine.py`)**:
-   - Determine if useful symmetries exist (color permutations?)
-   - Implement `get_symmetries()` if beneficial for data augmentation
+serve.py loads checkpoints from `data/deploy/` first, falls back to `data/checkpoints/`. Currently uses 200 MCTS sims for inference (configurable via `MCTS_SIMULATIONS` env var).
 
-## Performance Optimization Tips
+## Performance Notes
 
-### For Apple Silicon (MPS)
-- Use channels=128 or 256 (MPS optimized for these sizes)
-- Keep batch_size=256 (good utilization without OOM)
-- Monitor unified memory usage (no separate GPU memory)
-- MPS may be slower than expected for small batches; consider larger batches
+### Training Infrastructure
+- Self-play uses C++ BatchedMCTS with 64 parallel games and 4 virtual leaves per game (256 states per NN batch)
+- Mixed precision (AMP fp16) + torch.compile on CUDA for ~2x speedup
+- ~4 min/iteration on A100 (self-play dominated), ~35 sec training phase
+- Eval daemon runs concurrently on same GPU with reduced sims (200 vs 1600)
 
 ### Memory Management
 - Replay buffer is largest memory consumer (500K × state_size)
-- Consider reducing replay buffer if OOM
-- Each game stores ~30-50 positions on average
-
-### Training Speed
-- Bottleneck is typically self-play (MCTS is slow)
-- Consider reducing mcts_simulations for faster iteration (e.g., 400 instead of 800)
-- Parallel self-play workers could help (not currently implemented)
+- Full checkpoint (with replay buffer) saved as model_latest.pt (~2-3 GB)
+- Iteration checkpoints are lightweight (network only, ~20 MB)
+- Only last 20 iteration checkpoints retained on disk
 
 ## Working with This Codebase
 
@@ -380,6 +404,7 @@ These areas need implementation:
 
 ### Evaluating Progress
 - Elo ratings in `data/elo_ratings.json` track improvement over time
-- Expected: Elo increases monotonically if training is working
+- Expected: Elo trends upward over training
 - Plateau indicates need for hyperparameter tuning or architecture changes
-- Win rate against baseline should exceed 55% for clear improvement
+- **Declining Elo is a red flag** — check overtraining ratio first (see DEVLOG #19)
+- Win rate against early checkpoints should be consistently >50%

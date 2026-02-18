@@ -10,9 +10,9 @@ network:
 # MCTS Parameters
 mcts:
   num_simulations: 800  # Reduced from 1600 — ISMCTS wastes zero sims, so 800 effective > 1600 wasteful
-  c_puct: 1.0
-  dirichlet_alpha: 0.15   # Reduced from 0.3 — determinization provides exploration diversity
-  dirichlet_epsilon: 0.25
+  c_puct: 1.5            # Increased from 1.0 — more MCTS exploration to break degenerate equilibrium
+  dirichlet_alpha: 0.3   # Increased from 0.15 — more uniform noise for broader exploration
+  dirichlet_epsilon: 0.35 # Increased from 0.25 — stronger noise influence at root
 
 # Self-Play Parameters
 selfplay:
@@ -20,7 +20,7 @@ selfplay:
   parallel_games: 32  # Simultaneous games for batched NN inference
   leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
-  temperature_threshold: 15  # Reduced from 30 — LC games ~44 moves, less early-game noise
+  temperature_threshold: 30  # Increased from 15 — explore longer to break degenerate strategy
 
 # Training Parameters
 training:
@@ -34,6 +34,7 @@ training:
   replay_buffer_size: 50000  # Reduced from 100000 — fresher data, less stale targets
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
+  entropy_weight: 0.05  # Entropy regularization to prevent policy collapse (bumped from 0.02)
 
 # Evaluation Parameters
 evaluation:

@@ -166,7 +166,8 @@ class MandalaNet(nn.Module):
         self,
         states: torch.Tensor,
         target_policies: torch.Tensor,
-        target_values: torch.Tensor
+        target_values: torch.Tensor,
+        entropy_weight: float = 0.0
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute training loss.
@@ -175,6 +176,7 @@ class MandalaNet(nn.Module):
             states: Batch of state tensors
             target_policies: Target policy distributions from MCTS
             target_values: Target values (game outcomes)
+            entropy_weight: Weight for entropy regularization (0 = disabled)
 
         Returns:
             (total_loss, policy_loss, value_loss) tuple
@@ -182,12 +184,19 @@ class MandalaNet(nn.Module):
         policy_logits, values = self.forward(states)
 
         # Policy loss (cross-entropy)
-        policy_loss = -torch.mean(torch.sum(target_policies * F.log_softmax(policy_logits, dim=1), dim=1))
+        log_probs = F.log_softmax(policy_logits, dim=1)
+        policy_loss = -torch.mean(torch.sum(target_policies * log_probs, dim=1))
 
         # Value loss (MSE)
         value_loss = F.mse_loss(values.squeeze(), target_values)
 
         # Total loss
         total_loss = policy_loss + value_loss
+
+        # Entropy regularization: maximize entropy to prevent policy collapse
+        if entropy_weight > 0:
+            probs = F.softmax(policy_logits, dim=1)
+            entropy = -torch.mean(torch.sum(probs * log_probs, dim=1))
+            total_loss = total_loss - entropy_weight * entropy
 
         return total_loss, policy_loss, value_loss

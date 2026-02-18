@@ -130,6 +130,12 @@ def main():
 
         # Replay saving
         'save_replay_frequency': config.get('save_replay_frequency', 10),
+
+        # Disk management
+        'prune_old_checkpoints': config['training'].get('prune_old_checkpoints', False),
+
+        # Entropy regularization
+        'entropy_weight': config['training'].get('entropy_weight', 0.0),
     }
 
     # Create trainer

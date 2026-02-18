@@ -342,3 +342,12 @@ Fix: hybrid reward — binary win/loss (±0.8-1.0) + small margin tiebreaker (±
 PyTorch forward passes hang indefinitely on Railway's resource-constrained containers. A `/debug/bench` endpoint confirmed: 121s timeout on a single forward pass (gunicorn 120s limit). Root cause: PyTorch's CPU runtime has ~400MB memory overhead that causes severe thrashing on Railway's limited containers (likely 512MB-1GB RAM shared with OS + other processes).
 
 Fix: complete rewrite of `serve.py` to use **ONNX Runtime** instead of PyTorch. Exported both models to ONNX format via `scripts/export_onnx.py` (Mandala: 6.6MB, LC: 7.1MB). ONNX Runtime has ~50MB memory overhead vs PyTorch's ~400MB, and inference is 3.5ms per forward pass locally. No more auto-reload thread, quantization hacks, or MCTS — raw network policy only (0 MCTS sims). Requirements changed from `torch>=2.0.0+cpu` to `onnxruntime>=1.16.0` + `scipy>=1.10.0` (for softmax). Gunicorn timeout reduced from 120s to 30s. Session management classes inlined in serve.py to avoid importing PyTorch-dependent modules.
+
+---
+
+## #30 — Entropy Regularization to Break LC Degenerate Equilibrium
+**Feb 18, 2026**
+
+The hybrid reward fix (#28) failed to break the degenerate equilibrium after 137 iterations. Replay buffer analysis at iter 442 showed 98.2% discards, 1.8% expedition plays, entropy 0.452 — identical to pre-fix behavior. Root cause: the network's policy had collapsed to near-deterministic "always discard" and there was **no loss term to penalize this**. Even with correct reward signals, the policy gradient always reinforced the same 98% confident action.
+
+Fix: added entropy regularization to `get_loss()` in model.py. Loss becomes `policy_loss + value_loss - entropy_weight * H(pi)`, where H(pi) is the policy entropy. This creates gradient pressure against over-confident policies. Set `entropy_weight: 0.02` for LC. Also increased exploration: Dirichlet alpha 0.15→0.3, epsilon 0.25→0.35, c_puct 1.0→1.5, temperature_threshold 15→30. Flushed replay buffer again. After 3 iterations, policy entropy nearly doubled from 0.452 to 0.870 — the regularization is working. Expedition plays should rise as the buffer fills with higher-entropy exploratory data.

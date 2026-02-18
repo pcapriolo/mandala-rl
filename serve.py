@@ -410,28 +410,36 @@ class MandalaGameSession:
 
     def _format_state(self):
         s = self.state
+        def _color_counts(card_list):
+            """Convert List[Card] to color count dict."""
+            counts = [0] * 6
+            for card in card_list:
+                counts[card.color] += 1
+            return counts
         def hand_repr(hand):
-            return [{'color': i, 'count': int(hand[i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if hand[i] > 0]
-        def mandala_repr(m):
+            counts = _color_counts(hand)
+            return [{'color': i, 'count': counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if counts[i] > 0]
+        def mandala_repr(m_idx):
+            mt_counts = _color_counts(s.mountains[m_idx])
             return {
-                'mountain': [{'color': i, 'count': int(m.mountain[i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if m.mountain[i] > 0],
+                'mountain': [{'color': i, 'count': mt_counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if mt_counts[i] > 0],
                 'fields': [
-                    [{'color': i, 'count': int(m.fields[p][i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if m.fields[p][i] > 0]
-                    for p in range(2)
+                    [{'color': i, 'count': fc[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if fc[i] > 0]
+                    for fc in [_color_counts(s.fields[m_idx][p]) for p in range(2)]
                 ],
             }
+        def cup_repr(cup):
+            counts = _color_counts(cup)
+            return [{'color': i, 'count': counts[i], 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if counts[i] > 0]
         return {
             'hands': [hand_repr(s.hands[p]) for p in range(2)],
-            'mandalas': [mandala_repr(m) for m in s.mandalas],
+            'mandalas': [mandala_repr(m_idx) for m_idx in range(2)],
             'rivers': [
-                [{'color': i, 'name': MANDALA_COLOR_NAMES[i]} for i in s.rivers[p]]
+                [{'color': card.color, 'name': MANDALA_COLOR_NAMES[card.color]} for card in s.rivers[p]]
                 for p in range(2)
             ],
-            'cups': [
-                [{'color': i, 'count': int(s.cups[p][i]), 'name': MANDALA_COLOR_NAMES[i]} for i in range(6) if s.cups[p][i] > 0]
-                for p in range(2)
-            ],
-            'deck_remaining': int(s.deck_remaining),
+            'cups': [cup_repr(s.cups[p]) for p in range(2)],
+            'deck_remaining': len(s.deck),
         }
 
     def make_move(self, action, think_time_ms=None, ai_data=None):

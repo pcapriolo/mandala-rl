@@ -291,7 +291,8 @@ class Trainer:
 
                 with torch.amp.autocast('cuda', enabled=self.use_amp):
                     total_loss, policy_loss, value_loss = self.network.get_loss(
-                        states, policies, values
+                        states, policies, values,
+                        entropy_weight=self.config.get('entropy_weight', 0.0)
                     )
 
                 if self.scaler:
@@ -414,8 +415,23 @@ class Trainer:
         if game_checkpoints:
             print(f"Cleaned up {len(game_checkpoints)} game-level checkpoints")
 
-        # 2. Keep all iteration checkpoints (needed for Elo evaluation)
-        # Each is ~7MB (weights only), so 500 iters = ~3.5 GB — acceptable.
+        # 2. Prune old iteration checkpoints (only if enabled in config)
+        if not self.config.get('prune_old_checkpoints', False):
+            return
+        iter_files = sorted(checkpoint_dir.glob('model_iter_*.pt'), key=lambda f: int(f.stem.split('_')[2]))
+        if len(iter_files) > 40:
+            keep = set()
+            for f in iter_files:
+                i = int(f.stem.split('_')[2])
+                if i % 50 == 0:
+                    keep.add(f)
+            for f in iter_files[-30:]:
+                keep.add(f)
+            to_delete = [f for f in iter_files if f not in keep]
+            for f in to_delete:
+                f.unlink()
+            if to_delete:
+                print(f"Pruned {len(to_delete)} old iteration checkpoints (kept {len(keep)})")
 
     def load_checkpoint(self, filepath: Path):
         """Load training checkpoint and replay buffer."""
