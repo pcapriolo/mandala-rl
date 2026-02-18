@@ -109,6 +109,23 @@ if lc_cp:
 else:
     print("[serve] No Lost Cities checkpoint found, skipping")
 
+# Warmup + quantize: prepare models for fast CPU inference
+import torch, numpy as np
+for name, server in [('Mandala', _mandala_server), ('Lost Cities', _lc_server)]:
+    if server:
+        try:
+            # Dynamic int8 quantization for CPU inference (~2-4x faster)
+            server.model = torch.quantization.quantize_dynamic(
+                server.model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
+            )
+            # Warmup inference
+            t0 = time.time()
+            dummy = torch.randn(1, server.model.input_channels, 8, 8)
+            with torch.no_grad():
+                server.model(dummy)
+            print(f"[serve] {name} quantized + warmed up: {time.time()-t0:.2f}s")
+        except Exception as e:
+            print(f"[serve] {name} quantization/warmup failed: {e}")
 
 # --- Auto-reload: watch training dirs for newer checkpoints ---
 AUTO_RELOAD = os.environ.get('AUTO_RELOAD', '1') == '1'
