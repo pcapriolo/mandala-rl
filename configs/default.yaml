@@ -2,7 +2,7 @@
 
 # Network Architecture
 network:
-  input_channels: 123
+  input_channels: 137
   num_actions: 150  # 12 BUILD_MOUNTAIN + 84 GROW_FIELD + 48 DISCARD + 6 CLAIM_COLOR
   num_res_blocks: 8
   channels: 96

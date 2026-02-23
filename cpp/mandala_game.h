@@ -11,7 +11,7 @@ static constexpr int M_CARDS_PER_COLOR = 18;
 static constexpr int M_TOTAL_CARDS = 108;
 static constexpr int M_MAX_HAND = 8;
 static constexpr int M_NUM_ACTIONS = 150;  // 12 BUILD_MOUNTAIN + 84 GROW_FIELD + 48 DISCARD + 6 CLAIM
-static constexpr int M_TENSOR_CHANNELS = 123;
+static constexpr int M_TENSOR_CHANNELS = 137;
 
 // Phase constants
 static constexpr int M_PHASE_PLAY = 0;

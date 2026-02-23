@@ -52,11 +52,11 @@ def test_canonical_form():
 
 
 def test_tensor_shape():
-    """Verify tensor has 96 channels."""
+    """Verify tensor has 137 channels."""
     game = MandalaGame()
     state = game.get_initial_state()
     tensor = state.to_tensor()
-    assert tensor.shape == (96, 8, 8)
+    assert tensor.shape == (137, 8, 8)
 
 
 if __name__ == '__main__':

@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import List, Tuple
 from collections import deque
 
-# Color channel groups in 121-channel Mandala tensor (each group has 6 channels, one per color)
+# Color channel groups in 137-channel Mandala tensor (each group has 6 channels, one per color)
 _COLOR_GROUPS = [
     (0, 6), (6, 12), (12, 18), (18, 24), (24, 30), (30, 36), (36, 42),
     (42, 48), (48, 54), (59, 65), (65, 71), (71, 77), (77, 83),
     (84, 90), (90, 96), (96, 102), (102, 108), (108, 114), (114, 120),
+    (125, 131), (131, 137),  # Per-color score contributions (my, opp)
 ]
 # Scalar channels NOT permuted: 54, 55, 56, 57, 58, 83, 120
 

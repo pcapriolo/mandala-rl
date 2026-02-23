@@ -125,7 +125,7 @@ class GameState:
 
         State is assumed to be in canonical form (current player = index 0).
 
-        Encoding (123 planes × 8×8, values broadcast across spatial dims):
+        Encoding (137 planes × 8×8, values broadcast across spatial dims):
           Ch 0-5:     My hand card counts per color (/18)
           Ch 6-11:    Mountain 0 card counts per color (/18)
           Ch 12-17:   Mountain 1 card counts per color (/18)
@@ -154,8 +154,12 @@ class GameState:
           Ch 120:     Game progress = (total river cards) / 12.0
           Ch 121:     Field advantage Mandala 0 (my - opp), raw count
           Ch 122:     Field advantage Mandala 1 (my - opp), raw count
+          Ch 123:     My total score / 100 (all cup cards)
+          Ch 124:     Known opp total score / 100 (claimed cups only, skip 2 hidden starting)
+          Ch 125-130: My per-color score contribution (cup_count * river_pos) / 18
+          Ch 131-136: Known opp per-color score contribution / 18 (claimed cups only)
         """
-        tensor = np.zeros((123, 8, 8), dtype=np.float32)
+        tensor = np.zeros((137, 8, 8), dtype=np.float32)
 
         CARDS_PER_COLOR = 18
 
@@ -280,6 +284,26 @@ class GameState:
 
         # Ch 122: Field advantage Mandala 1 (my total - opp total), raw count
         tensor[122] = len(self.fields[1][0]) - len(self.fields[1][1])
+
+        # Ch 123-136: Pre-computed scoring channels
+        # p=0 (me): score from ALL cup cards. p=1 (opp): known score from claimed cups only
+        for p in range(2):
+            river_val = [0] * 6
+            for pos, card in enumerate(self.rivers[p]):
+                river_val[card.color] = pos + 1
+
+            # Skip first 2 cups for opponent (hidden starting cards)
+            cup_cards = self.cups[p] if p == 0 else self.cups[p][2:]
+            cup_cnt = [0] * 6
+            for card in cup_cards:
+                cup_cnt[card.color] += 1
+
+            total = 0
+            for c in range(6):
+                contrib = cup_cnt[c] * river_val[c]
+                total += contrib
+                tensor[125 + p * 6 + c] = contrib / 18.0
+            tensor[123 + p] = total / 100.0
 
         return tensor
 

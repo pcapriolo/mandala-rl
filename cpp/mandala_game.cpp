@@ -208,6 +208,27 @@ void MandalaState::to_tensor(std::vector<float>& out) const {
     // Ch 122: Field advantage Mandala 1 (my total - opp total), raw count
     set_channel(122, static_cast<float>(
         static_cast<int>(fields[1][0].size()) - static_cast<int>(fields[1][1].size())));
+
+    // Ch 123-136: Pre-computed scoring channels
+    // p=0 (me): score from ALL cup cards. p=1 (opp): known score from claimed cups only (skip 2 hidden starting cards)
+    for (int p = 0; p < 2; p++) {
+        int river_val[M_NUM_COLORS] = {};
+        for (int pos = 0; pos < static_cast<int>(rivers[p].size()); pos++)
+            river_val[rivers[p][pos]] = pos + 1;
+
+        int cup_cnt[M_NUM_COLORS] = {};
+        int start = (p == 0) ? 0 : 2;  // Skip first 2 for opponent (hidden starting cards)
+        for (int i = start; i < static_cast<int>(cups[p].size()); i++)
+            cup_cnt[cups[p][i]]++;
+
+        int total = 0;
+        for (int c = 0; c < M_NUM_COLORS; c++) {
+            int contrib = cup_cnt[c] * river_val[c];
+            total += contrib;
+            set_channel(125 + p * 6 + c, static_cast<float>(contrib) / 18.0f);
+        }
+        set_channel(123 + p, static_cast<float>(total) / 100.0f);
+    }
 }
 
 std::unique_ptr<GameState> MandalaState::get_canonical() const {

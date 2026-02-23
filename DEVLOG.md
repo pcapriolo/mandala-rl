@@ -610,3 +610,14 @@ Optional variable-count discard (#48) caused a discard spiral. The network disco
 **3. Rollback to iter 210.** Deleted degenerate checkpoints (iter 213-227). Iter 210 was the last healthy iteration (57% mountain, 10% discard, 36.8 avg score). The poisoned replay buffer (~50% of 200K capacity) made self-correction impossible.
 
 **First results post-rollback:** Iter 211: 0% discard, 65% mountain, 35% field, 41.2 avg score — excellent recovery. Training continues from here with forced-only discard. Optional discard will be re-introduced later once the network has learned the core mountain→field→claim loop.
+
+---
+
+## #50 — Pre-computed Scoring Channels (123 → 137)
+**Feb 22, 2026**
+
+Added 14 new tensor channels encoding pre-computed scores. The model previously had cup color counts (ch 90-95, 102-107) and river position values (ch 42-47, 48-53) as separate channels. Computing score requires element-wise multiplication (`cup_count × river_value`) — conv layers do weighted sums, not products, so this was wasting network capacity on a fundamentally simple computation.
+
+**New channels:** Ch 123-124: total score (my / known opp). Ch 125-136: per-color score contribution for each player. Opponent score uses only **claimed** cup cards (`cups[2:]`), not the 2 hidden starting cards — respects information boundaries. My score uses all cups since I see my own starting cards. Normalization: total `/100`, per-color `/18`.
+
+**Checkpoint migration** handled automatically by existing `conv_input.weight` zero-padding logic (123→137 channels). Old weights preserved, new 14 channels start at zero (no behavior change until training adapts). Color augmentation groups updated to include new per-color channels.
