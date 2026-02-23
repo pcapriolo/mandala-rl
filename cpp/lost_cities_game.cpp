@@ -329,6 +329,11 @@ bool LostCitiesGame::is_terminal(const GameState& state_base) const {
     return static_cast<const LostCitiesState&>(state_base).game_over;
 }
 
+int LostCitiesGame::get_score(const GameState& state_base, int player) const {
+    auto& s = static_cast<const LostCitiesState&>(state_base);
+    return s.compute_score(player);
+}
+
 float LostCitiesGame::get_reward(const GameState& state_base, int player) const {
     auto& s = static_cast<const LostCitiesState&>(state_base);
     if (!s.game_over) return 0.0f;
@@ -337,11 +342,12 @@ float LostCitiesGame::get_reward(const GameState& state_base, int player) const 
     int score_opp = s.compute_score(1 - player);
     int margin = score_p - score_opp;
 
-    // Timeout penalty: discourage stalling (degenerate discard loops)
+    // Timeout = draw (0.0). In zero-sum training, -1.0 from current player's
+    // perspective becomes +1.0 for the opponent — "both lose" is impossible.
+    // A draw gives both players 0.0, making natural wins (±0.8-1.0) strictly
+    // preferable and giving the value head actual signal to learn from.
     if (s.turns_played >= LC_MAX_TURNS) {
-        if (margin > 0) return 0.3f;
-        if (margin < 0) return -0.5f;
-        return -0.2f;  // Draw on timeout is penalized
+        return 0.0f;
     }
 
     // Binary win/loss + small margin tiebreaker

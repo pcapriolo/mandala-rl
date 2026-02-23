@@ -9,11 +9,13 @@ cd /workspace/mandala-rl
 
 # Install deps (fresh container after restart)
 echo "Installing dependencies..."
+pip install --ignore-installed blinker 2>&1 | tail -1
 pip install --no-build-isolation -e . 2>&1 | tail -3
 
 # Kill any stale processes
 pkill -f 'scripts/train.py' 2>/dev/null || true
 pkill -f 'scripts/eval_daemon.py' 2>/dev/null || true
+pkill -f 'scripts/start_observer.py' 2>/dev/null || true
 sleep 1
 
 # Fix corrupted model_latest.pt files (0-byte from interrupted saves)
@@ -31,45 +33,65 @@ for game_dir in data data/lost_cities; do
     fi
 done
 
+# Generate bot seed data if not already present
+if [ ! -f data/bot_seed_buffer.pkl ]; then
+    echo "Generating Mandala seed data from strategy bot..."
+    python3 scripts/seed_from_bots.py --game mandala --num-games 100 --mcts-sims 100
+fi
+if [ ! -f data/lost_cities/bot_seed_buffer.pkl ]; then
+    echo "Generating Lost Cities seed data from strategy bot..."
+    python3 scripts/seed_from_bots.py --game lost_cities --num-games 100 --mcts-sims 100
+fi
+
 # Start Mandala training
+MANDALA_SEED=""
+[ -f data/bot_seed_buffer.pkl ] && MANDALA_SEED="--seed-buffer data/bot_seed_buffer.pkl"
 if [ -f data/checkpoints/model_latest.pt ]; then
     echo "Starting Mandala training (resuming)..."
     nohup python3 scripts/train.py --config configs/default.yaml \
-        --resume data/checkpoints/model_latest.pt > /tmp/mandala_train.log 2>&1 &
+        --resume data/checkpoints/model_latest.pt $MANDALA_SEED > /tmp/mandala_train.log 2>&1 &
 else
     echo "Starting Mandala training (from scratch)..."
-    nohup python3 scripts/train.py --config configs/default.yaml > /tmp/mandala_train.log 2>&1 &
+    nohup python3 scripts/train.py --config configs/default.yaml $MANDALA_SEED > /tmp/mandala_train.log 2>&1 &
 fi
 echo "  PID: $!"
 
 # Start Lost Cities training
+LC_SEED=""
+[ -f data/lost_cities/bot_seed_buffer.pkl ] && LC_SEED="--seed-buffer data/lost_cities/bot_seed_buffer.pkl"
 if [ -f data/lost_cities/checkpoints/model_latest.pt ]; then
     echo "Starting Lost Cities training (resuming)..."
     nohup python3 scripts/train.py --config configs/lost_cities.yaml \
-        --resume data/lost_cities/checkpoints/model_latest.pt > /tmp/lc_train.log 2>&1 &
+        --resume data/lost_cities/checkpoints/model_latest.pt $LC_SEED > /tmp/lc_train.log 2>&1 &
 else
     echo "Starting Lost Cities training (from scratch)..."
-    nohup python3 scripts/train.py --config configs/lost_cities.yaml > /tmp/lc_train.log 2>&1 &
+    nohup python3 scripts/train.py --config configs/lost_cities.yaml $LC_SEED > /tmp/lc_train.log 2>&1 &
 fi
 echo "  PID: $!"
 
-# Start BOTH eval daemons (GPU for speed — 47 GiB VRAM free, eval uses ~200 MB)
-echo "Starting Mandala eval daemon..."
+# Start BOTH eval daemons on GPU (uses <2GB VRAM, frees CPU for MCTS tree traversal)
+echo "Starting Mandala eval daemon (GPU)..."
 nohup python3 scripts/eval_daemon.py --config configs/default.yaml \
     --device cuda --mcts-sims 200 > /tmp/eval_daemon.log 2>&1 &
 echo "  PID: $!"
 
-echo "Starting Lost Cities eval daemon..."
+echo "Starting Lost Cities eval daemon (GPU)..."
 nohup python3 scripts/eval_daemon.py --config configs/lost_cities.yaml \
     --device cuda --mcts-sims 200 > /tmp/eval_daemon_lc.log 2>&1 &
+echo "  PID: $!"
+
+# Start training observer (single dashboard for both games)
+echo "Starting observer (port 5000)..."
+nohup python3 scripts/start_observer.py --host 0.0.0.0 --port 5000 \
+    --data-dir data > /tmp/observer.log 2>&1 &
 echo "  PID: $!"
 
 sleep 3
 echo ""
 echo "=== All processes ==="
-ps aux | grep -E 'train\.py|eval_daemon' | grep -v grep
+ps aux | grep -E 'train\.py|eval_daemon|start_observer' | grep -v grep
 echo ""
 echo "=== Memory ==="
 free -h | head -2
 echo ""
-echo "Done. Logs: /tmp/{mandala_train,lc_train,eval_daemon,eval_daemon_lc}.log"
+echo "Done. Logs: /tmp/{mandala_train,lc_train,eval_daemon,eval_daemon_lc,observer}.log"

@@ -28,7 +28,7 @@ AlphaZero-style reinforcement learning system for training strong game-playing b
 
 Supports two games:
 
-**Mandala** is a 2-player card game with 6 colors (18 cards each = 108 total). Players play cards to 2 Mandalas, each with a Mountain and 2 Fields. When all 6 colors are present in a Mandala, players claim cards to their River and Cup. Scoring is based on River positions (1-6 points). First to 6 River colors or deck exhaustion triggers game end. Action space: 30 moves. Input: 83 tensor channels (includes belief channels + behavioral inference).
+**Mandala** is a 2-player card game with 6 colors (18 cards each = 108 total). Players play cards to 2 Mandalas, each with a Mountain and 2 Fields. When all 6 colors are present in a Mandala, players enter a CLAIM phase where they alternately pick colors from the mountain (player with more field cards picks first). First card of each color goes to River (scoring order), rest to Cup. Players choose how many cards (1-N) to play to fields. Action space: 108 moves (12 BUILD_MOUNTAIN + 84 GROW_FIELD + 6 DISCARD + 6 CLAIM_COLOR). Input: 96 tensor channels (includes belief channels, behavioral inference, cup colors, claim phase).
 
 **Lost Cities** is a 2-player card game with 60 cards (5 colors x 12), expeditions with ascending-value constraints, and wager multipliers. Action space: 96 compound actions. Input: 86 tensor channels (includes belief channels + behavioral inference).
 
@@ -168,10 +168,10 @@ tensorboard --logdir data/logs
 ### Core Components
 
 **1. Game Engine (`mandala_rl/game/`)**
-- `state.py`: Immutable game state representation with 36-card deck, hands, mountains, fields, river, cups
+- `state.py`: Immutable game state representation with 108-card deck, hands, mountains, fields, river, cups, CLAIM phase tracking
 - `engine.py`: Rules engine handling move generation, validation, state transitions, terminal detection, scoring
 - State uses canonical form (always from current player's perspective) for neural network symmetry
-- `to_tensor()` converts state to neural network input (83 planes × 8×8 for Mandala, 86 planes × 8×8 for Lost Cities)
+- `to_tensor()` converts state to neural network input (96 planes × 8×8 for Mandala, 86 planes × 8×8 for Lost Cities)
 
 **2. MCTS (`mandala_rl/mcts/`)**
 - `node.py`: UCB-based node with visit counts, Q-values, prior probabilities
@@ -197,7 +197,7 @@ tensorboard --logdir data/logs
 
 **5. Training (`mandala_rl/training/`)**
 - `trainer.py`: Main training loop orchestrating self-play → buffer → training → checkpoint
-- `replay_buffer.py`: Circular buffer storing up to 500K training examples
+- `replay_buffer.py`: Circular buffer storing up to 100K training examples
 - Training iteration:
   1. Generate 100 self-play games (64 parallel via C++ BatchedMCTS, 1600 MCTS sims)
   2. Extract (state, policy, value) tuples and add to replay buffer
@@ -241,7 +241,7 @@ Loop (for N iterations):
 ### Data Flow
 
 ```
-GameState → to_tensor() → [83×8×8] tensor (Mandala) / [86×8×8] (Lost Cities)
+GameState → to_tensor() → [96×8×8] tensor (Mandala) / [86×8×8] (Lost Cities)
                               ↓
                         Neural Network
                          ↓         ↓
@@ -298,10 +298,12 @@ GameState → to_tensor() → [83×8×8] tensor (Mandala) / [86×8×8] (Lost Cit
 {
     'iteration': int,
     'total_games': int,
+    'games_in_current_iteration': int,
     'model_state_dict': OrderedDict,
     'optimizer_state_dict': dict,
-    'scheduler_state_dict': dict,
 }
+# NOTE: Replay buffer is NOT in checkpoint (caused OOM). Rebuilds from self-play.
+# Legacy checkpoints may contain 'replay_buffer' key — handled gracefully on load.
 ```
 
 ### Elo Rating System
@@ -319,12 +321,12 @@ Key hyperparameters:
 - **Batch size**: 256 (training stability)
 - **Learning rate**: 0.001 with MultiStepLR decay (milestones [50, 150, 300] post-resume, gamma 0.3)
 - **Epochs per iteration**: 1 (critical — higher values cause overtraining on the replay buffer)
-- **Replay buffer**: 500K examples (critical — smaller buffers cause memorization and Elo regression)
+- **Replay buffer**: 100K examples for both games (buffer is NOT saved in checkpoints — rebuilds from self-play after restart, see DEVLOG #35)
 - **ResNet blocks**: 8 (model capacity)
 - **Channels**: 96 (representational power)
 
 ### Overtraining Prevention
-The training-to-data ratio is the most important hyperparameter to get right. Each iteration generates ~3,000 new examples. With a 500K buffer and 1 epoch, each example is seen ~2.6x before replacement. **Never increase epochs_per_iteration or decrease replay_buffer_size without understanding the overtraining ratio.** At 3 epochs / 100K buffer, the model memorizes the buffer within ~150 iterations, causing value head saturation and Elo collapse (see DEVLOG #19).
+The training-to-data ratio is the most important hyperparameter to get right. Each iteration generates ~3,000 new examples. With a 100K buffer and 1 epoch, each example is seen ~1.3x before replacement — safe. **Never increase epochs_per_iteration or decrease replay_buffer_size without understanding the overtraining ratio.** At 3 epochs / 50K buffer, the model memorizes the buffer within ~150 iterations, causing value head saturation and Elo collapse (see DEVLOG #19). The replay buffer is NOT saved in checkpoints (it caused 3x memory spikes that triggered OOM — see DEVLOG #35). After restart, the buffer starts empty and refills in ~33 iterations.
 
 ## Elo Evaluation System
 
@@ -383,9 +385,10 @@ serve.py loads checkpoints from `data/deploy/` first, falls back to `data/checkp
 - Eval daemon runs concurrently on same GPU with reduced sims (200 vs 1600)
 
 ### Memory Management
-- Replay buffer is largest memory consumer (500K × state_size)
-- Full checkpoint (with replay buffer) saved as model_latest.pt (~2-3 GB)
-- Iteration checkpoints are lightweight (network only, ~20 MB)
+- Replay buffer is largest memory consumer (100K × state_size per trainer, ~2.5 GB each)
+- Replay buffer is NOT saved in checkpoints (caused OOM — see DEVLOG #35). Rebuilds from self-play.
+- All checkpoints (model_latest.pt, model_iter_N.pt) are lightweight (~22 MB, network + optimizer only)
+- Container RAM limit: 57.74 GB on RunPod (`free -h` reports host RAM, not container limit)
 - Only last 20 iteration checkpoints retained on disk
 
 ## Working with This Codebase

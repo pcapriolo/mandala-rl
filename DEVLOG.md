@@ -354,6 +354,54 @@ Fix: added entropy regularization to `get_loss()` in model.py. Loss becomes `pol
 
 ---
 
+## #32 — Fix Mandala Rules: Interactive Claiming, Partial Field Plays, Cup Visibility
+**Feb 18, 2026**
+
+A BGG playtester (tphilly5) immediately identified three rule violations in our Mandala engine. All ~700 training iterations were on wrong rules. This is a complete action space and game phase overhaul — training restarts from scratch.
+
+**1. GROW_FIELD partial plays (was: auto-play ALL).** Players can now choose 1-N cards of a color to play to their field, instead of always playing all. This is a core strategic decision (commit everything vs. hold reserves). Action space expanded from 12 field actions to 84: `12 + mandala*42 + color*7 + (count-1)`.
+
+**2. Interactive mountain claiming (was: auto-sorted by color).** When a mandala completes (all 6 colors), it enters a new CLAIM phase. The player with more field cards picks first, choosing one mountain color at a time. Players alternate until all colors are claimed. First card of each color → River (scoring order), rest → Cup. This is arguably THE most strategic decision in Mandala — the old engine removed it entirely.
+
+**3. Cup color visibility.** Players can now inspect their own cup card colors (6 new tensor channels, Ch 90-95). The web UI shows colored cards for human player's cup, hidden cards for opponent's cup.
+
+**Action space:** 30 → 108 (12 BUILD_MOUNTAIN + 84 GROW_FIELD + 6 DISCARD + 6 CLAIM_COLOR). **Tensor:** 83 → 96 channels. All Mandala checkpoints incompatible. Lost Cities training unaffected.
+
+---
+
+## #35 — Eliminate Checkpoint OOM: Stop Saving Replay Buffer
+**Feb 18, 2026**
+
+Pod kept hitting 100% container RAM (57.74 GB) and getting killed. Root cause: `_save_checkpoint()` serialized the entire replay buffer into `model_latest.pt` every iteration. This created **3 copies in RAM simultaneously**: (1) the original deque (~5 GB), (2) `list(self.buffer)` copy from `get_all_data()` (~5 GB), (3) pickle serialization during `torch.save()` (~5 GB). With 2 trainers potentially saving near-simultaneously, that's a +30 GB memory spike on top of baseline — blowing past 57 GB.
+
+**Fix: Stop embedding replay buffer in checkpoints.** The buffer rebuilds naturally from self-play — after restart, it refills in ~33 iterations (100K / ~3K per iter). Model weights and optimizer state are preserved, so the agent doesn't lose skill. `model_latest.pt` drops from ~5 GB to ~22 MB. Also reduced both replay buffers from 200K to 100K as additional safety margin.
+
+**Memory profile after fix:** 2 trainers (~3 GB RSS each at steady state) + 2 eval daemons (~1 GB each) + system ≈ 10 GB total. Checkpoint saves add ~100 MB peak instead of 15 GB. Well within the 57 GB container limit.
+
+---
+
+## #34 — Container RAM Limit Fix + Eval Daemon Game Detection Bug
+**Feb 18, 2026**
+
+RunPod pod kept OOMing at 100% memory. Root cause: `free -h` reports host RAM (503 GB) but the container is limited to **57.74 GB** by RunPod's cgroup. Two trainers with large replay buffers + two eval daemons exceeded this.
+
+**Fix 1: Mandala replay buffer 500K → 200K.** At 200K with 3K examples/iter and 1 epoch, each example is seen ~1x before FIFO eviction — safe overtraining ratio. Buffer cycles every ~67 iterations. Combined with LC's 200K buffer, total memory fits within the 57 GB container: ~10 GB RSS per trainer + ~1 GB per eval daemon + system overhead ≈ 22 GB.
+
+**Fix 2: eval_daemon.py game_type detection.** The game type check was `num_actions == 30` (an old action space size). Mandala has 108 actions, LC has 96 — so it **always** resolved to "lost_cities". The Mandala eval daemon was running LC games against a Mandala model (86 vs 96 input channels), crashing immediately. This is why Mandala Elo ratings were never populated. Fixed to `num_actions == 108`.
+
+**Fix 3: Eval daemons on GPU.** With GPU at 5% utilization and eval daemons burning 1200% CPU, moved eval back to `--device cuda`. Uses <2 GB VRAM on a 49 GB A6000. GPU utilization jumped to 84%.
+
+---
+
+## #33 — Fix LC Overtraining + Disk Full Crash
+**Feb 18, 2026**
+
+Both trainers crashed simultaneously — `torch.save` failed with "PytorchStreamWriter failed writing file data.pkl" because the 20GB workspace was 100% full. Root causes: `data/archive/` held 8.1GB of old v1 training data, and LC had accumulated 140 iter checkpoints (should cap at 20).
+
+Freed 11GB by deleting archive and trimming LC checkpoints. Also diagnosed LC Elo regression: Elo peaked at iter 421 (1746) then declined to 1569 by iter 433. The culprit was the 50K replay buffer — with ~3K examples/iter, the buffer turned over every ~17 iterations. Value loss was near zero (0.01), confirming memorization. Policy loss later doubled from 0.6 to 1.3 as the degenerate equilibrium destabilized. Increased `replay_buffer_size` from 50K to 200K (67-iteration turnover, matching the ratio that works for Mandala at 500K).
+
+---
+
 ## #31 — Fix Mandala Overtraining: 500K Buffer, Absolute LR, GPU Eval
 **Feb 18, 2026**
 
@@ -364,3 +412,201 @@ Mandala Elo was regressing — iter 500 (1373) and iter 550 (1396) scored below 
 **2. Restart-resilient LR schedule.** `MultiStepLR` milestones fired relative to `scheduler.step()` call count, which reset to 0 on every pod restart (the scheduler state was deliberately not loaded from checkpoints). This meant the LR oscillated unpredictably between 0.001 and 0.000027 depending on restart history. Replaced with `_get_lr_for_iteration()` — a simple function that computes LR from the absolute iteration number, making it deterministic regardless of restarts. Updated Mandala milestones from [50, 150, 300] to [200, 500, 800] to give the model recovery headroom (LR = 9e-5 at iter 680 instead of 2.7e-5).
 
 **3. Eval daemons CPU→GPU.** Both eval daemons were running `--device cpu --mcts-sims 100` while 47 GiB VRAM sat idle. Switched to `--device cuda --mcts-sims 200` in `start_training.sh`. Mandala had only 41/674 models evaluated; LC had 7/514. GPU eval should catch up within hours instead of days.
+
+---
+
+## #36 — Fix Field Cards: Discard Instead of Deck
+**Feb 18, 2026**
+
+After a mandala is completed and all mountain colors are claimed, field cards were incorrectly returned to the bottom of the draw deck. Per the official Lookout Games rulebook: "place all of the cards in both of the Mandala's Fields in the discard pile." This bug existed in both the Python engine (`engine.py:_finish_claiming()`) and the C++ engine (`mandala_game.cpp:finish_claiming()`).
+
+**Impact:** Field cards recycling into the deck instead of the discard pile subtly distorts game dynamics — the deck stays larger than it should, games run longer, and the discard-to-deck reshuffle trigger occurs less frequently. The AI was trained on slightly wrong card flow. Fix is a one-line change in each engine: `state.discard.extend(field_cards)` instead of `state.deck = field_cards + state.deck`.
+
+---
+
+## #37 — Nuclear Timeout: Break LC Degenerate Equilibrium (Third Attempt)
+**Feb 18, 2026**
+
+Lost Cities degenerate equilibrium returned for the third time at iter 644. All 200 recent games: exactly 60 moves, P1 wins 75%, value loss 0.04 (memorization). Both players discard and draw from discard piles, recycling cards so the deck never depletes. The timeout penalty from DEVLOG #28 (+0.3 winner / -0.5 loser / -0.2 draw) and entropy regularization from DEVLOG #30 (0.05 weight) weren't enough — winning a stall-fest still pays +0.3.
+
+**Fix: Nuclear timeout.** Changed `get_reward()` so timeout gives **-1.0 to BOTH players** regardless of score. Mutual stalling is now the worst possible outcome. Players must draw from the deck (depleting it, ending the game normally) to access the ±0.8-1.0 reward range. This breaks the Nash equilibrium: deviating from "always recycle" is now strictly better.
+
+**Fresh start:** Deleted all LC checkpoints, replays, and Elo ratings. 644 iterations of degenerate weights are unrecoverable. Kept entropy_weight=0.05 and cranked exploration params (Dirichlet alpha=0.3, epsilon=0.35, c_puct=1.5, temp_threshold=30).
+
+---
+
+## #38 — End-of-Iteration Game Quality Monitor
+**Feb 18, 2026**
+
+Added automated game quality assessment to catch degenerate equilibria early instead of discovering them 600 iterations too late. Three components:
+
+**C++ `get_game_summary()`:** New method on `BatchedMCTS` extracts behavioral stats from finished games via `dynamic_cast`. Mandala: mountain/field/discard play counts per player per color, scores. Lost Cities: expedition plays, color discards, discard-pile draws, active expedition counts, scores.
+
+**Python `_log_game_quality()`:** Called after each self-play batch. Computes universal metrics (avg game length, std dev, P0 win rate, draw rate, avg score) plus game-specific assessments. LC tracks expeditions/player and play rate (expedition plays / total plays). Mandala tracks mountain/field/discard action percentages. Prints qualitative warnings: "DEGENERATE" for <0.5 expeditions, "ALL GAMES ~60 MOVES" for zero length variance, play rate alerts. All metrics written to Tensorboard and `losses.jsonl`.
+
+**Dashboard charts:** Four new Chart.js canvases on `index.html` — game length per game (with ±1 std dev band and P0 win rate overlay) and play quality per game (Mandala: mountain/field/discard breakdown; LC: play rate + avg expeditions dual axis). Auto-refreshes every 30s alongside existing charts.
+
+---
+
+## #39 — Fix LC Timeout: Draw Instead of Nuclear (Fourth Attempt)
+**Feb 19, 2026**
+
+The nuclear timeout from DEVLOG #37 (-1.0 for both players) was **fundamentally incompatible with zero-sum AlphaZero training**. In a zero-sum framework, `get_reward()` returns from the current player's perspective, and the opponent's value target is the negation. So -1.0 from P0's perspective becomes +1.0 for P1. The "both players lose" intent is impossible — one side always "wins."
+
+After 200 iterations of fresh training: all 100 recent games exactly 60 moves, P1 wins 100%, value loss ≈ 0. The network learned "P1 always wins timeout" (correct, given the reward) and had zero incentive to avoid it.
+
+**Fix: timeout returns 0.0 (draw).** Both players get neutral reward (0.0 from both perspectives). Natural game endings give ±0.8-1.0, making them strictly preferable to timing out. The value head now has signal: positions leading to natural wins are worth more than positions leading to draws/timeouts. This is the only timeout reward that works in a zero-sum framework without creating perverse incentives.
+
+**Fresh start again.** Deleted all LC checkpoints, replays, Elo, and losses from the 200 degenerate iterations.
+
+---
+
+## #40 — Break Degenerate Self-Play: Bot Seeding + KataGo Improvements
+**Feb 19, 2026**
+
+After 100+ iterations both games are stuck in degenerate self-play — Mandala has 80% discard rate (humans never discard), Lost Cities has 95%+ timeout/draw rate with value loss → 0. Four reward-shaping attempts failed for LC. Root cause: random initialization leads to degenerate attractors that no reward function can escape.
+
+**Fix: four complementary techniques implemented together.**
+
+1. **Buffer seeding (AlphaGo approach)**: Pre-fill replay buffer with strategy bot self-play. Both bots upgraded with expert heuristics — Mandala: river timing, hate-drafting, mountain blocking, discard suppression. Lost Cities: wager awareness, expedition profitability, score gap awareness. `seed_from_bots.py` generates 1500 bot-vs-bot games with MCTS (200 sims) as seed data. Bot data cycles out of circular buffer in ~15 iterations.
+
+2. **Auxiliary score head (KataGo)**: Third network output predicting normalized score margin (unbounded, no activation). Loss weight 0.5 alongside value loss. Gives richer signal than binary win/loss — a 1-point win now looks different from a 50-point blowout. Required C++ `get_score()` export, replay buffer 4-tuple support, trainer score loss integration.
+
+3. **Policy target pruning (KataGo)**: Zero out MCTS visit probabilities < 2%, renormalize. Removes noise from low-visit actions in the policy target.
+
+4. **Playout cap randomization (KataGo)**: 75% of games run at 200 sims (for diversity, data discarded), 25% at full sims (recorded for training). ~3x faster iterations with same training data quality.
+
+**Files changed**: 16 files across C++, Python model, training pipeline, and scripts. Fresh restart with seeding for both games.
+
+---
+
+## #41 — Fix LC Bot Draw Logic + Deterministic Seed Generation
+**Feb 19, 2026**
+
+LC seed data was all 60-move timeouts despite strategy bot upgrades. Root cause: two compounding issues.
+
+1. **Bot drew from discard pile too aggressively**. Old logic: deck draw +0.5, discard draw +1.5 when "worth drawing" (collecting OR have 2+ cards). In LC, the deck has 44 cards — if both players draw from deck, game ends naturally at turn 44. Each discard draw extends the game by one turn. With 12.4 discard draws/player, games always hit the 60-turn timeout. Fix: deck draw +3.0, discard draw only 0.0 for exceptional cases (actively collecting with wagers AND card value 8+), -10.0 otherwise.
+
+2. **Seed generation used stochastic play**. `seed_from_bots.py` had `temperature=1.0` and Dirichlet noise, which randomly selected discard draws despite the bot's preference for deck draws. Fix: `temperature=0.0`, no Dirichlet noise — seeds should show ideal play, not random exploration.
+
+Result: seed data went from 60.0 avg length (all timeouts, 0.0 reward) to 44.4 avg length (natural deck depletion with actual winners). After 3 training iterations, LC games showed 36% decisive outcomes (vs 0% before), discard draws halved to 8.4/player.
+
+---
+
+## #42 — Claude-Reasoned Seed Data + Anti-Degeneration Fixes
+**Feb 19-20, 2026**
+
+Mandala training collapsed to 84% discard rate — a degenerate equilibrium where both players throw away cards instead of building mountains or growing fields. The heuristic bot seed data (43% discard) was overwhelmed within ~10 iterations by degenerate self-play.
+
+**Root causes**: (1) No entropy regularization on Mandala (LC had `entropy_weight: 0.05` and avoided collapse). (2) Discard is always a "safe" valid action — with no exploration pressure, the policy collapsed to it. (3) Self-play generates 3,000+ examples/iteration that swamp any seed data.
+
+**Three-pronged fix:**
+
+1. **Claude-reasoned seed data**: 10 Claude Code sub-agents played 50 Mandala games + 120 LC games with genuine strategic reasoning (not heuristic bots). Each agent received full rules + strategy guide and deliberated on every move. Results: 3,297 Mandala examples (13.8% discard) and 5,283 LC examples. Far superior to heuristic bot seeds.
+
+2. **Degenerate game filter** (`max_discard_rate: 0.10`): Self-play games with >10% discard are rejected before entering the replay buffer. At 84% discard, ALL games get filtered — the buffer stays clean with only Claude seed data. As entropy regularization pushes the policy toward constructive play, games will gradually pass the filter.
+
+3. **Entropy regularization** (`entropy_weight: 0.05`): Added to Mandala config (was missing, LC already had it). Prevents policy from collapsing to a single dominant action.
+
+4. **Periodic seed re-injection** (`seed_reinject_frequency: 10`): Every 10 iterations, Claude seed data is re-added to the buffer so it never fully dilutes.
+
+**Files changed**: `configs/default.yaml` (3 new params), `mandala_rl/training/trainer.py` (filter + re-injection methods), `scripts/train.py` (config passthrough + set_seed_buffer call).
+
+## #43 — Fresh Start: Supervised Pre-Training on Claude Seed Data
+**Feb 19, 2026**
+
+Previous approach (seeding a running network with Claude data) failed — degenerate self-play immediately diluted the seed examples. Both networks were beyond repair (Mandala iter 107: 84% discard, LC iter 314: 19% play rate).
+
+**New approach**: AlphaGo-style supervised learning phase. Fresh random network → pre-train for 100 epochs on ONLY Claude seed data → then start self-play. The network enters self-play already knowing constructive play patterns.
+
+Added `--pretrain-epochs N` flag to `scripts/train.py`. When used with `--seed-buffer`, it runs N epochs of supervised training on the seed buffer before entering the self-play loop. Reuses existing `_train_network()` — no trainer changes needed.
+
+Also added LC quality filtering (`min_play_rate: 0.15` in `configs/lost_cities.yaml`): reject LC self-play games where expedition play rate is below 15%. Extends the existing Mandala discard filter to protect the LC buffer too.
+
+**Files changed**: `scripts/train.py` (pretrain flag + LC config passthrough), `mandala_rl/training/trainer.py` (LC filter in `_filter_degenerate_games`), `configs/lost_cities.yaml` (min_play_rate).
+
+## #44 — Belief Head + Determinization Fixes + Anti-Strategy-Fusion Overhaul
+**Feb 21, 2026**
+
+Comprehensive overhaul to fix the discard-heavy play problem, diagnosed as **strategy fusion** — PIMC-style MCTS averaging across too many possible opponent hands makes field plays look risky while discarding appears universally safe.
+
+**Three bug fixes** in C++ `randomize_hidden()`: (1) discard pile was being shuffled into unseen pool but it's face-up public info, (2) current player's own cups shuffled despite being known, (3) belief `known[]` didn't count discard or own cups, underestimating known cards and inflating uncertainty.
+
+**Belief Head** — 4th network output head: Conv2d(ch,32,1) → BN → ReLU → FC(32×64, 12) → Sigmoid. Predicts 12 binary labels: P(opp has ≥1 of color c in hand) for c=0..5 and P(opp has ≥1 of color c in cup) for c=0..5. Ground-truth labels extracted from full game state before canonical conversion. Loss: BCE, weight 0.5. Forces the network to learn opponent modeling explicitly.
+
+**25 new tensor channels** (96→121): discard pile color counts, opponent cup colors, global visible card counts, dead-color flags (all 18 accounted for), game progress scalar.
+
+**Color permutation augmentation**: 50% of training batches get a random permutation of [0..5] applied to all 19 color-indexed channel groups + policy action indices + belief labels. Free 720x effective data multiplier.
+
+**Policy weight schedule**: 3.0 → 1.0 linear decay over first 256 iterations. Strong initial policy imitation from seed data, decaying to balanced multi-head loss.
+
+**Temperature threshold**: 30 → 12. Previous value meant 75% of a short Mandala game was played with T=1.0 random exploration — now only ~30%.
+
+**Total loss**: `L = policy_weight × policy_loss + value_loss + 0.5 × score_loss + 0.5 × belief_loss - 0.05 × entropy`
+
+**Files changed**: `cpp/mandala_game.h` (121 channels), `cpp/mandala_game.cpp` (bug fixes + new channels), `cpp/batched_mcts.h` + `cpp/batched_mcts.cpp` (belief labels), `mandala_rl/network/model.py` (belief head + loss), `mandala_rl/game/state.py` (121-ch Python tensor), `mandala_rl/selfplay/worker.py` (7-tuple from C++, 5-tuple output), `mandala_rl/training/replay_buffer.py` (5-tuples + augmentation), `mandala_rl/training/trainer.py` (policy weight schedule + belief loss + augmentation), `configs/default.yaml`, `scripts/regenerate_seeds.py` (NEW), all play/eval scripts (4-tuple unpacking).
+
+---
+
+## #45 — Vectorized Augmentation + Policy Weight Config Fix
+**Feb 21, 2026**
+
+Two critical fixes found during the #44 deployment:
+
+**Vectorized color augmentation**: The per-example Python loop in `augment_color_permutation()` was the #1 training bottleneck — 100% CPU, 16% GPU utilization. Rewrote as `augment_color_permutation_batch()` using numpy fancy indexing: build channel/policy/belief index maps once, then apply to entire batch via `states[:, channel_map]`. Same permutation per batch (720 possibilities across thousands of batches = sufficient diversity). Pre-training dropped from ~75 min to ~20 min.
+
+**Policy weight config passthrough bug**: `config['training']['policy_weight']` was never extracted into the flat `training_config` dict passed to the Trainer, so `self.config.get('policy_weight', 1.0)` always returned the default 1.0. The entire 3.0→1.0 decay schedule was silently disabled. Fixed by adding `'policy_weight': config['training'].get('policy_weight', 1.0)` to train.py's config extraction.
+
+**Initial results**: Discard rate immediately dropped to 38-43% (from ~80% baseline). Field play rose to 34-37%. The combination of belief head, determinization fixes, expert seed pre-training, and correct policy weighting appears to have broken the discard equilibrium.
+
+---
+
+## #46 — Kill Voluntary Discard: Action Mask + c_puct Fix
+**Feb 21, 2026**
+
+Root cause analysis revealed MCTS was tripling the discard rate: raw network policy had 14.6% discard (matching seed data), but 1600 MCTS sims boosted it to 40-46% via strategy fusion. Two fixes:
+
+**Remove discard from action mask** when any mountain or field play exists (`cpp/mandala_game.cpp`, `mandala_rl/game/engine.py`). In Mandala, voluntary discard is pure tempo waste — expert play always finds a constructive use for cards. Discard is now only offered as a legal action when no BUILD_MOUNTAIN or GROW_FIELD is available.
+
+**Lower c_puct from 1.0 to 0.5** (`configs/default.yaml`). Pre-trained policy was good (14% discard) but MCTS exploration was overriding it. Lower c_puct makes search trust the prior more.
+
+**Result**: Mountain 21→32%, field 33→48%, discard 46→21%. The remaining 21% is forced discards from game mechanics (positions where all hand colors are already in both mandalas' mountains). Voluntary discard rate is now 0%.
+
+---
+
+## #47 — Fix Rule of Color: Allow Mountain Stacking
+**Feb 21, 2026**
+
+`can_play_to_mountain` incorrectly blocked playing a card if that color was already present in the mountain. Per the official Mandala rules: "you may always play into a specific area additional cards of a color that is already present there." The Rule of Color only prevents a color from crossing zones — you can't play to mountain if the color is in either field, and you can't play to your field if it's in the mountain or opponent's field. But stacking more of the same color within the same zone is always legal.
+
+Fixed in both C++ (`cpp/mandala_game.cpp`) and Python (`mandala_rl/game/engine.py`) engines. Removed the mountain self-check from `can_play_to_mountain`, keeping both field checks. This dramatically expands valid BUILD_MOUNTAIN moves — colors already in the mountain are now playable targets instead of dead cards, which should significantly reduce forced discards (previously ~15/game, ~25% of all moves).
+
+---
+
+## #48 — Optional Discard with Variable Count
+**Feb 21, 2026**
+
+Two rule corrections to discard mechanics, per official Mandala rules:
+
+**1. Discard is always available**, not just when forced. Players can strategically discard to cycle bad cards. Previously discard was only legal when no constructive play existed.
+
+**2. Variable discard count**: players choose how many cards of one color to discard (1 to N), drawing that many replacements. Previously discarded ALL copies of a color. Action space expanded from 108 → 150: DISCARD now encodes `96 + color*8 + (count-1)` (48 actions), CLAIM_COLOR shifted to `144 + color`.
+
+Changes across the entire codebase: C++ engine (mandala_game.h/cpp), Python engine (engine.py), color augmentation (replay_buffer.py), config (default.yaml), benchmark bot, eval daemon, all scripts with action decoding. Checkpoint migration automatically expands the policy head from 108 → 150 outputs, remapping old DISCARD weights to all count variants and CLAIM weights to the new offset (144-149).
+
+---
+
+## #49 — Revert Optional Discard + Field-Advantage Channels + Rollback
+**Feb 21, 2026**
+
+Optional variable-count discard (#48) caused a discard spiral. The network discovered discarding is zero-cost (discard N, draw N, hand stays same size) and exploited it. From iter 210→227: discard rate 10%→43%, avg score 36.8→13.2, draw rate 0%→23%. Game replays showed indiscriminate color cycling — not strategic discard. Both players adopted the same degenerate strategy, creating a Nash equilibrium where win rate stays ~50/50 and the value head gets no gradient signal to correct the policy.
+
+**Three fixes:**
+
+**1. Revert discard to forced-only.** Kept the 150-action space (no checkpoint migration needed) but discard actions only offered when no BUILD_MOUNTAIN or GROW_FIELD plays exist. Voluntary discard rate → 0%.
+
+**2. Field-advantage tensor channels** (121→123). Added Ch 121/122: `my_field_total - opp_field_total` for each mandala, raw count. The tensor had per-color field data but no explicit field advantage signal. Field majority determines first pick from mountain during CLAIM — arguably the core strategic mechanic. Input channel migration zero-pads the new conv_input weights.
+
+**3. Rollback to iter 210.** Deleted degenerate checkpoints (iter 213-227). Iter 210 was the last healthy iteration (57% mountain, 10% discard, 36.8 avg score). The poisoned replay buffer (~50% of 200K capacity) made self-correction impossible.
+
+**First results post-rollback:** Iter 211: 0% discard, 65% mountain, 35% field, 41.2 avg score — excellent recovery. Training continues from here with forced-only discard. Optional discard will be re-introduced later once the network has learned the core mountain→field→claim loop.

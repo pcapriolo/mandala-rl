@@ -32,27 +32,34 @@ COLOR_SHORT = ['R', 'G', 'P', 'O', 'Y', 'W']
 
 def action_to_string(action):
     """Convert action ID to short string for experienced players."""
-    if action < 0 or action >= 30:
+    if action < 0 or action >= 150:
         return f"Invalid: {action}"
     if action < 12:
         color_idx = action % 6
         mandala_idx = action // 6
-        return f"{COLOR_SHORT[color_idx]} → Mt{mandala_idx}"
-    elif action < 24:
-        action_offset = action - 12
-        color_idx = action_offset % 6
-        mandala_idx = action_offset // 6
-        return f"{COLOR_SHORT[color_idx]} → Fd{mandala_idx}"
+        return f"{COLOR_SHORT[color_idx]} → Mt{mandala_idx + 1}"
+    elif action < 96:
+        a = action - 12
+        mandala_idx = a // 42
+        r = a % 42
+        color_idx = r // 7
+        count = r % 7 + 1
+        return f"{count}x {COLOR_SHORT[color_idx]} → Fd{mandala_idx + 1}"
+    elif action < 144:
+        a = action - 96
+        color_idx = a // 8
+        count = a % 8 + 1
+        return f"Discard {count}x {COLOR_SHORT[color_idx]}"
     else:
-        color_idx = action - 24
-        return f"Discard {COLOR_SHORT[color_idx]}"
+        color_idx = action - 144
+        return f"Claim {COLOR_SHORT[color_idx]}"
 
 
 class MandalaModelServer:
     """Shared model + MCTS. Loaded once, used by all game sessions."""
 
-    def __init__(self, checkpoint_path, config_path, mcts_simulations=400):
-        self.checkpoint_path = str(checkpoint_path)
+    def __init__(self, checkpoint_path, config_path, mcts_simulations=400, strategy_bot=False):
+        self.checkpoint_path = str(checkpoint_path) if checkpoint_path else 'strategy_bot'
         self.mcts_simulations = mcts_simulations
         self.engine = MandalaGame()
 
@@ -67,26 +74,33 @@ class MandalaModelServer:
             self.device = torch.device('cpu')
         print(f"[Mandala] Using device: {self.device}")
 
-        print(f"[Mandala] Loading model from {checkpoint_path}...")
-        self.model = MandalaNet(
-            input_channels=self.config['network'].get('input_channels', 50),
-            num_actions=self.config['network'].get('num_actions', 256),
-            num_res_blocks=self.config['network']['num_res_blocks'],
-            channels=self.config['network']['channels']
-        ).to(self.device)
+        if strategy_bot:
+            from mandala_rl.evaluation.benchmark_bots import MandalaStrategyBot
+            self.model = MandalaStrategyBot()
+            self.iteration = 'bot'
+            self.total_games = 0
+            print("[Mandala] Using strategy bot")
+        else:
+            print(f"[Mandala] Loading model from {checkpoint_path}...")
+            self.model = MandalaNet(
+                input_channels=self.config['network'].get('input_channels', 50),
+                num_actions=self.config['network'].get('num_actions', 256),
+                num_res_blocks=self.config['network']['num_res_blocks'],
+                channels=self.config['network']['channels']
+            ).to(self.device)
 
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.model.eval()
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.eval()
 
-        self.iteration = checkpoint.get('iteration', 'unknown')
-        self.total_games = checkpoint.get('total_games', 'unknown')
-        print(f"[Mandala] Model loaded: iteration {self.iteration}, {self.total_games} games")
+            self.iteration = checkpoint.get('iteration', 'unknown')
+            self.total_games = checkpoint.get('total_games', 'unknown')
+            print(f"[Mandala] Model loaded: iteration {self.iteration}, {self.total_games} games")
 
         def network_fn(state):
             state_tensor = torch.from_numpy(state.to_tensor()).unsqueeze(0).to(self.device)
             with torch.no_grad():
-                policy_logits, value = self.model(state_tensor)
+                policy_logits, value, *_ = self.model(state_tensor)
                 policy = torch.softmax(policy_logits, dim=1).cpu().numpy()[0]
                 value = value.item()
             return policy, value
@@ -107,7 +121,7 @@ class MandalaModelServer:
         canonical = state.get_canonical_form()
         state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            raw_logits, val = self.model(state_tensor)
+            raw_logits, val, *_ = self.model(state_tensor)
             value = val.item()
             raw_policy = torch.softmax(raw_logits, dim=1).cpu().numpy()[0]
 
@@ -154,6 +168,7 @@ class MandalaGameSession:
     def __init__(self, server, human_player=0):
         self.server = server
         self.state = server.engine.get_initial_state()
+        self.initial_state = self.state.copy()  # For replay/conversion
         self.human_player = human_player
         self.move_count = 0
         self.game_history = []
@@ -207,6 +222,23 @@ class MandalaGameSession:
         def cards_to_colors(cards):
             return [card.color for card in cards]
 
+        is_terminal = self.server.engine.is_terminal(self.state)
+
+        # At game end, reveal all cup cards for both players
+        if is_terminal:
+            cups = {
+                'player0': {'hidden': 0, 'visible': cards_to_colors(self.state.cups[0])},
+                'player1': {'hidden': 0, 'visible': cards_to_colors(self.state.cups[1])}
+            }
+        else:
+            opponent = 1 - self.human_player
+            cups = {}
+            for p in range(2):
+                if p == self.human_player:
+                    cups[f'player{p}'] = {'hidden': 0, 'visible': cards_to_colors(self.state.cups[p])}
+                else:
+                    cups[f'player{p}'] = {'hidden': 2, 'visible': cards_to_colors(self.state.cups[p][2:])}
+
         return {
             'hands': {
                 'player0': cards_to_colors(self.state.hands[0]),
@@ -216,10 +248,7 @@ class MandalaGameSession:
                 'player0': cards_to_colors(self.state.rivers[0]),
                 'player1': cards_to_colors(self.state.rivers[1])
             },
-            'cups': {
-                'player0': len(self.state.cups[0]),
-                'player1': len(self.state.cups[1])
-            },
+            'cups': cups,
             'mandalas': [
                 {
                     'mountain': cards_to_colors(self.state.mountains[0]),
@@ -236,7 +265,8 @@ class MandalaGameSession:
             ],
             'deck_size': len(self.state.deck),
             'discard_size': len(self.state.discard),
-            'deck_reshuffled': self.state.deck_reshuffled
+            'deck_reshuffled': self.state.deck_reshuffled,
+            'game_ends_next_mandala': self.state.game_ends_next_mandala
         }
 
     def make_move(self, action, think_time_ms=None, ai_data=None):
@@ -315,6 +345,12 @@ class MandalaGameSession:
         with open(filepath, 'w') as f:
             json.dump(game_data, f, indent=2)
 
+        # Save initial state for replay/conversion to training data
+        import pickle
+        state_path = filepath.with_suffix('.state.pkl')
+        with open(state_path, 'wb') as f:
+            pickle.dump(self.initial_state, f)
+
         self.last_save_filepath = str(filepath)
 
         return {
@@ -325,10 +361,11 @@ class MandalaGameSession:
 
 
 def create_mandala_blueprint(checkpoint_path, config_path, simulations=400,
-                              base_url='', checkpoint_dir='data/checkpoints'):
+                              base_url='', checkpoint_dir='data/checkpoints',
+                              strategy_bot=False):
     """Create Flask Blueprint for Mandala game with session-based game management."""
     bp = Blueprint('mandala', __name__, template_folder=str(template_dir))
-    server = MandalaModelServer(checkpoint_path, config_path, simulations)
+    server = MandalaModelServer(checkpoint_path, config_path, simulations, strategy_bot=strategy_bot)
     sessions = {}
 
     def get_session(game_id):
@@ -416,6 +453,8 @@ def create_mandala_blueprint(checkpoint_path, config_path, simulations=400,
             'action': ai_decision['action'],
             'description': ai_decision['description'],
             'top_moves': ai_decision['top_moves'],
+            'network_top': ai_decision['network_top'],
+            'value': ai_decision['value'],
         }
         result['game_id'] = game_id
         return jsonify(result)
@@ -539,12 +578,16 @@ def main():
                         help='Port to run web server (default: 5001)')
     parser.add_argument('--host', type=str, default='127.0.0.1',
                         help='Host to bind to (default: 127.0.0.1)')
+    parser.add_argument('--strategy-bot', action='store_true',
+                        help='Use strategy bot instead of neural network')
     args = parser.parse_args()
 
-    if args.checkpoint is None:
+    if args.strategy_bot:
+        checkpoint_path = None
+    elif args.checkpoint is None:
         checkpoint_path = find_latest_checkpoint("data/checkpoints")
         if not checkpoint_path:
-            print("No checkpoints found. Please train a model first.")
+            print("No checkpoints found. Please train a model first or use --strategy-bot.")
             return
         print(f"Using latest checkpoint: {checkpoint_path}")
     else:
@@ -554,20 +597,32 @@ def main():
             return
 
     app = Flask(__name__, template_folder=str(template_dir))
-    bp, server = create_mandala_blueprint(
-        checkpoint_path=checkpoint_path,
-        config_path=args.config,
-        simulations=args.simulations,
-        base_url='',
-        checkpoint_dir='data/checkpoints'
-    )
+
+    if args.strategy_bot:
+        bp, server = create_mandala_blueprint(
+            checkpoint_path=None,
+            config_path=args.config,
+            simulations=args.simulations,
+            base_url='',
+            checkpoint_dir='data/checkpoints',
+            strategy_bot=True
+        )
+    else:
+        bp, server = create_mandala_blueprint(
+            checkpoint_path=checkpoint_path,
+            config_path=args.config,
+            simulations=args.simulations,
+            base_url='',
+            checkpoint_dir='data/checkpoints'
+        )
     app.register_blueprint(bp)
 
+    model_info = "Strategy Bot" if args.strategy_bot else f"Iteration {server.iteration}, {server.total_games} games"
     print(f"\n{'='*60}")
     print(f"MANDALA WEB PLAYER")
     print(f"{'='*60}")
     print(f"\nStarting web server on http://{args.host}:{args.port}")
-    print(f"Model: Iteration {server.iteration}, {server.total_games} games")
+    print(f"Model: {model_info}")
     print(f"\nOpen your browser: http://localhost:{args.port}")
     print(f"Press Ctrl+C to stop\n")
 

@@ -2,15 +2,15 @@
 
 # Network Architecture
 network:
-  input_channels: 83
-  num_actions: 30  # 12 BUILD_MOUNTAIN + 12 GROW_FIELD + 6 DISCARD
+  input_channels: 123
+  num_actions: 150  # 12 BUILD_MOUNTAIN + 84 GROW_FIELD + 48 DISCARD + 6 CLAIM_COLOR
   num_res_blocks: 8
   channels: 96
 
 # MCTS Parameters
 mcts:
   num_simulations: 1600
-  c_puct: 1.0
+  c_puct: 0.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
 
@@ -20,7 +20,7 @@ selfplay:
   parallel_games: 32  # Simultaneous games for batched NN inference
   leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
-  temperature_threshold: 30  # Switch to deterministic play after this move
+  temperature_threshold: 12  # Switch to deterministic play after move 12 (~6 moves/player exploring)
 
 # Training Parameters
 training:
@@ -31,9 +31,13 @@ training:
   weight_decay: 0.0001
   lr_milestones: [200, 500, 800]
   lr_gamma: 0.3
-  replay_buffer_size: 500000
+  replay_buffer_size: 200000  # Large enough for 155K seed data + self-play examples
   checkpoint_frequency: 1  # Save checkpoint every N iterations
   checkpoint_every_n_games: 10  # Save checkpoint every N games within iteration (for resume)
+  entropy_weight: 0.05  # Entropy regularization to prevent policy collapse (discard degeneration)
+  policy_weight: 3.0  # Policy loss weight — decays linearly to 1.0 over 256 iterations
+  max_discard_rate: 0  # Disabled — let value head learn from game outcomes instead of filtering
+  seed_reinject_frequency: 0  # Disabled — seed buffer was built with wrong rules (no mountain stacking)
 
 # Evaluation Parameters
 evaluation:

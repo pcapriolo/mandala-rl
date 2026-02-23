@@ -26,6 +26,7 @@ PYBIND11_MODULE(mcts_cpp, m) {
         .def("apply_nn_results", &BatchedMCTS::apply_nn_results)
         .def("finish_move", &BatchedMCTS::finish_move)
         .def("get_game_data", &BatchedMCTS::get_game_data)
+        .def("get_game_summary", &BatchedMCTS::get_game_summary)
         .def("all_done", &BatchedMCTS::all_done)
         .def("active_count", &BatchedMCTS::active_count)
         .def("get_active_players", &BatchedMCTS::get_active_players)

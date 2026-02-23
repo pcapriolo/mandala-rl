@@ -31,10 +31,11 @@ training:
   weight_decay: 0.0001
   lr_milestones: [150, 400, 800]  # Extended from [50, 150, 300] — more budget at high LR
   lr_gamma: 0.3
-  replay_buffer_size: 50000  # Reduced from 100000 — fresher data, less stale targets
+  replay_buffer_size: 100000  # 100K — buffer no longer saved in checkpoint, rebuilds from self-play
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
   entropy_weight: 0.05  # Entropy regularization to prevent policy collapse (bumped from 0.02)
+  min_play_rate: 0.15  # Reject LC games with expedition play rate below this
 
 # Evaluation Parameters
 evaluation:

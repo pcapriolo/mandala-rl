@@ -66,6 +66,12 @@ class GameState:
         self.deck_reshuffled: bool = False  # Track if we've reshuffled once
         self.game_ends_next_mandala: bool = False  # Game ends after next Mandala completion
 
+        # CLAIM phase (interactive mountain distribution)
+        self.phase: int = 0  # 0 = PLAY, 1 = CLAIM
+        self.claiming_mandala: int = -1  # Which mandala is being distributed (-1 = none)
+        self.claiming_colors_available: List[int] = []  # Colors remaining to be claimed
+        self.triggering_player: int = -1  # Player who completed the mandala
+
     def _create_deck(self) -> List[Card]:
         """Create a standard Mandala deck: 18 cards per color."""
         return [Card(color) for color in range(6) for _ in range(18)]
@@ -87,6 +93,11 @@ class GameState:
         new_state.game_over = self.game_over
         new_state.deck_reshuffled = self.deck_reshuffled
         new_state.game_ends_next_mandala = self.game_ends_next_mandala
+
+        new_state.phase = self.phase
+        new_state.claiming_mandala = self.claiming_mandala
+        new_state.claiming_colors_available = self.claiming_colors_available.copy()
+        new_state.triggering_player = self.triggering_player
 
         return new_state
 
@@ -114,27 +125,37 @@ class GameState:
 
         State is assumed to be in canonical form (current player = index 0).
 
-        Encoding (83 planes × 8×8, values broadcast across spatial dims):
-          Ch 0-5:   My hand card counts per color (/18)
-          Ch 6-11:  Mountain 0 card counts per color (/18)
-          Ch 12-17: Mountain 1 card counts per color (/18)
-          Ch 18-23: My Field Mandala 0 counts per color (/18)
-          Ch 24-29: My Field Mandala 1 counts per color (/18)
-          Ch 30-35: Opp Field Mandala 0 counts per color (/18)
-          Ch 36-41: Opp Field Mandala 1 counts per color (/18)
-          Ch 42-47: My River value per color ((position+1)/6, 0 if absent)
-          Ch 48-53: Opp River value per color ((position+1)/6, 0 if absent)
-          Ch 54:    My cup size / 20
-          Ch 55:    Opp cup size / 20
-          Ch 56:    Opponent hand size / 8
-          Ch 57:    Deck size / 108
-          Ch 58:    Game ends next mandala flag (0 or 1)
-          Ch 59-64: Belief channels — P(opp has ≥1 of color c)
-          Ch 65-70: Opp mountain play frequency per color
-          Ch 71-76: Opp field play frequency per color
-          Ch 77-82: Opp discard frequency per color
+        Encoding (123 planes × 8×8, values broadcast across spatial dims):
+          Ch 0-5:     My hand card counts per color (/18)
+          Ch 6-11:    Mountain 0 card counts per color (/18)
+          Ch 12-17:   Mountain 1 card counts per color (/18)
+          Ch 18-23:   My Field Mandala 0 counts per color (/18)
+          Ch 24-29:   My Field Mandala 1 counts per color (/18)
+          Ch 30-35:   Opp Field Mandala 0 counts per color (/18)
+          Ch 36-41:   Opp Field Mandala 1 counts per color (/18)
+          Ch 42-47:   My River value per color ((position+1)/6, 0 if absent)
+          Ch 48-53:   Opp River value per color ((position+1)/6, 0 if absent)
+          Ch 54:      My cup size / 20
+          Ch 55:      Opp cup size / 20
+          Ch 56:      Opponent hand size / 8
+          Ch 57:      Deck size / 108
+          Ch 58:      Game ends next mandala flag (0 or 1)
+          Ch 59-64:   Belief channels — P(opp has ≥1 of color c)
+          Ch 65-70:   Opp mountain play frequency per color
+          Ch 71-76:   Opp field play frequency per color
+          Ch 77-82:   Opp discard frequency per color
+          Ch 83:      Phase flag (1.0 = CLAIM, 0.0 = PLAY)
+          Ch 84-89:   Claiming colors available (1.0 if available)
+          Ch 90-95:   My cup color counts per color (/18)
+          Ch 96-101:  Discard pile color counts (/18)
+          Ch 102-107: Opp cup color counts (/18)
+          Ch 108-113: Global visible card count per color (/18)
+          Ch 114-119: Dead-color binary flags (1.0 if all 18 accounted for)
+          Ch 120:     Game progress = (total river cards) / 12.0
+          Ch 121:     Field advantage Mandala 0 (my - opp), raw count
+          Ch 122:     Field advantage Mandala 1 (my - opp), raw count
         """
-        tensor = np.zeros((83, 8, 8), dtype=np.float32)
+        tensor = np.zeros((123, 8, 8), dtype=np.float32)
 
         CARDS_PER_COLOR = 18
 
@@ -178,7 +199,7 @@ class GameState:
         tensor[58] = 1.0 if self.game_ends_next_mandala else 0.0
 
         # Ch 59-64: Belief channels — P(opp has ≥1 of color c)
-        # Count all known cards per color
+        # Count all known cards per color (including discard + own cups)
         known = np.zeros(6, dtype=np.int32)
         for card in self.hands[0]:
             known[card.color] += 1
@@ -192,6 +213,10 @@ class GameState:
         for card in self.rivers[0]:
             known[card.color] += 1
         for card in self.rivers[1]:
+            known[card.color] += 1
+        for card in self.discard:
+            known[card.color] += 1
+        for card in self.cups[0]:
             known[card.color] += 1
 
         remaining = np.maximum(CARDS_PER_COLOR - known, 0)
@@ -213,9 +238,48 @@ class GameState:
 
         # Ch 65-82: Behavioral inference (opp play frequency per color)
         # These require move-history tracking not available in the Python game state.
-        # Default to 0.0 — the model was trained with these but they're only
-        # informative after many moves. Zero is a safe neutral value.
+        # Default to 0.0 — only informative after many moves. Zero is safe neutral.
         # (Ch 65-70: mountain plays, Ch 71-76: field plays, Ch 77-82: discards)
+
+        # Ch 83: Phase flag
+        tensor[83] = 1.0 if self.phase == 1 else 0.0
+
+        # Ch 84-89: Claiming colors available
+        for c in self.claiming_colors_available:
+            tensor[84 + c] = 1.0
+
+        # Ch 90-95: My cup color counts
+        cup_counts = color_counts(self.cups[0])
+        for c in range(6):
+            tensor[90 + c] = cup_counts[c]
+
+        # Ch 96-101: Discard pile color counts
+        disc_counts = color_counts(self.discard)
+        for c in range(6):
+            tensor[96 + c] = disc_counts[c]
+
+        # Ch 102-107: Opponent cup color counts
+        opp_cup_counts = color_counts(self.cups[1])
+        for c in range(6):
+            tensor[102 + c] = opp_cup_counts[c]
+
+        # Ch 108-113: Global visible card count per color (uses known[] from belief)
+        for c in range(6):
+            tensor[108 + c] = known[c] / 18.0
+
+        # Ch 114-119: Dead-color binary flags (all 18 of color accounted for)
+        for c in range(6):
+            tensor[114 + c] = 1.0 if known[c] >= CARDS_PER_COLOR else 0.0
+
+        # Ch 120: Game progress
+        total_river = len(self.rivers[0]) + len(self.rivers[1])
+        tensor[120] = total_river / 12.0
+
+        # Ch 121: Field advantage Mandala 0 (my total - opp total), raw count
+        tensor[121] = len(self.fields[0][0]) - len(self.fields[0][1])
+
+        # Ch 122: Field advantage Mandala 1 (my total - opp total), raw count
+        tensor[122] = len(self.fields[1][0]) - len(self.fields[1][1])
 
         return tensor
 
@@ -238,6 +302,9 @@ class GameState:
             [state.fields[1][1], state.fields[1][0]]
         ]
 
+        # CLAIM phase fields are global (not player-relative) — no swap needed
+        # triggering_player is internal engine state, not in tensor
+
         state.current_player = 0
         return state
 
@@ -256,5 +323,8 @@ class GameState:
             tuple(c.color for c in self.discard),
             self.current_player,
             self.deck_reshuffled,
-            self.game_ends_next_mandala
+            self.game_ends_next_mandala,
+            self.phase,
+            self.claiming_mandala,
+            tuple(self.claiming_colors_available),
         ))

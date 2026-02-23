@@ -60,8 +60,12 @@
         .mandalas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .mandala { background: #16213e; border-radius: 8px; padding: 12px; border: 1px solid #333; }
         .mandala h3 { font-size: 0.95em; margin-bottom: 8px; color: #667eea; }
-        .mandala-section { margin-bottom: 6px; }
+        .mandala-section { margin-bottom: 6px; padding: 2px 4px; }
         .mandala-section .label { font-size: 0.7em; color: #888; }
+
+        /* Last played card highlight — bold glow */
+        @keyframes card-glow { 0%, 100% { box-shadow: 0 0 0 3px #667eea, 0 0 12px rgba(102, 126, 234, 0.7); } 50% { box-shadow: 0 0 0 3px #667eea, 0 0 20px rgba(102, 126, 234, 0.9); } }
+        .card.last-played { animation: card-glow 1.5s ease-in-out infinite; transform: scale(1.1); z-index: 1; position: relative; }
 
         /* Players grid */
         .players-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -86,14 +90,27 @@
         .status-bar.your-turn { color: #48bb78; }
         .status-bar.game-over { color: #e94560; font-weight: bold; }
 
+        /* Game warnings */
+        .game-warning { padding: 8px 16px; border-radius: 8px; text-align: center; font-weight: 600; font-size: 0.9em; display: none; }
+        .warning-reshuffle { background: #7f6b00; color: #f1c40f; border: 1px solid #f1c40f; }
+        .warning-endgame { background: #6b1a1a; color: #e94560; border: 1px solid #e94560; }
+
         /* Thinking animation */
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .thinking-dots { animation: pulse 1.5s ease-in-out infinite; }
         .think-timer { font-size: 0.8em; color: #888; margin-left: 8px; }
 
         /* AI decision */
-        .ai-decision { padding: 8px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; }
-        .ai-decision .move { color: #f1c40f; }
+        .ai-decision { padding: 10px 14px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; }
+        .ai-decision .move { color: #f1c40f; font-weight: 600; margin-bottom: 8px; }
+        .ai-candidates { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+        .ai-candidate { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
+        .ai-candidate.chosen { font-weight: 600; }
+        .ai-candidate .cand-label { min-width: 120px; white-space: nowrap; }
+        .ai-candidate .cand-bar-bg { flex: 1; height: 16px; background: #16213e; border-radius: 3px; overflow: hidden; min-width: 60px; }
+        .ai-candidate .cand-bar { height: 100%; background: #667eea; border-radius: 3px; transition: width 0.3s; }
+        .ai-candidate.chosen .cand-bar { background: #f1c40f; }
+        .ai-candidate .cand-pct { min-width: 45px; text-align: right; color: #aaa; font-size: 0.9em; }
 
         /* How to play tooltip */
         .help-btn { background: none; border: 1px solid #555; color: #888; padding: 4px 10px; border-radius: 4px;
@@ -180,9 +197,8 @@
             <p>&bull; A <strong>Mountain</strong> (shared center) &mdash; adds a new color to the mandala</p>
             <p>&bull; A <strong>Field</strong> (your side) &mdash; commits cards of a color already in the mountain</p>
             <p>&bull; <strong>Discard</strong> a card to draw a new one</p>
-            <p>When a mandala has all 6 colors in its mountain, it <strong>closes</strong>. The player with more field cards picks first &mdash; the first color goes to your <strong>River</strong> (scoring order), the rest to your <strong>Cup</strong> (points).</p>
-            <p>Colors in your River earlier are worth more points per card in your Cup.</p>
-            <p style="margin-top:8px; font-size:0.85em; color:#888;"><em>Note: This is an early version — rules may differ slightly from the published game.</em></p>
+            <p>When a mandala has all 6 colors, it <strong>closes</strong> and enters the <strong>Claim phase</strong>. The player with more field cards picks first, choosing one color at a time from the mountain. Players alternate picks until all colors are claimed.</p>
+            <p>The first card of each claimed color goes to your <strong>River</strong> (sets scoring order), the rest to your <strong>Cup</strong> (worth points). Colors earlier in your River are worth more points.</p>
         </div>
 
         <!-- Info bar -->
@@ -193,16 +209,20 @@
             <div class="info-item"><div class="value" id="humanRole">-</div><div class="label">You</div></div>
         </div>
 
+        <!-- Game warnings -->
+        <div class="game-warning warning-reshuffle" id="warningReshuffle">Deck reshuffled — next mandala completion ends the game</div>
+        <div class="game-warning warning-endgame" id="warningEndgame">Final phase — game ends when the next mandala completes</div>
+
         <!-- Mandalas -->
         <div class="mandalas">
             <div class="mandala" id="mandala0">
-                <h3>Mandala 0 (<span id="m0colors">0</span>/6)</h3>
+                <h3>Mandala 1 (<span id="m0colors">0</span>/6)</h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain0"></div></div>
                 <div class="mandala-section"><div class="label" id="field0_0_label">P0 Field</div><div class="cards-row" id="field0_0"></div></div>
                 <div class="mandala-section"><div class="label" id="field0_1_label">P1 Field</div><div class="cards-row" id="field0_1"></div></div>
             </div>
             <div class="mandala" id="mandala1">
-                <h3>Mandala 1 (<span id="m1colors">0</span>/6)</h3>
+                <h3>Mandala 2 (<span id="m1colors">0</span>/6)</h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain1"></div></div>
                 <div class="mandala-section"><div class="label" id="field1_0_label">P0 Field</div><div class="cards-row" id="field1_0"></div></div>
                 <div class="mandala-section"><div class="label" id="field1_1_label">P1 Field</div><div class="cards-row" id="field1_1"></div></div>
@@ -212,16 +232,16 @@
         <!-- Player areas -->
         <div class="players-grid">
             <div class="player-area" id="player0Area">
-                <div class="player-title">Player 0 <span class="player-tag" id="player0Tag"></span></div>
+                <div class="player-title">Player 1 <span class="player-tag" id="player0Tag"></span></div>
                 <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand0"></div></div>
                 <div class="player-section"><div class="label">River</div><div class="cards-row" id="river0"></div></div>
-                <div class="player-section"><div class="label">Cup: <span id="cup0">0</span></div></div>
+                <div class="player-section"><div class="label">Cup</div><div class="cards-row" id="cup0"></div></div>
             </div>
             <div class="player-area" id="player1Area">
-                <div class="player-title">Player 1 <span class="player-tag" id="player1Tag"></span></div>
+                <div class="player-title">Player 2 <span class="player-tag" id="player1Tag"></span></div>
                 <div class="player-section"><div class="label">Hand</div><div class="cards-row" id="hand1"></div></div>
                 <div class="player-section"><div class="label">River</div><div class="cards-row" id="river1"></div></div>
-                <div class="player-section"><div class="label">Cup: <span id="cup1">0</span></div></div>
+                <div class="player-section"><div class="label">Cup</div><div class="cards-row" id="cup1"></div></div>
             </div>
         </div>
 
@@ -230,7 +250,6 @@
 
         <!-- AI decision -->
         <div class="ai-decision" id="aiDecision" style="display:none"></div>
-        <div id="aiDecisionNote" style="display:none; font-size:0.7em; color:#888; margin-top:2px">Percentages show raw network policy (no MCTS search)</div>
 
         <!-- Moves -->
         <div class="moves-panel" id="movesPanel" style="display:none">
@@ -275,6 +294,8 @@
         let turnStartTime = null;
         let gameId = null;
         let thinkTimerInterval = null;
+        let lastAction = null;
+        let lastActionPlayer = null;
 
         function renderCard(colorIdx) {
             return `<div class="card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</div>`;
@@ -284,7 +305,11 @@
             return Array(count).fill('<div class="card card-hidden">?</div>').join('');
         }
 
-        function renderCards(colors) {
+        function renderCards(colors, groupByColor = true) {
+            if (groupByColor) {
+                const sorted = [...colors].sort((a, b) => a - b);
+                return sorted.map(c => renderCard(c)).join('');
+            }
             return colors.map(c => renderCard(c)).join('');
         }
 
@@ -306,8 +331,9 @@
             currentState = await resp.json();
             gameId = currentState.game_id;
             turnStartTime = null;
+            lastAction = null;
+            lastActionPlayer = null;
             document.getElementById('aiDecision').style.display = 'none';
-            document.getElementById('aiDecisionNote').style.display = 'none';
             renderGame();
             checkAiTurn();
         }
@@ -324,10 +350,17 @@
 
             // Info bar
             document.getElementById('moveCount').textContent = currentState.move_count;
+            const phaseLabel = s.phase === 1 ? ' (CLAIM)' : '';
             document.getElementById('currentPlayer').textContent =
-                currentState.current_player === hp ? 'You' : 'AI';
+                (currentState.current_player === hp ? 'You' : 'AI') + phaseLabel;
             document.getElementById('deckSize').textContent = s.deck_size;
-            document.getElementById('humanRole').textContent = `P${hp}`;
+            document.getElementById('humanRole').textContent = `P${hp + 1}`;
+
+            // Game warnings
+            document.getElementById('warningReshuffle').style.display =
+                (s.deck_reshuffled && !s.game_ends_next_mandala) ? 'block' : 'none';
+            document.getElementById('warningEndgame').style.display =
+                s.game_ends_next_mandala ? 'block' : 'none';
 
             // Player tags (You / AI)
             document.getElementById('player0Tag').textContent = hp === 0 ? 'YOU' : 'AI';
@@ -350,13 +383,18 @@
                 document.getElementById('hand1').innerHTML = renderCards(s.hands.player1);
             }
 
-            // Rivers
-            document.getElementById('river0').innerHTML = renderCards(s.rivers.player0);
-            document.getElementById('river1').innerHTML = renderCards(s.rivers.player1);
+            // Rivers — preserve order (position = scoring value)
+            document.getElementById('river0').innerHTML = renderCards(s.rivers.player0, false);
+            document.getElementById('river1').innerHTML = renderCards(s.rivers.player1, false);
 
-            // Cups
-            document.getElementById('cup0').textContent = s.cups.player0;
-            document.getElementById('cup1').textContent = s.cups.player1;
+            // Cups: 2 hidden starting cards + visible claimed cards
+            for (let p = 0; p < 2; p++) {
+                const cupEl = document.getElementById(`cup${p}`);
+                const cup = s.cups[`player${p}`];
+                let html = renderHiddenCards(cup.hidden);
+                if (cup.visible.length > 0) html += renderCards(cup.visible);
+                cupEl.innerHTML = html || '<span style="color:#555">empty</span>';
+            }
 
             // Mandalas
             for (let i = 0; i < 2; i++) {
@@ -365,6 +403,33 @@
                 document.getElementById(`field${i}_0`).innerHTML = renderCards(m.field_p0);
                 document.getElementById(`field${i}_1`).innerHTML = renderCards(m.field_p1);
                 document.getElementById(`m${i}colors`).textContent = m.colors;
+            }
+
+            // Last played card highlight
+            document.querySelectorAll('.card.last-played').forEach(el => el.classList.remove('last-played'));
+            if (lastAction !== null) {
+                let targetEl = null, colorIdx = -1, count = 0;
+                if (lastAction < 12) {
+                    colorIdx = lastAction % 6;
+                    targetEl = document.getElementById(`mountain${Math.floor(lastAction / 6)}`);
+                    count = 1;
+                } else if (lastAction < 96) {
+                    const off = lastAction - 12;
+                    const mIdx = Math.floor(off / 42);
+                    const r = off % 42;
+                    colorIdx = Math.floor(r / 7);
+                    count = r % 7 + 1;
+                    targetEl = document.getElementById(`field${mIdx}_${lastActionPlayer}`);
+                } else if (lastAction >= 144) {
+                    colorIdx = lastAction - 144;
+                    targetEl = document.getElementById(`river${lastActionPlayer}`);
+                    count = 1;
+                }
+                if (targetEl && colorIdx >= 0) {
+                    const cards = targetEl.querySelectorAll(`.color-${colorIdx}`);
+                    const start = Math.max(0, cards.length - count);
+                    for (let i = start; i < cards.length; i++) cards[i].classList.add('last-played');
+                }
             }
 
             // Active/human highlights
@@ -396,21 +461,30 @@
             const panel = document.getElementById('movesPanel');
             const list = document.getElementById('movesList');
 
-            // Group by type
-            const mountain = [], field = [], discard = [];
+            // Group by type: 0-11 mountain, 12-95 field, 96-143 discard, 144-149 claim
+            const mountain = [], field = [], discard = [], claim = [];
             moves.forEach(([action, desc]) => {
                 if (action < 12) mountain.push([action, desc]);
-                else if (action < 24) field.push([action, desc]);
-                else discard.push([action, desc]);
+                else if (action < 96) field.push([action, desc]);
+                else if (action < 144) discard.push([action, desc]);
+                else claim.push([action, desc]);
             });
 
             let html = '';
+            if (claim.length > 0) {
+                html += `<div class="moves-group"><div class="moves-group-label" style="color:#f1c40f">Claim a Color from the Mountain</div><div class="moves-list">`;
+                html += claim.map(([a, d]) => {
+                    const colorIdx = a - 144;
+                    return `<button class="move-btn" onclick="makeMove(${a})" style="border-color:#f1c40f"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Claim ${COLOR_NAMES[colorIdx]}</button>`;
+                }).join('');
+                html += `</div></div>`;
+            }
             if (mountain.length > 0) {
                 html += `<div class="moves-group"><div class="moves-group-label">Play to Mountain (add new color)</div><div class="moves-list">`;
                 html += mountain.map(([a, d]) => {
                     const colorIdx = a % 6;
                     const mIdx = Math.floor(a / 6);
-                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Mt${mIdx}</button>`;
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Mt${mIdx + 1}</button>`;
                 }).join('');
                 html += `</div></div>`;
             }
@@ -418,17 +492,20 @@
                 html += `<div class="moves-group"><div class="moves-group-label">Play to Field (your side)</div><div class="moves-list">`;
                 html += field.map(([a, d]) => {
                     const off = a - 12;
-                    const colorIdx = off % 6;
-                    const mIdx = Math.floor(off / 6);
-                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Fd${mIdx}</button>`;
+                    const mandala = Math.floor(off / 42);
+                    const r = off % 42;
+                    const colorIdx = Math.floor(r / 7);
+                    const count = r % 7 + 1;
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> ${count}x &rarr; Fd${mandala + 1}</button>`;
                 }).join('');
                 html += `</div></div>`;
             }
             if (discard.length > 0) {
                 html += `<div class="moves-group"><div class="moves-group-label">Discard (draw a new card)</div><div class="moves-list">`;
                 html += discard.map(([a, d]) => {
-                    const colorIdx = a - 24;
-                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Discard</button>`;
+                    const colorIdx = Math.floor((a - 96) / 8);
+                    const count = (a - 96) % 8 + 1;
+                    return `<button class="move-btn" onclick="makeMove(${a})"><span class="move-card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</span> Discard ${count}x</button>`;
                 }).join('');
                 html += `</div></div>`;
             }
@@ -438,6 +515,8 @@
         }
 
         async function makeMove(action) {
+            lastAction = action;
+            lastActionPlayer = currentState.current_player;
             const thinkTime = turnStartTime ? Date.now() - turnStartTime : null;
             turnStartTime = null;
 
@@ -491,15 +570,27 @@
                     currentState = await resp.json();
 
                     if (currentState.ai_decision) {
+                        lastAction = currentState.ai_decision.action;
+                        lastActionPlayer = 1 - currentState.human_player;
                         const dec = currentState.ai_decision;
                         const decEl = document.getElementById('aiDecision');
                         decEl.style.display = 'block';
-                        document.getElementById('aiDecisionNote').style.display = 'block';
-                        let html = `<span class="move">AI played: ${dec.description}</span>`;
-                        if (dec.top_moves && dec.top_moves.length > 1) {
-                            html += '<br><small>Considered: ' + dec.top_moves.map(m =>
-                                `${m.description} (${m.probability.toFixed(1)}%)`
-                            ).join(', ') + '</small>';
+                        const valPct = ((dec.value + 1) / 2 * 100).toFixed(0);
+                        let html = `<div class="move">AI played: ${dec.description} <span style="color:#888;font-weight:normal;font-size:0.85em">(eval: ${valPct}% win)</span></div>`;
+                        const moves = dec.network_top || dec.top_moves;
+                        if (moves && moves.length > 0) {
+                            const maxPct = Math.max(...moves.map(m => m.probability));
+                            html += '<div class="ai-candidates">';
+                            moves.forEach(m => {
+                                const isChosen = m.action === dec.action;
+                                const barWidth = maxPct > 0 ? (m.probability / maxPct * 100) : 0;
+                                html += `<div class="ai-candidate${isChosen ? ' chosen' : ''}">` +
+                                    `<span class="cand-label">${isChosen ? '\u25B6 ' : '  '}${m.description}</span>` +
+                                    `<span class="cand-bar-bg"><span class="cand-bar" style="width:${barWidth}%"></span></span>` +
+                                    `<span class="cand-pct">${m.probability.toFixed(1)}%</span>` +
+                                    `</div>`;
+                            });
+                            html += '</div>';
                         }
                         decEl.innerHTML = html;
                     }
@@ -525,7 +616,8 @@
                 bar.textContent = `Game Over! You: ${yourScore} - AI: ${aiScore}`;
                 bar.className = 'status-bar game-over';
             } else if (currentState.current_player === currentState.human_player) {
-                bar.textContent = 'Your turn — choose a move below';
+                const isClaim = currentState.state && currentState.state.phase === 1;
+                bar.textContent = isClaim ? 'Claim phase — pick a color from the mountain' : 'Your turn — choose a move below';
                 bar.className = 'status-bar your-turn';
             } else {
                 bar.innerHTML = '<span class="thinking-dots">AI is thinking...</span>';

@@ -60,6 +60,7 @@ public:
     std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const override;
     bool is_terminal(const GameState& state) const override;
     float get_reward(const GameState& state, int player) const override;
+    int get_score(const GameState& state, int player) const override;
     void randomize_hidden(GameState& state, std::mt19937& rng) const override;
 
 private:

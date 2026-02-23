@@ -34,9 +34,12 @@ void BatchedMCTS::init_games(int num_games) {
         games_[i].finished = false;
         games_[i].move_count = 0;
         games_[i].outcome = 0.0f;
+        games_[i].score_p0 = 0;
+        games_[i].score_p1 = 0;
         games_[i].recorded_tensors.clear();
         games_[i].recorded_policies.clear();
         games_[i].recorded_players.clear();
+        games_[i].recorded_belief_labels.clear();
         active_indices_.push_back(i);
     }
 }
@@ -245,13 +248,23 @@ std::vector<int> BatchedMCTS::finish_move() {
             }
         }
 
-        // Record training data: canonical state tensor, policy, player
+        // Record training data: canonical state tensor, policy, player, belief labels
         auto canonical = g.state->get_canonical();
         std::vector<float> tensor_data;
         canonical->to_tensor(tensor_data);
         g.recorded_tensors.push_back(tensor_data);
         g.recorded_policies.push_back(action_probs);
         g.recorded_players.push_back(g.state->current_player());
+
+        // Extract belief labels: ground-truth opponent hand + cup colors
+        // 12 floats: [0-5] = P(opp has color c in hand), [6-11] = P(opp has color c in cup)
+        std::vector<float> belief_labels(12, 0.0f);
+        if (auto* ms = dynamic_cast<MandalaState*>(g.state.get())) {
+            int opp = 1 - ms->current_player_;
+            for (int c : ms->hands[opp]) belief_labels[c] = 1.0f;
+            for (int c : ms->cups[opp]) belief_labels[6 + c] = 1.0f;
+        }
+        g.recorded_belief_labels.push_back(belief_labels);
 
         // Sample action
         std::discrete_distribution<int> dist(action_probs.begin(), action_probs.end());
@@ -265,6 +278,8 @@ std::vector<int> BatchedMCTS::finish_move() {
         // Check terminal
         if (game_->is_terminal(*g.state)) {
             g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
+            g.score_p0 = game_->get_score(*g.state, 0);
+            g.score_p1 = game_->get_score(*g.state, 1);
             g.finished = true;
             completed.push_back(idx);
         }
@@ -289,6 +304,7 @@ py::tuple BatchedMCTS::get_game_data(int game_idx) {
     py::list state_tensors;
     py::list policies;
     py::list players;
+    py::list belief_labels;
 
     for (int i = 0; i < n; i++) {
         state_tensors.append(tensor_to_numpy(g.recorded_tensors[i], channels));
@@ -302,9 +318,90 @@ py::tuple BatchedMCTS::get_game_data(int game_idx) {
         policies.append(pol);
 
         players.append(py::int_(g.recorded_players[i]));
+
+        // Belief labels: 12 floats (opp hand colors + opp cup colors)
+        if (i < static_cast<int>(g.recorded_belief_labels.size())) {
+            py::array_t<float> bl(12);
+            auto bl_buf = bl.mutable_unchecked<1>();
+            for (int j = 0; j < 12; j++) {
+                bl_buf(j) = g.recorded_belief_labels[i][j];
+            }
+            belief_labels.append(bl);
+        }
     }
 
-    return py::make_tuple(state_tensors, policies, players, g.outcome);
+    return py::make_tuple(state_tensors, policies, players, g.outcome,
+                          g.score_p0, g.score_p1, belief_labels);
+}
+
+py::dict BatchedMCTS::get_game_summary(int game_idx) {
+    auto& g = games_[game_idx];
+    py::dict summary;
+
+    summary["game_length"] = g.move_count;
+    summary["outcome"] = g.outcome;
+
+    if (auto* ms = dynamic_cast<MandalaState*>(g.state.get())) {
+        summary["game_type"] = "mandala";
+
+        // Compute scores inline (same as MandalaGame::calculate_score)
+        for (int p = 0; p < 2; p++) {
+            int score = 0;
+            std::unordered_map<int, int> color_values;
+            for (int pos = 0; pos < static_cast<int>(ms->rivers[p].size()); pos++) {
+                color_values[ms->rivers[p][pos]] = pos + 1;
+            }
+            for (int c : ms->cups[p]) {
+                auto it = color_values.find(c);
+                if (it != color_values.end()) score += it->second;
+            }
+            summary[p == 0 ? "score_p0" : "score_p1"] = score;
+        }
+
+        // Behavioral stats
+        py::list mt_p0, mt_p1, fld_p0, fld_p1, disc_p0, disc_p1;
+        for (int c = 0; c < M_NUM_COLORS; c++) {
+            mt_p0.append(ms->mountain_plays[0][c]);
+            mt_p1.append(ms->mountain_plays[1][c]);
+            fld_p0.append(ms->field_plays[0][c]);
+            fld_p1.append(ms->field_plays[1][c]);
+            disc_p0.append(ms->discard_plays[0][c]);
+            disc_p1.append(ms->discard_plays[1][c]);
+        }
+        summary["mountain_plays"] = py::make_tuple(mt_p0, mt_p1);
+        summary["field_plays"] = py::make_tuple(fld_p0, fld_p1);
+        summary["discard_plays"] = py::make_tuple(disc_p0, disc_p1);
+        summary["total_moves"] = py::make_tuple(ms->total_moves[0], ms->total_moves[1]);
+    }
+    else if (auto* ls = dynamic_cast<LostCitiesState*>(g.state.get())) {
+        summary["game_type"] = "lost_cities";
+        summary["score_p0"] = ls->compute_score(0);
+        summary["score_p1"] = ls->compute_score(1);
+        summary["turns_played"] = ls->turns_played;
+
+        py::list exp_p0, exp_p1, disc_p0, disc_p1, dpd_p0, dpd_p1;
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            exp_p0.append(ls->expedition_plays[0][c]);
+            exp_p1.append(ls->expedition_plays[1][c]);
+            disc_p0.append(ls->color_discards[0][c]);
+            disc_p1.append(ls->color_discards[1][c]);
+            dpd_p0.append(ls->discard_pile_draws[0][c]);
+            dpd_p1.append(ls->discard_pile_draws[1][c]);
+        }
+        summary["expedition_plays"] = py::make_tuple(exp_p0, exp_p1);
+        summary["color_discards"] = py::make_tuple(disc_p0, disc_p1);
+        summary["discard_pile_draws"] = py::make_tuple(dpd_p0, dpd_p1);
+        summary["total_moves"] = py::make_tuple(ls->total_moves[0], ls->total_moves[1]);
+
+        int exps_p0 = 0, exps_p1 = 0;
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            if (!ls->expeditions[0][c].empty()) exps_p0++;
+            if (!ls->expeditions[1][c].empty()) exps_p1++;
+        }
+        summary["num_expeditions"] = py::make_tuple(exps_p0, exps_p1);
+    }
+
+    return summary;
 }
 
 bool BatchedMCTS::all_done() const {

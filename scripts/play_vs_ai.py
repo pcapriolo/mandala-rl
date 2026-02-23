@@ -74,7 +74,7 @@ class HumanVsAI:
             """Wrapper to convert GameState to network output."""
             state_tensor = state.to_tensor().unsqueeze(0).to(self.device)
             with torch.no_grad():
-                policy_logits, value = self.model(state_tensor)
+                policy_logits, value, *_ = self.model(state_tensor)
                 policy = torch.softmax(policy_logits, dim=1).cpu().numpy()[0]
                 value = value.item()
             return policy, value

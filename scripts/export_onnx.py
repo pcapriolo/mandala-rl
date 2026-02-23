@@ -34,8 +34,11 @@ def export_model(checkpoint_path, config_path, output_path):
     torch.onnx.export(
         model, dummy, str(output_path),
         input_names=['state'],
-        output_names=['policy', 'value'],
-        dynamic_axes={'state': {0: 'batch'}, 'policy': {0: 'batch'}, 'value': {0: 'batch'}},
+        output_names=['policy', 'value', 'score', 'belief'],
+        dynamic_axes={
+            'state': {0: 'batch'}, 'policy': {0: 'batch'},
+            'value': {0: 'batch'}, 'score': {0: 'batch'}, 'belief': {0: 'batch'},
+        },
         opset_version=17,
     )
 

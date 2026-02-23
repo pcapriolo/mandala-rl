@@ -24,6 +24,7 @@ public:
     virtual std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const = 0;
     virtual bool is_terminal(const GameState& state) const = 0;
     virtual float get_reward(const GameState& state, int player) const = 0;
+    virtual int get_score(const GameState& state, int player) const = 0;
     virtual int num_actions() const = 0;
     virtual int tensor_channels() const = 0;
 

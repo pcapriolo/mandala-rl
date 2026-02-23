@@ -61,8 +61,8 @@ def generate_games_batch(
 
     # Create network
     network = MandalaNet(
-        input_channels=50,
-        num_actions=30,
+        input_channels=96,
+        num_actions=150,
         num_res_blocks=num_res_blocks,
         channels=channels
     )
@@ -157,8 +157,8 @@ def distributed_selfplay_webhook(
     temperature: float = 1.0,
     temperature_threshold: int = 30,
     c_puct: float = 1.0,
-    input_channels: int = 50,
-    num_actions: int = 30
+    input_channels: int = 96,
+    num_actions: int = 108
 ) -> Dict[str, Any]:
     """
     Distributed self-play workflow - webhook friendly.

@@ -69,7 +69,8 @@ class OnnxModelServer:
     def predict(self, state_tensor):
         """Run ONNX inference on a single state tensor. Returns (policy, value)."""
         inp = state_tensor[np.newaxis].astype(np.float32) if state_tensor.ndim == 3 else state_tensor.astype(np.float32)
-        policy_logits, value = self.session.run(None, {'state': inp})
+        outputs = self.session.run(None, {'state': inp})
+        policy_logits, value = outputs[0], outputs[1]
         policy = softmax(policy_logits[0])
         return policy, float(value[0, 0])
 
@@ -365,12 +366,21 @@ MANDALA_COLOR_NAMES = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White']
 
 def _mandala_action_to_string(action):
     if action < 12:
-        return f"{COLOR_SHORT[action % 6]} → Mt{action // 6}"
-    elif action < 24:
+        return f"{COLOR_SHORT[action % 6]} → Mt{action // 6 + 1}"
+    elif action < 96:
         a = action - 12
-        return f"{COLOR_SHORT[a % 6]} → Fd{a // 6}"
+        mandala = a // 42
+        r = a % 42
+        color = r // 7
+        count = r % 7 + 1
+        return f"{count}x {COLOR_SHORT[color]} → Fd{mandala + 1}"
+    elif action < 144:
+        a = action - 96
+        color = a // 8
+        count = a % 8 + 1
+        return f"Discard {count}x {COLOR_SHORT[color]}"
     else:
-        return f"Discard {COLOR_SHORT[action - 24]}"
+        return f"Claim {MANDALA_COLOR_NAMES[action - 144]}"
 
 
 class MandalaGameSession:
@@ -414,32 +424,47 @@ class MandalaGameSession:
     def _format_state(self):
         s = self.state
         def cards_to_colors(card_list):
-            """Convert List[Card] to flat list of color indices."""
             return [card.color for card in card_list]
-        def mandala_repr(m_idx):
-            mt_colors = cards_to_colors(s.mountains[m_idx])
-            unique_colors = len(set(mt_colors))
-            return {
-                'mountain': mt_colors,
-                'field_p0': cards_to_colors(s.fields[m_idx][0]),
-                'field_p1': cards_to_colors(s.fields[m_idx][1]),
-                'colors': unique_colors,
+
+        is_terminal = self.server.engine.is_terminal(s)
+
+        # At game end, reveal all cup cards
+        if is_terminal:
+            cups = {
+                'player0': {'hidden': 0, 'visible': cards_to_colors(s.cups[0])},
+                'player1': {'hidden': 0, 'visible': cards_to_colors(s.cups[1])},
             }
+        else:
+            cups = {}
+            for p in range(2):
+                if p == self.human_player:
+                    cups[f'player{p}'] = {'hidden': 0, 'visible': cards_to_colors(s.cups[p])}
+                else:
+                    cups[f'player{p}'] = {'hidden': 2, 'visible': cards_to_colors(s.cups[p][2:])}
+
         return {
             'hands': {
                 'player0': cards_to_colors(s.hands[0]),
                 'player1': cards_to_colors(s.hands[1]),
             },
-            'mandalas': [mandala_repr(m_idx) for m_idx in range(2)],
+            'mandalas': [
+                {
+                    'mountain': cards_to_colors(s.mountains[i]),
+                    'field_p0': cards_to_colors(s.fields[i][0]),
+                    'field_p1': cards_to_colors(s.fields[i][1]),
+                    'colors': len(set(card.color for card in s.mountains[i])),
+                }
+                for i in range(2)
+            ],
             'rivers': {
                 'player0': cards_to_colors(s.rivers[0]),
                 'player1': cards_to_colors(s.rivers[1]),
             },
-            'cups': {
-                'player0': len(s.cups[0]),
-                'player1': len(s.cups[1]),
-            },
+            'cups': cups,
             'deck_size': len(s.deck),
+            'discard_size': len(s.discard),
+            'deck_reshuffled': s.deck_reshuffled,
+            'game_ends_next_mandala': s.game_ends_next_mandala,
         }
 
     def make_move(self, action, think_time_ms=None, ai_data=None):
@@ -587,7 +612,13 @@ def create_mandala_blueprint(server):
 
         ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
         result = session.make_move(action, ai_data=ai_data)
-        result['ai_decision'] = {'action': action, 'description': _mandala_action_to_string(action), 'top_moves': top_moves}
+        result['ai_decision'] = {
+            'action': action,
+            'description': _mandala_action_to_string(action),
+            'top_moves': top_moves,
+            'network_top': top_moves,  # serve.py uses raw network (no MCTS)
+            'value': value,
+        }
         result['game_id'] = data.get('game_id')
         return jsonify(result)
 

@@ -143,7 +143,7 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
         print(f"[EVAL] Missing checkpoint: {current_path}")
         return False
 
-    game_type = "mandala" if net_cfg['num_actions'] == 30 else "lost_cities"
+    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else "lost_cities"
     mcts_sims = eval_cfg.get('eval_mcts_simulations', 400)
 
     # Load all models upfront
@@ -261,7 +261,7 @@ def run_benchmarks(iteration, checkpoint_dir, net_cfg, mcts_cfg,
     if not current_path.exists():
         return None
 
-    game_type = "mandala" if net_cfg['num_actions'] == 30 else "lost_cities"
+    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else "lost_cities"
     num_actions = net_cfg['num_actions']
     try:
         current_model = load_model(current_path, net_cfg, device)
@@ -350,7 +350,7 @@ def main():
     else:
         device = args.device
 
-    game_name = 'Lost Cities' if net_cfg['num_actions'] != 30 else 'Mandala'
+    game_name = 'Mandala' if net_cfg['num_actions'] in (108, 150) else 'Lost Cities'
     start_iter = eval_cfg.get('eval_start_iteration', 1)
 
     print(f"[EVAL DAEMON] {game_name} — Tournament mode (device: {device})")

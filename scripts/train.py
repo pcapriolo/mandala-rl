@@ -40,6 +40,10 @@ def main():
                       help='Game to train (default: mandala)')
     parser.add_argument('--flush-buffer', action='store_true',
                       help='Discard replay buffer from checkpoint (keep weights)')
+    parser.add_argument('--seed-buffer', type=str, default=None,
+                      help='Path to seed buffer (.pkl) to pre-fill replay buffer')
+    parser.add_argument('--pretrain-epochs', type=int, default=0,
+                      help='Pre-train on seed buffer for N epochs before self-play')
     args = parser.parse_args()
 
     # Load config
@@ -136,6 +140,21 @@ def main():
 
         # Entropy regularization
         'entropy_weight': config['training'].get('entropy_weight', 0.0),
+
+        # Degenerate game filtering
+        'max_discard_rate': config['training'].get('max_discard_rate', 0),
+
+        # Seed buffer re-injection
+        'seed_reinject_frequency': config['training'].get('seed_reinject_frequency', 0),
+
+        # LC quality filtering
+        'min_play_rate': config['training'].get('min_play_rate', 0),
+
+        # Policy weight schedule (decays from base to 1.0 over 256 iterations)
+        'policy_weight': config['training'].get('policy_weight', 1.0),
+
+        # Checkpoint every N games within iteration (for resume)
+        'checkpoint_every_n_games': config['training'].get('checkpoint_every_n_games', 10),
     }
 
     # Create trainer
@@ -168,6 +187,33 @@ def main():
     if args.flush_buffer:
         trainer.replay_buffer.buffer.clear()
         print("Flushed replay buffer (keeping network weights)")
+
+    # Seed replay buffer from bot-generated data
+    if args.seed_buffer:
+        seed_path = Path(args.seed_buffer)
+        if seed_path.exists():
+            from mandala_rl.training.replay_buffer import ReplayBuffer
+            seed_buf = ReplayBuffer(max_size=200000)
+            seed_buf.load(seed_path)
+            trainer.replay_buffer.add_examples(seed_buf.get_all_data())
+            print(f"Seeded replay buffer with {len(seed_buf)} examples from {seed_path}")
+            # Cache for periodic re-injection
+            trainer.set_seed_buffer(seed_path)
+        else:
+            print(f"Warning: Seed buffer {seed_path} not found, skipping")
+
+    # Pre-train on seed data before self-play
+    if args.pretrain_epochs > 0 and len(trainer.replay_buffer) > 0:
+        print(f"\n{'='*60}")
+        print(f"Pre-training on seed data for {args.pretrain_epochs} epochs...")
+        print(f"Buffer: {len(trainer.replay_buffer)} examples")
+        print(f"{'='*60}")
+        original_epochs = trainer.config['epochs_per_iteration']
+        trainer.config['epochs_per_iteration'] = args.pretrain_epochs
+        trainer._train_network()
+        trainer.config['epochs_per_iteration'] = original_epochs
+        trainer._save_checkpoint()
+        print(f"Pre-training complete.")
 
     # Train
     num_iterations = args.iterations or config['training']['num_iterations']

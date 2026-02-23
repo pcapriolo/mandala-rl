@@ -349,12 +349,6 @@ class TrainingObserver:
             """Main dashboard."""
             return render_template('index.html', game_name=self.game_name)
 
-        @self.app.route('/game/<game>')
-        def game_detail(game):
-            """Game detail page showing iterations with Elo and replays."""
-            names = {'mandala': 'Mandala', 'lost_cities': 'Lost Cities'}
-            return render_template('game_detail.html', game=game, game_name=names.get(game, game))
-
         @self.app.route('/api/status')
         def api_status():
             """Get training status."""

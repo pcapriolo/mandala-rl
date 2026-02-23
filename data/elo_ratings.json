@@ -2,450 +2,370 @@
   "initial_rating": 1500.0,
   "k_factor": 32.0,
   "ratings": {
-    "iter_101": 1479.6533972942707,
-    "iter_100": 1458.9531866391467,
-    "iter_102": 1403.8732336119258,
-    "iter_103": 1498.317549548437,
-    "iter_104": 1496.562929105216,
-    "iter_105": 1482.1887230511697,
-    "iter_106": 1383.7017078312497,
-    "iter_107": 1446.8895550065395,
-    "iter_108": 1423.4537276738417,
-    "iter_109": 1533.6293199377042,
-    "iter_110": 1433.5643808924808,
-    "iter_111": 1508.0921087202478,
-    "iter_112": 1444.6439574521376,
-    "iter_113": 1577.4940983670126,
-    "iter_114": 1484.7002427099599,
-    "iter_115": 1414.3793930674617,
-    "iter_116": 1477.7472339945957,
-    "iter_117": 1533.2035028856974,
-    "iter_118": 1470.7868792792076,
-    "iter_119": 1394.1295411903673,
-    "iter_120": 1434.5631832754102,
-    "iter_121": 1483.0596353776048,
-    "iter_122": 1372.478094821215,
-    "iter_123": 1556.238306576088,
-    "iter_125": 1523.2782662603909,
-    "iter_126": 1508.0681548791517,
-    "iter_127": 1410.8223832322533,
-    "iter_128": 1486.4287683654127,
-    "iter_129": 1414.9500510590715,
-    "iter_130": 1496.8910140119497,
-    "iter_131": 1542.2931011078053,
-    "iter_132": 1544.0243412064674,
-    "iter_133": 1339.6240822720965,
-    "iter_134": 1442.4323752894916,
-    "iter_135": 1412.1998579806368,
-    "iter_136": 1488.4611228381248,
-    "iter_137": 1417.0423880280557,
-    "iter_138": 1439.8390573233694,
-    "iter_139": 1417.2574779075978,
-    "iter_140": 1390.0346448690184,
-    "iter_141": 1457.4343533413835,
-    "iter_142": 1453.6898272120816,
-    "iter_143": 1375.3705935598073,
-    "iter_144": 1517.9883167616283,
-    "iter_145": 1494.1448173300496,
-    "iter_146": 1430.8176006198737,
-    "iter_147": 1512.4311720554367,
-    "iter_148": 1502.9804921549674,
-    "iter_149": 1526.9164202679376,
-    "iter_150": 1480.1860710143512,
-    "iter_151": 1519.9519526024237,
-    "iter_152": 1467.2662875270546,
-    "iter_153": 1442.2267624779881,
-    "iter_154": 1484.9009436272506,
-    "iter_155": 1346.4943540563079,
-    "iter_156": 1526.5732924069557,
-    "iter_157": 1459.3751584293313
+    "iter_5": 1468.6317896305559,
+    "iter_2": 1514.5116517378206,
+    "iter_1": 1530.54203485488,
+    "iter_4": 1480.2465463296517,
+    "iter_3": 1593.4016562648806,
+    "iter_10": 1570.1034343849908,
+    "iter_8": 1519.9459221704446,
+    "iter_6": 1469.977758977313,
+    "iter_7": 1484.7577557505842,
+    "iter_9": 1599.2007146717713,
+    "iter_15": 1543.7846310003788,
+    "iter_14": 1518.0976795204422,
+    "iter_12": 1508.628294748514,
+    "iter_20": 1502.1477694690573,
+    "iter_16": 1480.879305204212,
+    "iter_13": 1484.30132817674,
+    "iter_19": 1459.036581109025,
+    "iter_11": 1502.899982662037,
+    "iter_25": 1379.091185360754,
+    "iter_24": 1489.974762061381,
+    "iter_18": 1416.1860126135798,
+    "iter_30": 1436.2111591868381,
+    "iter_23": 1482.8140988998362,
+    "iter_29": 1489.0565405414563,
+    "iter_35": 1607.8801356060642,
+    "iter_34": 1465.352610362469,
+    "iter_22": 1470.4569064192176,
+    "iter_40": 1521.7365349787165,
+    "iter_33": 1615.954478095657,
+    "iter_39": 1545.3597188021615,
+    "iter_28": 1548.906967195097,
+    "iter_17": 1443.4444639021474,
+    "iter_45": 1540.3912874613395,
+    "iter_27": 1532.4153927523498,
+    "iter_44": 1530.3763649995396,
+    "iter_36": 1478.1966227353719,
+    "iter_50": 1445.8834518673689,
+    "iter_26": 1477.1663625133313,
+    "iter_49": 1476.9434195783601,
+    "iter_21": 1444.0218617846872,
+    "iter_31": 1541.1578165423732,
+    "iter_55": 1552.8219505249074,
+    "iter_54": 1425.814045038197,
+    "iter_37": 1470.6475365367105,
+    "iter_60": 1469.4491170636734,
+    "iter_46": 1557.4968654779484,
+    "iter_51": 1471.3502133357201,
+    "iter_38": 1469.054455841719,
+    "iter_59": 1571.3214994425464,
+    "iter_65": 1484.8410476376753,
+    "iter_53": 1460.1565127837875,
+    "iter_41": 1542.866360097918,
+    "iter_64": 1491.1098750831666,
+    "iter_70": 1399.1198344742638,
+    "iter_69": 1531.2905430679666,
+    "iter_61": 1513.3352784126714,
+    "iter_75": 1506.6486063919588,
+    "iter_66": 1483.317711888316,
+    "iter_74": 1498.6364387614358,
+    "iter_42": 1512.0424793250538,
+    "iter_47": 1527.4263483031107,
+    "iter_80": 1506.4740639738154,
+    "iter_79": 1450.0926397284575,
+    "iter_48": 1513.2638036150752,
+    "iter_85": 1570.6367064079789,
+    "iter_84": 1485.9748971052522,
+    "iter_67": 1499.030493573821,
+    "iter_90": 1598.828587236706,
+    "iter_57": 1498.43378052828,
+    "iter_89": 1530.1640393204643,
+    "iter_95": 1527.638100954783,
+    "iter_62": 1555.2973153457324,
+    "iter_94": 1489.8590223825795,
+    "iter_82": 1521.6603338015618,
+    "iter_100": 1456.6713721390363,
+    "iter_32": 1486.5230874133533,
+    "iter_58": 1500.8374323561861,
+    "iter_99": 1543.581724216266,
+    "iter_105": 1524.0845282988248,
+    "iter_104": 1455.966837255705,
+    "iter_83": 1491.9847372084125,
+    "iter_71": 1494.2555921377868,
+    "iter_110": 1534.372072460399,
+    "iter_96": 1489.5039655059493,
+    "iter_109": 1518.6772792792053,
+    "iter_76": 1487.8548612809368,
+    "iter_56": 1493.0517302834241,
+    "iter_52": 1533.441000128804,
+    "iter_115": 1568.9444852640574,
+    "iter_43": 1469.0703172436056,
+    "iter_102": 1494.9160104313492,
+    "iter_72": 1523.7934271068934,
+    "iter_114": 1463.3492672646207,
+    "iter_88": 1489.2540920054194,
+    "iter_120": 1436.3699659150866,
+    "iter_107": 1515.189043439651,
+    "iter_119": 1484.7914025879347,
+    "iter_125": 1447.54523885162,
+    "iter_87": 1449.5163392284385,
+    "iter_124": 1541.8277332900068,
+    "iter_73": 1513.6557795161664,
+    "iter_106": 1511.072183510018
   },
   "tournament_evaluated": [
-    101,
-    102,
-    103,
-    104,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    35,
+    40,
+    45,
+    50,
+    55,
+    60,
+    65,
+    70,
+    75,
+    80,
+    85,
+    90,
+    95,
+    100,
     105,
-    106,
-    107,
-    108,
-    109,
     110,
-    111,
-    112,
-    113,
-    114,
     115,
-    116,
-    117,
-    118,
-    119,
     120,
-    121,
-    122,
-    123,
-    125,
-    126,
-    127,
-    128,
-    129,
-    130,
-    131,
-    132,
-    133,
-    134,
-    135,
-    136,
-    137,
-    138,
-    139,
-    140,
-    141,
-    142,
-    143,
-    144,
-    145,
-    146,
-    147,
-    148,
-    149,
-    150,
-    151,
-    152,
-    153,
-    154,
-    155,
-    156,
-    157
+    125
   ],
-  "stats": {
-    "101": {
-      "wins": 28,
-      "losses": 28,
-      "draws": 0
+  "stats": {},
+  "benchmark_stats": {
+    "5": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 1,
+        "draws": 2
+      }
+    },
+    "10": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 1,
+        "draws": 1
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "15": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "20": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "25": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "30": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 3,
+        "draws": 1
+      }
+    },
+    "35": {
+      "vs_random": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "40": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "45": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "50": {
+      "vs_random": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      }
+    },
+    "55": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "60": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "65": {
+      "vs_random": {
+        "wins": 4,
+        "losses": 5,
+        "draws": 1
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "70": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "75": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "80": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "85": {
+      "vs_random": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "90": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "95": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 3,
+        "draws": 1
+      }
     },
     "100": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    },
-    "102": {
-      "wins": 28,
-      "losses": 28,
-      "draws": 0
-    },
-    "103": {
-      "wins": 27,
-      "losses": 28,
-      "draws": 1
-    },
-    "104": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    },
-    "105": {
-      "wins": 29,
-      "losses": 27,
-      "draws": 0
-    },
-    "106": {
-      "wins": 23,
-      "losses": 33,
-      "draws": 0
-    },
-    "107": {
-      "wins": 26,
-      "losses": 29,
-      "draws": 1
-    },
-    "108": {
-      "wins": 24,
-      "losses": 32,
-      "draws": 0
-    },
-    "109": {
-      "wins": 32,
-      "losses": 24,
-      "draws": 0
-    },
-    "110": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    },
-    "111": {
-      "wins": 29,
-      "losses": 26,
-      "draws": 1
-    },
-    "112": {
-      "wins": 24,
-      "losses": 32,
-      "draws": 0
-    },
-    "113": {
-      "wins": 36,
-      "losses": 20,
-      "draws": 0
-    },
-    "114": {
-      "wins": 29,
-      "losses": 26,
-      "draws": 1
-    },
-    "115": {
-      "wins": 26,
-      "losses": 30,
-      "draws": 0
-    },
-    "116": {
-      "wins": 32,
-      "losses": 24,
-      "draws": 0
-    },
-    "117": {
-      "wins": 32,
-      "losses": 24,
-      "draws": 0
-    },
-    "118": {
-      "wins": 25,
-      "losses": 31,
-      "draws": 0
-    },
-    "119": {
-      "wins": 25,
-      "losses": 31,
-      "draws": 0
-    },
-    "120": {
-      "wins": 26,
-      "losses": 30,
-      "draws": 0
-    },
-    "121": {
-      "wins": 29,
-      "losses": 27,
-      "draws": 0
-    },
-    "122": {
-      "wins": 22,
-      "losses": 34,
-      "draws": 0
-    },
-    "123": {
-      "wins": 34,
-      "losses": 22,
-      "draws": 0
-    },
-    "125": {
-      "wins": 31,
-      "losses": 25,
-      "draws": 0
-    },
-    "126": {
-      "wins": 25,
-      "losses": 31,
-      "draws": 0
-    },
-    "127": {
-      "wins": 25,
-      "losses": 31,
-      "draws": 0
-    },
-    "128": {
-      "wins": 31,
-      "losses": 25,
-      "draws": 0
-    },
-    "129": {
-      "wins": 23,
-      "losses": 32,
-      "draws": 1
-    },
-    "130": {
-      "wins": 27,
-      "losses": 27,
-      "draws": 2
-    },
-    "131": {
-      "wins": 37,
-      "losses": 19,
-      "draws": 0
-    },
-    "132": {
-      "wins": 33,
-      "losses": 23,
-      "draws": 0
-    },
-    "133": {
-      "wins": 20,
-      "losses": 35,
-      "draws": 1
-    },
-    "134": {
-      "wins": 21,
-      "losses": 34,
-      "draws": 1
-    },
-    "135": {
-      "wins": 29,
-      "losses": 27,
-      "draws": 0
-    },
-    "136": {
-      "wins": 30,
-      "losses": 26,
-      "draws": 0
-    },
-    "137": {
-      "wins": 25,
-      "losses": 31,
-      "draws": 0
-    },
-    "138": {
-      "wins": 24,
-      "losses": 30,
-      "draws": 2
-    },
-    "139": {
-      "wins": 26,
-      "losses": 28,
-      "draws": 2
-    },
-    "140": {
-      "wins": 24,
-      "losses": 32,
-      "draws": 0
-    },
-    "141": {
-      "wins": 30,
-      "losses": 25,
-      "draws": 1
-    },
-    "142": {
-      "wins": 29,
-      "losses": 26,
-      "draws": 1
-    },
-    "143": {
-      "wins": 23,
-      "losses": 31,
-      "draws": 2
-    },
-    "144": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    },
-    "145": {
-      "wins": 32,
-      "losses": 23,
-      "draws": 1
-    },
-    "146": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    },
-    "147": {
-      "wins": 31,
-      "losses": 24,
-      "draws": 1
-    },
-    "148": {
-      "wins": 33,
-      "losses": 23,
-      "draws": 0
-    },
-    "149": {
-      "wins": 30,
-      "losses": 26,
-      "draws": 0
-    },
-    "150": {
-      "wins": 29,
-      "losses": 27,
-      "draws": 0
-    },
-    "151": {
-      "wins": 32,
-      "losses": 24,
-      "draws": 0
-    },
-    "152": {
-      "wins": 29,
-      "losses": 26,
-      "draws": 1
-    },
-    "153": {
-      "wins": 23,
-      "losses": 32,
-      "draws": 1
-    },
-    "154": {
-      "wins": 33,
-      "losses": 23,
-      "draws": 0
-    },
-    "155": {
-      "wins": 21,
-      "losses": 35,
-      "draws": 0
-    },
-    "156": {
-      "wins": 31,
-      "losses": 24,
-      "draws": 1
-    },
-    "157": {
-      "wins": 27,
-      "losses": 29,
-      "draws": 0
-    }
-  },
-  "benchmark_stats": {
-    "101": {
       "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 6,
-        "losses": 4,
-        "draws": 0
-      }
-    },
-    "102": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "103": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "104": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
+        "wins": 4,
+        "losses": 6,
         "draws": 0
       },
       "vs_strategy": {
@@ -456,56 +376,8 @@
     },
     "105": {
       "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      }
-    },
-    "106": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "107": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "108": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "109": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 0,
+        "wins": 4,
+        "losses": 5,
         "draws": 1
       },
       "vs_strategy": {
@@ -516,121 +388,25 @@
     },
     "110": {
       "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      }
-    },
-    "111": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 7,
-        "losses": 3,
-        "draws": 0
-      }
-    },
-    "112": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "113": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "114": {
-      "vs_random": {
         "wins": 9,
         "losses": 1,
         "draws": 0
       },
       "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
+        "wins": 9,
+        "losses": 1,
         "draws": 0
       }
     },
     "115": {
       "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 5,
-        "losses": 5,
-        "draws": 0
-      }
-    },
-    "116": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 7,
-        "losses": 3,
-        "draws": 0
-      }
-    },
-    "117": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "118": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
         "wins": 8,
         "losses": 2,
         "draws": 0
-      }
-    },
-    "119": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
       },
       "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
+        "wins": 10,
+        "losses": 0,
         "draws": 0
       }
     },
@@ -641,42 +417,6 @@
         "draws": 0
       },
       "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "121": {
-      "vs_random": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "122": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      }
-    },
-    "123": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
         "wins": 8,
         "losses": 2,
         "draws": 0
@@ -684,398 +424,14 @@
     },
     "125": {
       "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 7,
-        "losses": 2,
-        "draws": 1
-      }
-    },
-    "126": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "127": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "128": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "129": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 6,
-        "losses": 4,
-        "draws": 0
-      }
-    },
-    "130": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
         "wins": 5,
         "losses": 5,
         "draws": 0
-      }
-    },
-    "131": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "132": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "133": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "134": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "135": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "136": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 7,
-        "losses": 3,
-        "draws": 0
-      }
-    },
-    "137": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "138": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
       },
       "vs_strategy": {
         "wins": 7,
         "losses": 2,
         "draws": 1
-      }
-    },
-    "139": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "140": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "141": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "142": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "143": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "144": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "145": {
-      "vs_random": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      }
-    },
-    "146": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 7,
-        "losses": 3,
-        "draws": 0
-      }
-    },
-    "147": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 8,
-        "losses": 2,
-        "draws": 0
-      }
-    },
-    "148": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "149": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 6,
-        "losses": 4,
-        "draws": 0
-      }
-    },
-    "150": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "151": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "152": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      }
-    },
-    "153": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "154": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "155": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "156": {
-      "vs_random": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 9,
-        "losses": 1,
-        "draws": 0
-      }
-    },
-    "157": {
-      "vs_random": {
-        "wins": 10,
-        "losses": 0,
-        "draws": 0
-      },
-      "vs_strategy": {
-        "wins": 6,
-        "losses": 4,
-        "draws": 0
       }
     }
   }

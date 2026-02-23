@@ -43,8 +43,8 @@ class SelfPlayConfig:
     c_puct: float = 1.0
     num_res_blocks: int = 8
     channels: int = 96
-    input_channels: int = 50
-    num_actions: int = 30
+    input_channels: int = 96
+    num_actions: int = 150
 
 
 @task(

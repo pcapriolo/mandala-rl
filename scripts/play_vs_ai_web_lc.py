@@ -83,7 +83,7 @@ class LCModelServer:
         def network_fn(state):
             state_tensor = torch.from_numpy(state.to_tensor()).unsqueeze(0).to(self.device)
             with torch.no_grad():
-                policy_logits, value = self.model(state_tensor)
+                policy_logits, value, *_ = self.model(state_tensor)
                 policy = torch.softmax(policy_logits, dim=1).cpu().numpy()[0]
                 value = value.item()
             return policy, value
@@ -107,7 +107,7 @@ class LCModelServer:
         state_tensor = torch.from_numpy(canonical.to_tensor()).unsqueeze(0).to(self.device)
         t_fwd = time.time()
         with torch.no_grad():
-            raw_logits, val = self.model(state_tensor)
+            raw_logits, val, *_ = self.model(state_tensor)
             value = val.item()
             raw_policy = torch.softmax(raw_logits, dim=1).cpu().numpy()[0]
         t_valid = time.time()

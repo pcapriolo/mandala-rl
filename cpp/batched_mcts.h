@@ -26,6 +26,7 @@ public:
     void apply_nn_results(py::array_t<float> policies, py::array_t<float> values);
     std::vector<int> finish_move();                  // Select actions, advance games
     py::tuple get_game_data(int game_idx);           // Get training data
+    py::dict get_game_summary(int game_idx);         // Get game quality stats
     bool all_done() const;
     int active_count() const;
 
@@ -40,8 +41,11 @@ private:
         std::vector<std::vector<float>> recorded_tensors; // state tensors
         std::vector<std::vector<float>> recorded_policies;
         std::vector<int> recorded_players;
+        std::vector<std::vector<float>> recorded_belief_labels; // [12]: opp hand (6) + opp cup (6)
         int move_count = 0;
         float outcome = 0.0f;
+        int score_p0 = 0;
+        int score_p1 = 0;
         bool finished = false;
 
         // Per-move

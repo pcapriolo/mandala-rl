@@ -61,7 +61,7 @@ class MCTS:
 
         # Get initial policy and valid moves
         canonical_state = state.get_canonical_form()
-        policy, _ = self.network(canonical_state)
+        policy, _val, *_ = self.network(canonical_state)
         valid_moves = self.game.get_valid_moves(canonical_state)
 
         # Add Dirichlet noise at root for exploration
@@ -114,7 +114,7 @@ class MCTS:
         else:
             # Leaf node: expand and evaluate with network
             canonical_state = state.get_canonical_form()
-            policy, value = self.network(canonical_state)
+            policy, value, *_ = self.network(canonical_state)
             # CRITICAL: Use valid moves from NON-canonical state
             # Actions will be applied to non-canonical states during traversal
             # so children must be valid for the actual traversal state

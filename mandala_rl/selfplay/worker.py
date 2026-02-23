@@ -19,7 +19,11 @@ class SelfPlayGame:
         self.states: List[np.ndarray] = []
         self.policies: List[np.ndarray] = []
         self.current_players: List[int] = []
+        self.belief_labels: List[np.ndarray] = []  # Ground-truth opponent hand/cup
         self.outcome: float = 0.0  # Final game outcome from player 0's perspective
+        self.score_p0: int = 0     # Player 0's raw score
+        self.score_p1: int = 0     # Player 1's raw score
+        self.summary: dict = {}   # Game quality stats from C++ engine
 
     def __len__(self):
         return len(self.states)
@@ -58,7 +62,7 @@ class SelfPlayWorker:
         self.leaves_per_game = leaves_per_game
 
         # Detect game type for C++ engine
-        self._game_type = "mandala" if network.num_actions == 30 else "lost_cities"
+        self._game_type = "mandala" if network.num_actions in (108, 150) else "lost_cities"
 
         # Mixed precision for CUDA inference
         self.use_amp = device == 'cuda'
@@ -67,19 +71,37 @@ class SelfPlayWorker:
         """Generate multiple self-play games."""
         return self.play_games_batched(num_games)
 
-    def get_training_examples(self, game: SelfPlayGame) -> List[Tuple[np.ndarray, np.ndarray, float]]:
+    def get_training_examples(self, game: SelfPlayGame) -> List[Tuple[np.ndarray, np.ndarray, float, float, np.ndarray]]:
         """
         Convert game to training examples.
 
-        Each example is (state, policy, value) where value is the final
-        outcome from the perspective of the current player in that state.
+        Each example is (state, policy, value, score, belief) where:
+        - value: final outcome from current player's perspective
+        - score: normalized score margin from current player's perspective
+        - belief: 12-element binary vector (opp hand colors + opp cup colors)
         """
         examples = []
         outcome = game.outcome
 
-        for state, policy, player in zip(game.states, game.policies, game.current_players):
+        # Normalize score margin to ~[-1, 1]
+        score_margin = game.score_p0 - game.score_p1
+        max_margin = 60.0 if self._game_type == 'mandala' else 200.0
+
+        has_beliefs = len(game.belief_labels) == len(game.states)
+
+        for i, (state, policy, player) in enumerate(zip(game.states, game.policies, game.current_players)):
             value = outcome if player == 0 else -outcome
-            examples.append((state, policy, value))
+            score = score_margin / max_margin if player == 0 else -score_margin / max_margin
+
+            # Policy target pruning: zero out actions with <2% visits
+            policy = policy.copy()
+            policy[policy < 0.02] = 0.0
+            policy_sum = policy.sum()
+            if policy_sum > 0:
+                policy /= policy_sum
+
+            belief = game.belief_labels[i] if has_beliefs else np.zeros(12, dtype=np.float32)
+            examples.append((state, policy, value, score, belief))
 
         return examples
 
@@ -112,7 +134,7 @@ class SelfPlayWorker:
 
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                 batch = torch.from_numpy(np.stack(root_tensors)).to(self.device)
-                logits, _ = self.network(batch)
+                logits = self.network(batch)[0]  # policy logits only
                 policies = F.softmax(logits, dim=1).cpu().numpy()
             mgr.set_root_policies(policies)
 
@@ -123,7 +145,7 @@ class SelfPlayWorker:
                 if len(leaf_tensors) > 0:
                     with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                         batch = torch.from_numpy(np.stack(leaf_tensors)).to(self.device)
-                        logits, vals = self.network(batch)
+                        logits, vals, _scores, _beliefs = self.network(batch)
                         pols = F.softmax(logits, dim=1).cpu().numpy()
                         vals_np = vals.cpu().numpy()[:, 0]
                     mgr.apply_nn_results(pols, vals_np)
@@ -131,12 +153,17 @@ class SelfPlayWorker:
             # Select actions, advance games
             done_indices = mgr.finish_move()
             for idx in done_indices:
-                states, policies, players, outcome = mgr.get_game_data(idx)
+                game_data = mgr.get_game_data(idx)
                 record = SelfPlayGame()
-                record.states = [np.array(s) for s in states]
-                record.policies = [np.array(p) for p in policies]
-                record.current_players = [int(p) for p in players]
-                record.outcome = float(outcome)
+                record.states = [np.array(s) for s in game_data[0]]
+                record.policies = [np.array(p) for p in game_data[1]]
+                record.current_players = [int(p) for p in game_data[2]]
+                record.outcome = float(game_data[3])
+                record.score_p0 = int(game_data[4])
+                record.score_p1 = int(game_data[5])
+                if len(game_data) > 6:
+                    record.belief_labels = [np.array(b, dtype=np.float32) for b in game_data[6]]
+                record.summary = dict(mgr.get_game_summary(idx))
                 completed.append(record)
 
                 # Save replay for dashboard monitoring
@@ -160,8 +187,11 @@ class SelfPlayWorker:
             'metadata': {'iteration': iteration},
             'moves': [{'move_num': i, 'player': int(p)}
                        for i, p in enumerate(game.current_players)],
-            'final_score': None,
+            'final_score': [game.summary.get('score_p0'), game.summary.get('score_p1')]
+                           if game.summary else None,
             'winner': winner,
+            'summary': {k: v for k, v in game.summary.items()
+                        if k not in ('outcome',)} if game.summary else None,
         }
         filepath = save_dir / f"game_{game_id}.json"
         with open(filepath, 'w') as f:

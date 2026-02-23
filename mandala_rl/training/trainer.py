@@ -57,6 +57,9 @@ class Trainer:
             max_size=config.get('replay_buffer_size', 500000)
         )
 
+        # Seed buffer for periodic re-injection
+        self._seed_buffer_data = None
+
         # Self-play worker
         self.selfplay_worker = SelfPlayWorker(
             game=game,
@@ -172,12 +175,25 @@ class Trainer:
             print("\n[1/3] Generating self-play games...")
             self._write_heartbeat('selfplay', '0/?')
             games = self._generate_selfplay_games()
-            print(f"Generated {len(games)} games")
+            # Log quality from ALL games (fast+full), train only on full-sim games
+            all_games = getattr(self, '_all_games_for_quality', games)
+            print(f"Generated {len(all_games)} games ({len(games)} full-sim for training)")
+            self._log_game_quality(all_games)
 
-            # 2. Add to replay buffer
+            # 2. Filter degenerate games + add to replay buffer
             print("\n[2/3] Adding examples to replay buffer...")
             self._write_heartbeat('training', 'adding to buffer')
-            self._add_to_replay_buffer(games)
+            games = self._filter_degenerate_games(games)
+
+            # Re-inject seed buffer periodically
+            reinject_freq = self.config.get('seed_reinject_frequency', 0)
+            if reinject_freq > 0 and self.iteration % reinject_freq == 0:
+                self._reinject_seed_buffer()
+
+            if games:
+                self._add_to_replay_buffer(games)
+            else:
+                print("  All games filtered — training on buffer only this iteration")
             print(f"Replay buffer size: {len(self.replay_buffer)}")
 
             # 3. Train network
@@ -207,54 +223,139 @@ class Trainer:
             for pg in self.optimizer.param_groups:
                 pg['lr'] = lr
 
+    def set_seed_buffer(self, path):
+        """Load and cache seed buffer data for periodic re-injection."""
+        seed_buf = ReplayBuffer(max_size=200000)
+        seed_buf.load(Path(path))
+        self._seed_buffer_data = seed_buf.get_all_data()
+        print(f"Cached {len(self._seed_buffer_data)} seed examples for re-injection")
+
+    def _reinject_seed_buffer(self):
+        """Re-inject cached seed buffer into replay buffer."""
+        if self._seed_buffer_data is None:
+            return
+        self.replay_buffer.add_examples(self._seed_buffer_data)
+        print(f"Re-injected {len(self._seed_buffer_data)} seed examples into buffer")
+
+    def _filter_degenerate_games(self, games: list) -> list:
+        """Filter out games with degenerate play patterns.
+
+        For Mandala: reject games where discard rate exceeds max_discard_rate.
+        For Lost Cities: no filtering (not needed).
+        """
+        max_discard = self.config.get('max_discard_rate', 0)
+        if max_discard <= 0:
+            return games
+
+        kept = []
+        for game in games:
+            s = game.summary
+            if s.get('game_type') == 'mandala':
+                mt = sum(s['mountain_plays'][0]) + sum(s['mountain_plays'][1])
+                fld = sum(s['field_plays'][0]) + sum(s['field_plays'][1])
+                disc = sum(s['discard_plays'][0]) + sum(s['discard_plays'][1])
+                total = mt + fld + disc
+                disc_rate = disc / max(total, 1)
+                if disc_rate <= max_discard:
+                    kept.append(game)
+            elif s.get('game_type') == 'lost_cities':
+                min_play = self.config.get('min_play_rate', 0)
+                if min_play > 0:
+                    exp_plays = sum(s['expedition_plays'][0]) + sum(s['expedition_plays'][1])
+                    discards = sum(s['color_discards'][0]) + sum(s['color_discards'][1])
+                    total = exp_plays + discards
+                    play_rate = exp_plays / max(total, 1)
+                    if play_rate >= min_play:
+                        kept.append(game)
+                else:
+                    kept.append(game)
+            else:
+                kept.append(game)
+
+        filtered = len(games) - len(kept)
+        if filtered > 0:
+            print(f"  Filtered {filtered}/{len(games)} degenerate games "
+                  f"(>{max_discard:.0%} discard), kept {len(kept)}")
+        return kept
+
     def _generate_selfplay_games(self) -> list:
-        """Generate self-play games using batched parallel play."""
+        """Generate self-play games using batched parallel play.
+
+        Uses playout cap randomization (KataGo): 75% of games run at reduced
+        MCTS sims for game diversity, 25% run at full sims and are recorded
+        for training. Fast games still contribute game quality metrics.
+        """
         num_games = self.config.get('games_per_iteration', 100)
         replay_dir = Path(self.config.get('replay_dir', 'data/replays'))
         save_replay_freq = self.config.get('save_replay_frequency', 10)
         checkpoint_every_n_games = self.config.get('checkpoint_every_n_games', 10)
         parallel_games = self.config.get('parallel_games', 8)
+        full_sims = self.config.get('mcts_simulations', 800)
+        fast_sims = min(200, full_sims // 4)
+
+        # Playout cap: 25% full, 75% fast
+        n_full = max(num_games // 4, 10)
+        n_fast = num_games - n_full
 
         # Update worker's network to latest
         self.selfplay_worker.network.load_state_dict(self._unwrapped_network.state_dict())
 
         # Resume from where we left off if mid-iteration
         start_game = self.games_in_current_iteration
-        remaining = num_games - start_game
+        remaining_total = num_games - start_game
         if start_game > 0:
             print(f"Resuming from game {start_game + 1}/{num_games} in current iteration")
 
-        games = []
+        all_games = []  # All games (for quality metrics)
         progress = tqdm(total=num_games, desc="Self-play", initial=start_game)
 
         def on_game_complete(game_idx, game_record):
-            self.games_in_current_iteration = start_game + game_idx + 1
+            self.games_in_current_iteration = start_game + len(all_games) + game_idx + 1
             self.total_games += 1
             progress.update(1)
             self._write_heartbeat('selfplay', f'{self.games_in_current_iteration}/{num_games}')
 
-            # Save checkpoint every N games
             if self.games_in_current_iteration % checkpoint_every_n_games == 0:
                 tqdm.write(f"Checkpoint after game {self.games_in_current_iteration}/{num_games}")
                 self._save_checkpoint(suffix=f"_game{self.total_games}")
 
-        batch_games = self.selfplay_worker.play_games_batched(
-            num_games=remaining,
+        # Phase 1: Fast games (diversity, not recorded for training)
+        if n_fast > 0 and remaining_total > n_full:
+            fast_remaining = min(n_fast, remaining_total - n_full)
+            self.selfplay_worker.mcts_simulations = fast_sims
+            fast_games = self.selfplay_worker.play_games_batched(
+                num_games=fast_remaining,
+                batch_size=parallel_games,
+                save_dir=replay_dir,
+                iteration=self.iteration,
+                save_replay_freq=save_replay_freq,
+                on_game_complete=on_game_complete,
+            )
+            all_games.extend(fast_games)
+
+        # Phase 2: Full-sim games (recorded for training)
+        self.selfplay_worker.mcts_simulations = full_sims
+        full_games = self.selfplay_worker.play_games_batched(
+            num_games=min(n_full, remaining_total),
             batch_size=parallel_games,
             save_dir=replay_dir,
             iteration=self.iteration,
             save_replay_freq=save_replay_freq,
             on_game_complete=on_game_complete,
         )
-        games.extend(batch_games)
+        all_games.extend(full_games)
         progress.close()
 
         # Reset counter at end of iteration
         self.games_in_current_iteration = 0
 
         self.writer.add_scalar('Training/TotalGames', self.total_games, self.iteration)
+        self.writer.add_scalar('Training/FastGames', n_fast, self.iteration)
+        self.writer.add_scalar('Training/FullGames', n_full, self.iteration)
 
-        return games
+        # Log quality from ALL games, but only return full-sim games for training
+        self._all_games_for_quality = all_games
+        return full_games
 
     def _add_to_replay_buffer(self, games: list):
         """Extract examples from games and add to buffer."""
@@ -266,8 +367,17 @@ class Trainer:
         self.replay_buffer.add_examples(all_examples)
         self.writer.add_scalar('Training/BufferSize', len(self.replay_buffer), self.iteration)
 
+    def _get_policy_weight(self) -> float:
+        """Policy weight schedule: 3.0 → 1.0 linear decay over first 256 iterations."""
+        base = self.config.get('policy_weight', 1.0)
+        if base <= 1.0:
+            return base
+        return max(1.0, base - (base - 1.0) * self.iteration / 256)
+
     def _train_network(self):
         """Train network on replay buffer."""
+        from .replay_buffer import augment_color_permutation_batch
+
         batch_size = self.config.get('batch_size', 256)
         if len(self.replay_buffer) < batch_size:
             print("Not enough examples in buffer yet")
@@ -282,21 +392,37 @@ class Trainer:
         epoch_total_loss = 0.0
         epoch_policy_loss = 0.0
         epoch_value_loss = 0.0
+        epoch_score_loss = 0.0
+        epoch_belief_loss = 0.0
+
+        policy_weight = self._get_policy_weight()
 
         for epoch in range(num_epochs):
+            if num_epochs > 1 and epoch % max(1, num_epochs // 10) == 0:
+                print(f"  Epoch {epoch}/{num_epochs}, loss: {epoch_total_loss:.4f}", flush=True)
             for batch_idx in range(batches_per_epoch):
-                states, policies, values = self.replay_buffer.sample(batch_size)
+                states, policies, values, scores, beliefs = self.replay_buffer.sample(batch_size)
+
+                # Color permutation augmentation (50% of the time)
+                if np.random.random() < 0.5 and states.shape[1] >= 121:
+                    states, policies, beliefs = augment_color_permutation_batch(
+                        states, policies, beliefs)
 
                 states = torch.from_numpy(states.astype(np.float32)).to(self.device)
                 policies = torch.from_numpy(policies.astype(np.float32)).to(self.device)
                 values = torch.from_numpy(values.astype(np.float32)).to(self.device)
+                scores = torch.from_numpy(scores.astype(np.float32)).to(self.device)
+                beliefs = torch.from_numpy(beliefs.astype(np.float32)).to(self.device)
 
                 self.optimizer.zero_grad()
 
                 with torch.amp.autocast('cuda', enabled=self.use_amp):
-                    total_loss, policy_loss, value_loss = self.network.get_loss(
+                    total_loss, policy_loss, value_loss, score_loss, belief_loss = self.network.get_loss(
                         states, policies, values,
-                        entropy_weight=self.config.get('entropy_weight', 0.0)
+                        target_scores=scores,
+                        target_beliefs=beliefs,
+                        entropy_weight=self.config.get('entropy_weight', 0.0),
+                        policy_weight=policy_weight,
                     )
 
                 if self.scaler:
@@ -313,20 +439,25 @@ class Trainer:
                 epoch_total_loss = total_loss.item()
                 epoch_policy_loss = policy_loss.item()
                 epoch_value_loss = value_loss.item()
+                epoch_score_loss = score_loss.item() if hasattr(score_loss, 'item') else float(score_loss)
+                epoch_belief_loss = belief_loss.item() if hasattr(belief_loss, 'item') else float(belief_loss)
                 total_steps += 1
 
         # Log final loss values
         self.writer.add_scalar('Loss/Total', epoch_total_loss, self.iteration)
         self.writer.add_scalar('Loss/Policy', epoch_policy_loss, self.iteration)
         self.writer.add_scalar('Loss/Value', epoch_value_loss, self.iteration)
+        self.writer.add_scalar('Loss/Score', epoch_score_loss, self.iteration)
+        self.writer.add_scalar('Loss/Belief', epoch_belief_loss, self.iteration)
         self.writer.add_scalar('Training/LearningRate',
                              self.optimizer.param_groups[0]['lr'],
                              self.iteration)
+        self.writer.add_scalar('Training/PolicyWeight', policy_weight, self.iteration)
 
         # Log policy entropy (network health monitor)
         self.network.eval()
         with torch.no_grad():
-            policy_logits, _ = self.network(states)
+            policy_logits = self.network(states)[0]
             network_policy = F.softmax(policy_logits, dim=1)
             entropy = -torch.sum(network_policy * torch.log(network_policy + 1e-8), dim=1).mean()
             max_prob = torch.max(network_policy, dim=1)[0].mean()
@@ -334,22 +465,182 @@ class Trainer:
             self.writer.add_scalar('Network/MaxActionProb', max_prob.item(), self.iteration)
 
         print(f"Loss - Total: {epoch_total_loss:.4f}, "
-              f"Policy: {epoch_policy_loss:.4f}, "
-              f"Value: {epoch_value_loss:.4f} "
+              f"Policy: {epoch_policy_loss:.4f} (w={policy_weight:.2f}), "
+              f"Value: {epoch_value_loss:.4f}, "
+              f"Score: {epoch_score_loss:.4f}, "
+              f"Belief: {epoch_belief_loss:.4f} "
               f"({total_steps} gradient steps)")
 
         # Append to losses.jsonl for dashboard charts
         losses_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'losses.jsonl'
         try:
+            entry = {
+                'iteration': self.iteration,
+                'total': round(epoch_total_loss, 4),
+                'policy': round(epoch_policy_loss, 4),
+                'value': round(epoch_value_loss, 4),
+                'score': round(epoch_score_loss, 4),
+                'belief': round(epoch_belief_loss, 4),
+                'policy_weight': round(policy_weight, 2),
+            }
+            if hasattr(self, '_game_quality'):
+                entry.update(self._game_quality)
             with open(losses_path, 'a') as f:
-                f.write(json.dumps({
-                    'iteration': self.iteration,
-                    'total': round(epoch_total_loss, 4),
-                    'policy': round(epoch_policy_loss, 4),
-                    'value': round(epoch_value_loss, 4),
-                }) + '\n')
+                f.write(json.dumps(entry) + '\n')
         except Exception:
             pass
+
+    def _log_game_quality(self, games: list):
+        """Analyze completed self-play games and produce quality assessment."""
+        if not games:
+            return
+
+        summaries = [g.summary for g in games if getattr(g, 'summary', None)]
+        if not summaries:
+            return
+
+        game_type = summaries[0].get('game_type', 'unknown')
+        n = len(summaries)
+
+        # Universal metrics
+        lengths = [s['game_length'] for s in summaries]
+        outcomes = [g.outcome for g in games[:n]]
+        scores_p0 = [s.get('score_p0', 0) for s in summaries]
+        scores_p1 = [s.get('score_p1', 0) for s in summaries]
+
+        avg_len = sum(lengths) / n
+        std_len = (sum((l - avg_len)**2 for l in lengths) / n) ** 0.5
+        p0_wins = sum(1 for o in outcomes if o > 0)
+        p1_wins = sum(1 for o in outcomes if o < 0)
+        draws = sum(1 for o in outcomes if o == 0)
+        avg_score = (sum(scores_p0) + sum(scores_p1)) / (2 * n)
+
+        # Tensorboard
+        self.writer.add_scalar('GameQuality/AvgLength', avg_len, self.iteration)
+        self.writer.add_scalar('GameQuality/StdLength', std_len, self.iteration)
+        self.writer.add_scalar('GameQuality/P0WinRate', p0_wins / n, self.iteration)
+        self.writer.add_scalar('GameQuality/DrawRate', draws / n, self.iteration)
+        self.writer.add_scalar('GameQuality/AvgScore', avg_score, self.iteration)
+
+        # Store for losses.jsonl
+        self._game_quality = {
+            'avg_len': round(avg_len, 1),
+            'std_len': round(std_len, 1),
+            'p0_wr': round(p0_wins / n, 3),
+            'draw_rate': round(draws / n, 3),
+            'avg_score': round(avg_score, 1),
+        }
+
+        # Game-specific assessment
+        assessment = []
+        warnings = []
+
+        if game_type == 'lost_cities':
+            assessment, warnings = self._assess_lc(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
+        elif game_type == 'mandala':
+            assessment, warnings = self._assess_mandala(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
+
+        # Print summary
+        print(f"  Game quality: {avg_len:.0f} avg moves (±{std_len:.1f}), "
+              f"P0 {p0_wins}/{n} P1 {p1_wins}/{n} Draw {draws}/{n}, "
+              f"Avg score: {avg_score:.1f}")
+        for line in assessment:
+            print(f"  {line}")
+        for w in warnings:
+            print(f"  WARNING: {w}")
+
+    def _assess_lc(self, summaries, n, avg_len, std_len, p0w, p1w, draws):
+        """Qualitative assessment of Lost Cities gameplay."""
+        assessment = []
+        warnings = []
+
+        avg_exps = sum(s['num_expeditions'][0] + s['num_expeditions'][1]
+                       for s in summaries) / (2 * n)
+        total_exp_plays = sum(sum(s['expedition_plays'][0]) + sum(s['expedition_plays'][1])
+                             for s in summaries) / (2 * n)
+        total_discards = sum(sum(s['color_discards'][0]) + sum(s['color_discards'][1])
+                            for s in summaries) / (2 * n)
+        discard_draw_rate = sum(sum(s['discard_pile_draws'][0]) + sum(s['discard_pile_draws'][1])
+                               for s in summaries) / (2 * n)
+
+        play_rate = total_exp_plays / max(1, total_exp_plays + total_discards)
+
+        self.writer.add_scalar('GameQuality/LC_AvgExpeditions', avg_exps, self.iteration)
+        self.writer.add_scalar('GameQuality/LC_PlayRate', play_rate, self.iteration)
+
+        self._game_quality['avg_exps'] = round(avg_exps, 2)
+        self._game_quality['play_rate'] = round(play_rate, 3)
+
+        assessment.append(f"LC: {avg_exps:.1f} expeditions/player, "
+                          f"{play_rate:.0%} play rate, "
+                          f"{discard_draw_rate:.1f} discard-pile draws/player")
+
+        if avg_exps < 0.5:
+            warnings.append("DEGENERATE: <0.5 expeditions/player — bot isn't building anything")
+        elif avg_exps < 1.5:
+            warnings.append("WEAK: <1.5 expeditions — bot barely commits to expeditions")
+        elif avg_exps >= 3.0:
+            assessment.append("HEALTHY: 3+ expeditions — bot is actively building")
+
+        if std_len < 1.0 and n >= 20:
+            warnings.append(f"ALL GAMES ~{avg_len:.0f} MOVES — degenerate equilibrium (recycling)")
+
+        if play_rate < 0.15:
+            warnings.append(f"Play rate {play_rate:.0%} — bot almost never plays to expeditions")
+
+        if n >= 20 and max(p0w, p1w) / n > 0.70:
+            dominant = "P0" if p0w > p1w else "P1"
+            warnings.append(f"{dominant} wins {max(p0w,p1w)/n:.0%} — severe player imbalance")
+
+        return assessment, warnings
+
+    def _assess_mandala(self, summaries, n, avg_len, std_len, p0w, p1w, draws):
+        """Qualitative assessment of Mandala gameplay."""
+        assessment = []
+        warnings = []
+
+        avg_mt = sum(sum(s['mountain_plays'][0]) + sum(s['mountain_plays'][1])
+                     for s in summaries) / (2 * n)
+        avg_fld = sum(sum(s['field_plays'][0]) + sum(s['field_plays'][1])
+                      for s in summaries) / (2 * n)
+        avg_disc = sum(sum(s['discard_plays'][0]) + sum(s['discard_plays'][1])
+                       for s in summaries) / (2 * n)
+        total_plays = avg_mt + avg_fld + avg_disc
+
+        if total_plays > 0:
+            mt_pct = avg_mt / total_plays
+            fld_pct = avg_fld / total_plays
+            disc_pct = avg_disc / total_plays
+
+            self.writer.add_scalar('GameQuality/M_MountainRate', mt_pct, self.iteration)
+            self.writer.add_scalar('GameQuality/M_FieldRate', fld_pct, self.iteration)
+            self.writer.add_scalar('GameQuality/M_DiscardRate', disc_pct, self.iteration)
+
+            self._game_quality['mt_pct'] = round(mt_pct, 3)
+            self._game_quality['fld_pct'] = round(fld_pct, 3)
+            self._game_quality['disc_pct'] = round(disc_pct, 3)
+
+            assessment.append(f"Mandala: {mt_pct:.0%} mountain, {fld_pct:.0%} field, "
+                              f"{disc_pct:.0%} discard")
+
+            if disc_pct > 0.50:
+                warnings.append(f"Discard rate {disc_pct:.0%} — bot is throwing away too many cards")
+            if mt_pct < 0.10:
+                warnings.append(f"Mountain rate {mt_pct:.0%} — bot rarely builds mountains")
+            if fld_pct < 0.10:
+                warnings.append(f"Field rate {fld_pct:.0%} — bot rarely grows fields")
+
+        avg_score = sum(s.get('score_p0', 0) + s.get('score_p1', 0) for s in summaries) / (2 * n)
+        assessment.append(f"Avg score: {avg_score:.1f}")
+
+        if std_len < 2.0 and n >= 20:
+            warnings.append(f"Low game length variance (±{std_len:.1f}) — possible degenerate pattern")
+
+        if n >= 20 and max(p0w, p1w) / n > 0.70:
+            dominant = "P0" if p0w > p1w else "P1"
+            warnings.append(f"{dominant} wins {max(p0w,p1w)/n:.0%} — severe player imbalance")
+
+        return assessment, warnings
 
     def _save_checkpoint(self, suffix=''):
         """Save network checkpoint and replay buffer.
@@ -370,15 +661,14 @@ class Trainer:
         }
 
         if suffix:
-            # Game-level checkpoint: lightweight only (no replay buffer, no model_latest)
+            # Game-level checkpoint: lightweight only
             torch.save(checkpoint, checkpoint_dir / f'model_latest{suffix}.pt')
         else:
-            # Full checkpoint: save model_latest with replay buffer for resume
-            # Use atomic write (temp file + rename) to prevent 0-byte corruption on crash
-            latest_checkpoint = dict(checkpoint)
-            latest_checkpoint['replay_buffer'] = self.replay_buffer.get_all_data()
+            # Atomic write (temp file + rename) to prevent 0-byte corruption on crash
+            # NOTE: Replay buffer is NOT saved — it caused 3x memory spikes (15 GB per trainer)
+            # that triggered container OOM. Buffer rebuilds from self-play after restart.
             tmp_path = checkpoint_dir / 'model_latest.pt.tmp'
-            torch.save(latest_checkpoint, tmp_path)
+            torch.save(checkpoint, tmp_path)
             tmp_path.rename(checkpoint_dir / 'model_latest.pt')
 
             # Save periodic iteration checkpoint (lightweight, no replay buffer)
@@ -440,11 +730,55 @@ class Trainer:
         """Load training checkpoint and replay buffer."""
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
 
-        self._unwrapped_network.load_state_dict(checkpoint['model_state_dict'])
-        try:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        except (ValueError, KeyError):
-            print("Optimizer state incompatible, starting fresh")
+        # Handle policy head size migration (108 → 150 actions)
+        saved_state = checkpoint['model_state_dict']
+        model_state = self._unwrapped_network.state_dict()
+        policy_migrated = False
+        if 'fc_policy.weight' in saved_state and 'fc_policy.weight' in model_state:
+            old_out = saved_state['fc_policy.weight'].shape[0]
+            new_out = model_state['fc_policy.weight'].shape[0]
+            if old_out != new_out:
+                policy_migrated = True
+                print(f"Migrating policy head: {old_out} → {new_out} actions")
+                old_w = saved_state['fc_policy.weight']
+                old_b = saved_state['fc_policy.bias']
+                new_w = torch.zeros_like(model_state['fc_policy.weight'])
+                new_b = torch.zeros_like(model_state['fc_policy.bias'])
+                # Copy BUILD_MOUNTAIN (0-11) and GROW_FIELD (12-95) as-is
+                new_w[:96] = old_w[:96]
+                new_b[:96] = old_b[:96]
+                # Remap old DISCARD (96+color) → new DISCARD (96+color*8+count)
+                # Copy old per-color weights to all count variants
+                for c in range(6):
+                    if 96 + c < old_out:
+                        for cnt in range(8):
+                            new_w[96 + c * 8 + cnt] = old_w[96 + c]
+                            new_b[96 + c * 8 + cnt] = old_b[96 + c]
+                # Remap old CLAIM (102+color) → new CLAIM (144+color)
+                for c in range(6):
+                    if 102 + c < old_out:
+                        new_w[144 + c] = old_w[102 + c]
+                        new_b[144 + c] = old_b[102 + c]
+                saved_state['fc_policy.weight'] = new_w
+                saved_state['fc_policy.bias'] = new_b
+        # Handle input channel migration (e.g., 121 → 123)
+        if 'conv_input.weight' in saved_state and 'conv_input.weight' in model_state:
+            old_in = saved_state['conv_input.weight'].shape[1]
+            new_in = model_state['conv_input.weight'].shape[1]
+            if old_in != new_in:
+                policy_migrated = True  # Also skip optimizer state
+                print(f"Migrating input channels: {old_in} → {new_in}")
+                new_w = torch.zeros_like(model_state['conv_input.weight'])
+                new_w[:, :old_in, :, :] = saved_state['conv_input.weight']
+                saved_state['conv_input.weight'] = new_w
+        self._unwrapped_network.load_state_dict(saved_state)
+        if policy_migrated:
+            print("Optimizer state skipped (policy head migrated, sizes incompatible)")
+        else:
+            try:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            except (ValueError, KeyError, RuntimeError):
+                print("Optimizer state incompatible, starting fresh")
         self.iteration = checkpoint['iteration']
         # Set LR based on absolute iteration (restart-resilient)
         lr = self._get_lr_for_iteration(self.iteration)
@@ -456,10 +790,14 @@ class Trainer:
         # NEW: Restore game progress within iteration
         self.games_in_current_iteration = checkpoint.get('games_in_current_iteration', 0)
 
-        # Restore replay buffer if present
+        # Replay buffer is no longer saved in checkpoints (OOM fix).
+        # Buffer rebuilds from self-play — first ~33 iters after restart have smaller buffer.
         if 'replay_buffer' in checkpoint:
+            # Legacy checkpoint with embedded buffer — load it but this path will phase out
             self.replay_buffer.load_data(checkpoint['replay_buffer'])
-            print(f"Restored replay buffer with {len(self.replay_buffer)} examples")
+            print(f"Restored replay buffer with {len(self.replay_buffer)} examples (legacy)")
+        else:
+            print("Replay buffer starts empty (rebuilds from self-play)")
 
         print(f"Loaded checkpoint from {filepath}")
         print(f"Resuming from iteration {self.iteration}, total games: {self.total_games}")

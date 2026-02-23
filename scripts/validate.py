@@ -314,7 +314,7 @@ def _validate_training_pipeline(game, config, game_name, expected_channels, num_
           f"tensor has {tensor.shape[0]}, network expects {network.input_channels}")
 
     x = torch.from_numpy(tensor).unsqueeze(0).to(device)
-    policy_logits, value = network(x)
+    policy_logits, value, *_ = network(x)
     check(f"Network outputs correct policy size ({num_actions})",
           policy_logits.shape[1] == num_actions,
           f"got {policy_logits.shape[1]}")

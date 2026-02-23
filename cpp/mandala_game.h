@@ -10,8 +10,12 @@ static constexpr int M_NUM_COLORS = 6;
 static constexpr int M_CARDS_PER_COLOR = 18;
 static constexpr int M_TOTAL_CARDS = 108;
 static constexpr int M_MAX_HAND = 8;
-static constexpr int M_NUM_ACTIONS = 30;
-static constexpr int M_TENSOR_CHANNELS = 83;
+static constexpr int M_NUM_ACTIONS = 150;  // 12 BUILD_MOUNTAIN + 84 GROW_FIELD + 48 DISCARD + 6 CLAIM
+static constexpr int M_TENSOR_CHANNELS = 123;
+
+// Phase constants
+static constexpr int M_PHASE_PLAY = 0;
+static constexpr int M_PHASE_CLAIM = 1;
 
 class MandalaState : public GameState {
 public:
@@ -26,6 +30,12 @@ public:
     bool game_over = false;
     bool deck_reshuffled = false;
     bool game_ends_next_mandala = false;
+
+    // CLAIM phase state
+    int phase = M_PHASE_PLAY;
+    int claiming_mandala = -1;
+    std::vector<int> claiming_colors_available;
+    int triggering_player = -1;
 
     // Behavioral accumulators: [player][color]
     std::array<std::array<int, M_NUM_COLORS>, 2> mountain_plays{};
@@ -55,12 +65,15 @@ public:
     std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const override;
     bool is_terminal(const GameState& state) const override;
     float get_reward(const GameState& state, int player) const override;
+    int get_score(const GameState& state, int player) const override;
     void randomize_hidden(GameState& state, std::mt19937& rng) const override;
 
 private:
     bool can_play_to_mountain(const MandalaState& s, int color, int mandala) const;
     bool can_play_to_field(const MandalaState& s, int color, int mandala, int player) const;
-    void destroy_mandala(MandalaState& s, int mandala) const;
+    void start_claiming(MandalaState& s, int mandala, int triggering) const;
+    void process_claim(MandalaState& s, int color) const;
+    void finish_claiming(MandalaState& s) const;
     void check_and_reshuffle_deck(MandalaState& s) const;
     bool should_game_end(const MandalaState& s) const;
     int calculate_score(const MandalaState& s, int player) const;

@@ -146,7 +146,8 @@ class FastArena:
                  'total_games': games_per_opponent, 'game_results': []}
             for repeat in range(games_per_opponent):
                 game_idx = opp_idx * games_per_opponent + repeat
-                _, _, _, outcome = mgr.get_game_data(game_idx)
+                game_data = mgr.get_game_data(game_idx)
+                outcome = game_data[3]  # (states, policies, players, outcome, ...)
                 outcome = float(outcome)  # From player 0's perspective
                 current_is_p0 = (game_idx % 2 == 0)
                 if outcome > 0:
@@ -203,7 +204,7 @@ class FastArena:
         for m_idx, indices in groups.items():
             batch = torch.from_numpy(stacked[indices]).to(self.device)
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
-                logits, vals = models[m_idx](batch)
+                logits, vals, *_ = models[m_idx](batch)
                 pols = F.softmax(logits, dim=1).cpu().numpy()
                 vals_np = vals.cpu().numpy()[:, 0] if not policy_only else None
 

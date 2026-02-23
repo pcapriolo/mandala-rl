@@ -1,6 +1,6 @@
 """Basic tests for Mandala game engine."""
 import numpy as np
-from mandala_rl.game.engine import MandalaGame
+from mandala_rl.game.engine import MandalaGame, NUM_ACTIONS
 from mandala_rl.game.state import GameState
 
 
@@ -9,11 +9,11 @@ def test_initial_state():
     game = MandalaGame()
     state = game.get_initial_state()
 
-    # Check that cards are dealt
     assert len(state.hands[0]) == 6
     assert len(state.hands[1]) == 6
     assert state.current_player == 0
     assert not state.game_over
+    assert state.phase == 0
 
 
 def test_valid_moves():
@@ -22,8 +22,8 @@ def test_valid_moves():
     state = game.get_initial_state()
 
     valid_moves = game.get_valid_moves(state)
-    assert len(valid_moves) > 0
-    assert np.sum(valid_moves) > 0  # At least some valid moves
+    assert len(valid_moves) == NUM_ACTIONS
+    assert np.sum(valid_moves) > 0
 
 
 def test_state_copy():
@@ -35,6 +35,7 @@ def test_state_copy():
     assert state is not state_copy
     assert state.current_player == state_copy.current_player
     assert len(state.hands[0]) == len(state_copy.hands[0])
+    assert state.phase == state_copy.phase
 
 
 def test_canonical_form():
@@ -42,14 +43,20 @@ def test_canonical_form():
     game = MandalaGame()
     state = game.get_initial_state()
 
-    # Player 0's perspective
     canonical = state.get_canonical_form()
     assert canonical.current_player == 0
 
-    # Player 1's perspective
     state.current_player = 1
     canonical = state.get_canonical_form()
     assert canonical.current_player == 0
+
+
+def test_tensor_shape():
+    """Verify tensor has 96 channels."""
+    game = MandalaGame()
+    state = game.get_initial_state()
+    tensor = state.to_tensor()
+    assert tensor.shape == (96, 8, 8)
 
 
 if __name__ == '__main__':
@@ -57,4 +64,5 @@ if __name__ == '__main__':
     test_valid_moves()
     test_state_copy()
     test_canonical_form()
+    test_tensor_shape()
     print("All tests passed!")
