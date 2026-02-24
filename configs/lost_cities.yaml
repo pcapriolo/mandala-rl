@@ -2,7 +2,7 @@
 
 # Network Architecture
 network:
-  input_channels: 86
+  input_channels: 96
   num_actions: 96  # 8 hand_pos * 2 dest * 6 draw_src
   num_res_blocks: 8
   channels: 96

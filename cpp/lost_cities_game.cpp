@@ -102,27 +102,26 @@ void LostCitiesState::to_tensor(std::vector<float>& out) const {
         set_channel(58 + i, (hands[0][i].value + 1) / 11.0f);
     }
 
+    // Count known cards per color (shared by belief + unseen channels)
+    int known[LC_NUM_COLORS] = {};
+    for (auto& card : hands[0]) known[card.color]++;
+    for (int p = 0; p < 2; p++)
+        for (int c = 0; c < LC_NUM_COLORS; c++)
+            known[c] += static_cast<int>(expeditions[p][c].size());
+    for (int c = 0; c < LC_NUM_COLORS; c++)
+        known[c] += static_cast<int>(discard_piles[c].size());
+
+    int total_unseen = 0;
+    int remaining[LC_NUM_COLORS];
+    for (int c = 0; c < LC_NUM_COLORS; c++) {
+        remaining[c] = LC_CARDS_PER_COLOR - known[c];
+        if (remaining[c] < 0) remaining[c] = 0;
+        total_unseen += remaining[c];
+    }
+
     // Ch 66-70: Belief channels — P(opp has ≥1 of color c)
     {
-        // Count known cards per color (my hand + all expeditions + all discard piles)
-        int known[LC_NUM_COLORS] = {};
-        for (auto& card : hands[0]) known[card.color]++;
-        for (int p = 0; p < 2; p++)
-            for (int c = 0; c < LC_NUM_COLORS; c++)
-                known[c] += static_cast<int>(expeditions[p][c].size());
-        for (int c = 0; c < LC_NUM_COLORS; c++)
-            known[c] += static_cast<int>(discard_piles[c].size());
-
-        int total_unseen = 0;
-        int remaining[LC_NUM_COLORS];
-        for (int c = 0; c < LC_NUM_COLORS; c++) {
-            remaining[c] = LC_CARDS_PER_COLOR - known[c];
-            if (remaining[c] < 0) remaining[c] = 0;
-            total_unseen += remaining[c];
-        }
-
         int opp_hand_sz = static_cast<int>(hands[1].size());
-
         for (int c = 0; c < LC_NUM_COLORS; c++) {
             float belief = 0.0f;
             if (remaining[c] > 0 && total_unseen > 0 && opp_hand_sz > 0) {
@@ -138,16 +137,28 @@ void LostCitiesState::to_tensor(std::vector<float>& out) const {
         }
     }
 
-    // Ch 71-75: Opp expedition play frequency per color
-    // Ch 76-80: Opp discard frequency per color
-    // Ch 81-85: Opp draw-from-discard frequency per color
-    {
-        float opp_total = static_cast<float>(std::max(total_moves[1], 1));
+    // Ch 71-80: Expedition card value sum per color (my 71-75, opp 76-80)
+    // Ch 81-90: Expedition net score per color (my 81-85, opp 86-90)
+    for (int p = 0; p < 2; p++) {
         for (int c = 0; c < LC_NUM_COLORS; c++) {
-            set_channel(71 + c, expedition_plays[1][c] / opp_total);
-            set_channel(76 + c, color_discards[1][c] / opp_total);
-            set_channel(81 + c, discard_pile_draws[1][c] / opp_total);
+            auto& exp = expeditions[p][c];
+            if (exp.empty()) continue;
+            int card_sum = 0;
+            int wagers = 0;
+            for (auto& card : exp) {
+                if (card.value == 0) wagers++;
+                else card_sum += card.value;
+            }
+            set_channel(71 + p * 5 + c, card_sum / 54.0f);
+            int net = (card_sum - 20) * (1 + wagers);
+            if (static_cast<int>(exp.size()) >= 8) net += 20;
+            set_channel(81 + p * 5 + c, std::max(0.0f, std::min(1.0f, net / 100.0f + 0.5f)));
         }
+    }
+
+    // Ch 91-95: Unseen cards per color (remaining / 12)
+    for (int c = 0; c < LC_NUM_COLORS; c++) {
+        set_channel(91 + c, remaining[c] / static_cast<float>(LC_CARDS_PER_COLOR));
     }
 }
 

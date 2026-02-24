@@ -103,7 +103,7 @@ class LostCitiesState:
         Convert state to neural network input tensor.
         State is assumed to be in canonical form (current player = index 0).
 
-        86 channels x 8x8 (values broadcast across spatial dims):
+        96 channels x 8x8 (values broadcast across spatial dims):
           Ch 0-4:   My hand count per color (/8)
           Ch 5-9:   My hand wager count per color (/3)
           Ch 10-14: My expedition top value per color (/10)
@@ -117,15 +117,17 @@ class LostCitiesState:
           Ch 46:    Opp hand size / 8
           Ch 47:    My score / 200 + 0.5
           Ch 48:    Opp score / 200 + 0.5
-          Ch 49:    Game progress (turns_played / 150)
+          Ch 49:    Game progress (turns_played / 60)
           Ch 50-57: Hand position 0-7 card color ((color+1)/6, 0=empty)
           Ch 58-65: Hand position 0-7 card value ((value+1)/11, 0=empty)
           Ch 66-70: Belief channels — P(opp has ≥1 of color c)
-          Ch 71-75: Opp discard frequency per color (default 0.0)
-          Ch 76-80: My played card frequency per color (default 0.0)
-          Ch 81-85: Opp played card frequency per color (default 0.0)
+          Ch 71-75: My expedition card value sum per color (/54)
+          Ch 76-80: Opp expedition card value sum per color (/54)
+          Ch 81-85: My expedition net score per color (normalized)
+          Ch 86-90: Opp expedition net score per color (normalized)
+          Ch 91-95: Unseen cards per color (/12)
         """
-        tensor = np.zeros((86, 8, 8), dtype=np.float32)
+        tensor = np.zeros((96, 8, 8), dtype=np.float32)
 
         # My hand counts and wager counts per color
         for card in self.hands[0]:
@@ -196,11 +198,24 @@ class LostCitiesState:
                 belief = 1.0 - p_none
             tensor[66 + c] = belief
 
-        # Ch 71-85: Behavioral inference (play frequencies per color)
-        # These require move-history tracking not available in the Python game state.
-        # Default to 0.0 — the model was trained with these but they're only
-        # informative after many moves. Zero is a safe neutral value.
-        # (Ch 71-75: discard freq, Ch 76-80: my play freq, Ch 81-85: opp play freq)
+        # Ch 71-80: Expedition card value sum per color (my 71-75, opp 76-80)
+        # Ch 81-90: Expedition net score per color (my 81-85, opp 86-90)
+        for p in range(2):
+            for c in range(NUM_COLORS):
+                exp = self.expeditions[p][c]
+                if not exp:
+                    continue
+                card_sum = sum(card.value for card in exp if card.value > 0)
+                wagers = sum(1 for card in exp if card.value == 0)
+                tensor[71 + p * 5 + c] = card_sum / 54.0
+                net = (card_sum - 20) * (1 + wagers)
+                if len(exp) >= 8:
+                    net += 20
+                tensor[81 + p * 5 + c] = np.clip(net / 100.0 + 0.5, 0.0, 1.0)
+
+        # Ch 91-95: Unseen cards per color
+        for c in range(NUM_COLORS):
+            tensor[91 + c] = remaining[c] / CARDS_PER_COLOR
 
         return tensor
 
