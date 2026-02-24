@@ -655,6 +655,37 @@ def create_mandala_blueprint(server):
             json.dump(game_data, f, indent=2)
         return jsonify({'success': True})
 
+    @bp.route('/api/ai_hint', methods=['POST'])
+    def ai_hint():
+        """Get AI's recommended move for the current position."""
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+
+        state = session.state
+        canonical = state.get_canonical_form()
+        tensor = canonical.to_tensor()
+        policy, value = server.predict(tensor)
+
+        valid_moves = server.engine.get_valid_moves(state)
+        valid_policy = policy * valid_moves
+        action = int(valid_policy.argmax())
+
+        top_actions = valid_policy.argsort()[-3:][::-1]
+        top_moves = [
+            {'action': int(a), 'description': _mandala_action_to_string(a),
+             'probability': float(policy[a] * 100)}
+            for a in top_actions if valid_moves[a]
+        ]
+
+        return jsonify({
+            'recommended_action': action,
+            'recommended_description': _mandala_action_to_string(action),
+            'value': float(value),
+            'top_moves': top_moves,
+        })
+
     @bp.route('/api/checkpoints')
     def list_checkpoints():
         return jsonify([{
