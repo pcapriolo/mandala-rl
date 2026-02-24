@@ -1,7 +1,7 @@
 {
-  "iteration": 676,
-  "total_games": 67600,
-  "source": "data/checkpoints/model_latest_677.pt",
+  "iteration": 799,
+  "total_games": 79900,
+  "source": "data/checkpoints/model_iter_799.pt",
   "input_channels": 137,
   "num_actions": 150
 }

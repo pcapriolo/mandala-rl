@@ -103,7 +103,158 @@
     "iter_87": 1449.5163392284385,
     "iter_124": 1541.8277332900068,
     "iter_73": 1513.6557795161664,
-    "iter_106": 1511.072183510018
+    "iter_106": 1511.072183510018,
+    "iter_442": 1400.8365491051545,
+    "iter_443": 1452.882552108939,
+    "iter_444": 1483.107818185889,
+    "iter_445": 1442.319929087884,
+    "iter_446": 1465.4462650721648,
+    "iter_447": 1547.728577414868,
+    "iter_448": 1492.388837746993,
+    "iter_449": 1405.8127133725793,
+    "iter_450": 1424.5739903355334,
+    "iter_451": 1484.1641031566955,
+    "iter_452": 1491.5340177809594,
+    "iter_453": 1444.7430098551904,
+    "iter_454": 1437.8349726591432,
+    "iter_455": 1408.9693526545798,
+    "iter_456": 1427.007734010182,
+    "iter_457": 1460.677599137575,
+    "iter_458": 1405.9682694946598,
+    "iter_459": 1504.1266302934234,
+    "iter_460": 1372.1049636511168,
+    "iter_461": 1339.026888054553,
+    "iter_462": 1419.7817811418804,
+    "iter_463": 1405.7409816612803,
+    "iter_464": 1463.1203063002713,
+    "iter_465": 1528.937796975983,
+    "iter_466": 1473.1653990583377,
+    "iter_467": 1378.2792930676198,
+    "iter_468": 1488.6517461776393,
+    "iter_469": 1589.8340185367506,
+    "iter_470": 1538.7960386470938,
+    "iter_471": 1542.5441090853878,
+    "iter_472": 1369.098057410011,
+    "iter_473": 1474.6619458105054,
+    "iter_474": 1546.5164572835565,
+    "iter_475": 1478.1660787403498,
+    "iter_476": 1563.9436993205907,
+    "iter_477": 1403.2630697162067,
+    "iter_478": 1434.9785908725805,
+    "iter_479": 1407.0307230077403,
+    "iter_480": 1408.327606589695,
+    "iter_481": 1564.5676555800248,
+    "iter_482": 1619.2277944620914,
+    "iter_483": 1572.322210354628,
+    "iter_484": 1417.4644959106745,
+    "iter_485": 1378.0693334700331,
+    "iter_486": 1471.9569813977657,
+    "iter_487": 1456.895645044476,
+    "iter_488": 1437.371587748473,
+    "iter_489": 1519.6549659357281,
+    "iter_490": 1537.2573309689133,
+    "iter_491": 1440.7240174203403,
+    "iter_492": 1478.422373886089,
+    "iter_493": 1458.0584621183887,
+    "iter_494": 1531.2990794428122,
+    "iter_495": 1471.7279425238414,
+    "iter_496": 1377.9175350851012,
+    "iter_497": 1420.9441405385364,
+    "iter_498": 1484.4271142049581,
+    "iter_499": 1441.707732896765,
+    "iter_500": 1464.6911328155152,
+    "iter_501": 1426.5896514219137,
+    "iter_502": 1447.7365584586346,
+    "iter_503": 1404.643562202032,
+    "iter_504": 1432.2854337859326,
+    "iter_505": 1461.773313861769,
+    "iter_506": 1427.851547854381,
+    "iter_507": 1467.199051492363,
+    "iter_508": 1400.1754932397178,
+    "iter_509": 1389.839240996157,
+    "iter_510": 1427.6051593436039,
+    "iter_511": 1487.829249573782,
+    "iter_512": 1435.4333094239105,
+    "iter_513": 1499.9068461910106,
+    "iter_514": 1550.8148089981569,
+    "iter_515": 1444.3021582026704,
+    "iter_516": 1466.2915283362552,
+    "iter_517": 1537.79208422782,
+    "iter_518": 1610.6044637251027,
+    "iter_519": 1454.1982563082797,
+    "iter_520": 1518.0278079190223,
+    "iter_521": 1497.0030334234577,
+    "iter_522": 1443.0526872190635,
+    "iter_523": 1501.5372607849326,
+    "iter_524": 1496.382749697662,
+    "iter_525": 1380.9187985691863,
+    "iter_526": 1485.4042463545238,
+    "iter_527": 1457.914200072842,
+    "iter_528": 1603.2085986703883,
+    "iter_529": 1532.3039910496298,
+    "iter_530": 1544.837288587992,
+    "iter_531": 1412.6113798819053,
+    "iter_532": 1460.5275293704963,
+    "iter_533": 1382.9719849764233,
+    "iter_534": 1451.6937288344814,
+    "iter_535": 1469.569689315682,
+    "iter_536": 1636.489141412562,
+    "iter_537": 1539.2634682522348,
+    "iter_538": 1441.968957530127,
+    "iter_539": 1504.8748639116286,
+    "iter_540": 1439.0395757507408,
+    "iter_541": 1519.1401351197458,
+    "iter_542": 1474.0678958200458,
+    "iter_543": 1464.4828631144435,
+    "iter_544": 1570.3349873769923,
+    "iter_545": 1503.9861592272523,
+    "iter_546": 1439.6037128167418,
+    "iter_550": 1462.3713008459426,
+    "iter_600": 1429.116325236874,
+    "iter_650": 1411.2711119840014,
+    "iter_658": 1402.5929986370227,
+    "iter_659": 1453.7513453636102,
+    "iter_660": 1532.6796134641586,
+    "iter_661": 1415.0421208507332,
+    "iter_662": 1397.7534904083193,
+    "iter_663": 1500.0479900671648,
+    "iter_664": 1433.9366130190524,
+    "iter_665": 1510.4865022094398,
+    "iter_666": 1440.3532039817485,
+    "iter_667": 1411.31035990485,
+    "iter_668": 1491.3728152962506,
+    "iter_669": 1480.256288041284,
+    "iter_670": 1447.1473828873916,
+    "iter_671": 1347.2350172772265,
+    "iter_672": 1418.845240507913,
+    "iter_673": 1400.652643314134,
+    "iter_674": 1419.6140087244125,
+    "iter_675": 1474.4881695387355,
+    "iter_676": 1474.4326076183268,
+    "iter_677": 1406.689005840915,
+    "iter_678": 1514.8370703141998,
+    "iter_679": 1519.6202636523292,
+    "iter_680": 1537.6071243125025,
+    "iter_681": 1576.0347250763336,
+    "iter_682": 1454.7093084684273,
+    "iter_683": 1426.671856855741,
+    "iter_684": 1448.7202971871154,
+    "iter_685": 1328.6600023551212,
+    "iter_686": 1550.3202587868677,
+    "iter_687": 1492.4766896922135,
+    "iter_688": 1430.9996892439835,
+    "iter_689": 1427.53289817244,
+    "iter_690": 1436.7443457901245,
+    "iter_691": 1394.908348617542,
+    "iter_692": 1467.5168420295358,
+    "iter_693": 1424.5800335094223,
+    "iter_694": 1432.25291923624,
+    "iter_695": 1497.49664455349,
+    "iter_696": 1393.7328405259318,
+    "iter_697": 1455.324553774318,
+    "iter_698": 1436.9183052142118,
+    "iter_699": 1519.5340325354155,
+    "iter_700": 1385.6166873179152
   },
   "tournament_evaluated": [
     5,
@@ -130,9 +281,915 @@
     110,
     115,
     120,
-    125
+    125,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    451,
+    452,
+    453,
+    454,
+    455,
+    456,
+    457,
+    458,
+    459,
+    460,
+    461,
+    462,
+    463,
+    464,
+    465,
+    466,
+    467,
+    468,
+    469,
+    470,
+    471,
+    472,
+    473,
+    474,
+    475,
+    476,
+    477,
+    478,
+    479,
+    480,
+    481,
+    482,
+    483,
+    484,
+    485,
+    486,
+    487,
+    488,
+    489,
+    490,
+    491,
+    492,
+    493,
+    494,
+    495,
+    496,
+    497,
+    498,
+    499,
+    500,
+    501,
+    502,
+    503,
+    504,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    512,
+    513,
+    514,
+    515,
+    516,
+    517,
+    518,
+    519,
+    520,
+    521,
+    522,
+    523,
+    524,
+    525,
+    526,
+    527,
+    528,
+    529,
+    530,
+    531,
+    532,
+    533,
+    534,
+    535,
+    536,
+    537,
+    538,
+    539,
+    540,
+    541,
+    542,
+    543,
+    544,
+    545,
+    546,
+    550,
+    600,
+    650,
+    658,
+    659,
+    660,
+    661,
+    662,
+    663,
+    664,
+    665,
+    666,
+    667,
+    668,
+    669,
+    670,
+    671,
+    672,
+    673,
+    674,
+    675,
+    676,
+    677,
+    678,
+    679,
+    680,
+    681,
+    682,
+    683,
+    684,
+    685,
+    686,
+    687,
+    688,
+    689,
+    690,
+    691,
+    692,
+    693,
+    694,
+    695,
+    696,
+    697,
+    698,
+    699,
+    700
   ],
-  "stats": {},
+  "stats": {
+    "443": {
+      "wins": 16,
+      "losses": 19,
+      "draws": 1
+    },
+    "442": {
+      "wins": 20,
+      "losses": 26,
+      "draws": 1
+    },
+    "444": {
+      "wins": 19,
+      "losses": 17,
+      "draws": 1
+    },
+    "445": {
+      "wins": 13,
+      "losses": 13,
+      "draws": 2
+    },
+    "446": {
+      "wins": 19,
+      "losses": 19,
+      "draws": 1
+    },
+    "447": {
+      "wins": 23,
+      "losses": 17,
+      "draws": 0
+    },
+    "448": {
+      "wins": 25,
+      "losses": 18,
+      "draws": 0
+    },
+    "449": {
+      "wins": 17,
+      "losses": 21,
+      "draws": 0
+    },
+    "450": {
+      "wins": 41,
+      "losses": 40,
+      "draws": 1
+    },
+    "451": {
+      "wins": 15,
+      "losses": 17,
+      "draws": 0
+    },
+    "452": {
+      "wins": 16,
+      "losses": 17,
+      "draws": 1
+    },
+    "453": {
+      "wins": 16,
+      "losses": 22,
+      "draws": 0
+    },
+    "454": {
+      "wins": 17,
+      "losses": 23,
+      "draws": 0
+    },
+    "455": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "456": {
+      "wins": 15,
+      "losses": 23,
+      "draws": 0
+    },
+    "457": {
+      "wins": 17,
+      "losses": 17,
+      "draws": 0
+    },
+    "458": {
+      "wins": 17,
+      "losses": 23,
+      "draws": 0
+    },
+    "459": {
+      "wins": 21,
+      "losses": 14,
+      "draws": 0
+    },
+    "460": {
+      "wins": 16,
+      "losses": 24,
+      "draws": 2
+    },
+    "461": {
+      "wins": 10,
+      "losses": 27,
+      "draws": 0
+    },
+    "462": {
+      "wins": 18,
+      "losses": 18,
+      "draws": 0
+    },
+    "463": {
+      "wins": 16,
+      "losses": 24,
+      "draws": 0
+    },
+    "464": {
+      "wins": 13,
+      "losses": 15,
+      "draws": 1
+    },
+    "465": {
+      "wins": 17,
+      "losses": 13,
+      "draws": 1
+    },
+    "466": {
+      "wins": 23,
+      "losses": 19,
+      "draws": 0
+    },
+    "467": {
+      "wins": 14,
+      "losses": 22,
+      "draws": 0
+    },
+    "468": {
+      "wins": 20,
+      "losses": 15,
+      "draws": 0
+    },
+    "469": {
+      "wins": 21,
+      "losses": 11,
+      "draws": 0
+    },
+    "470": {
+      "wins": 28,
+      "losses": 17,
+      "draws": 1
+    },
+    "471": {
+      "wins": 20,
+      "losses": 14,
+      "draws": 0
+    },
+    "472": {
+      "wins": 13,
+      "losses": 23,
+      "draws": 0
+    },
+    "473": {
+      "wins": 16,
+      "losses": 16,
+      "draws": 0
+    },
+    "474": {
+      "wins": 24,
+      "losses": 17,
+      "draws": 0
+    },
+    "475": {
+      "wins": 24,
+      "losses": 16,
+      "draws": 0
+    },
+    "476": {
+      "wins": 20,
+      "losses": 14,
+      "draws": 0
+    },
+    "477": {
+      "wins": 10,
+      "losses": 24,
+      "draws": 0
+    },
+    "478": {
+      "wins": 15,
+      "losses": 19,
+      "draws": 0
+    },
+    "479": {
+      "wins": 12,
+      "losses": 24,
+      "draws": 0
+    },
+    "480": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 1
+    },
+    "481": {
+      "wins": 23,
+      "losses": 15,
+      "draws": 0
+    },
+    "482": {
+      "wins": 24,
+      "losses": 11,
+      "draws": 1
+    },
+    "483": {
+      "wins": 22,
+      "losses": 13,
+      "draws": 0
+    },
+    "484": {
+      "wins": 16,
+      "losses": 21,
+      "draws": 1
+    },
+    "485": {
+      "wins": 14,
+      "losses": 22,
+      "draws": 1
+    },
+    "486": {
+      "wins": 17,
+      "losses": 14,
+      "draws": 0
+    },
+    "487": {
+      "wins": 17,
+      "losses": 18,
+      "draws": 0
+    },
+    "488": {
+      "wins": 18,
+      "losses": 21,
+      "draws": 0
+    },
+    "489": {
+      "wins": 23,
+      "losses": 13,
+      "draws": 0
+    },
+    "490": {
+      "wins": 16,
+      "losses": 14,
+      "draws": 0
+    },
+    "491": {
+      "wins": 21,
+      "losses": 21,
+      "draws": 0
+    },
+    "492": {
+      "wins": 15,
+      "losses": 15,
+      "draws": 0
+    },
+    "493": {
+      "wins": 16,
+      "losses": 17,
+      "draws": 0
+    },
+    "494": {
+      "wins": 20,
+      "losses": 14,
+      "draws": 0
+    },
+    "495": {
+      "wins": 20,
+      "losses": 20,
+      "draws": 0
+    },
+    "496": {
+      "wins": 11,
+      "losses": 20,
+      "draws": 0
+    },
+    "497": {
+      "wins": 14,
+      "losses": 18,
+      "draws": 0
+    },
+    "498": {
+      "wins": 20,
+      "losses": 21,
+      "draws": 0
+    },
+    "499": {
+      "wins": 18,
+      "losses": 16,
+      "draws": 1
+    },
+    "500": {
+      "wins": 38,
+      "losses": 42,
+      "draws": 0
+    },
+    "501": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "502": {
+      "wins": 16,
+      "losses": 20,
+      "draws": 0
+    },
+    "503": {
+      "wins": 10,
+      "losses": 19,
+      "draws": 0
+    },
+    "504": {
+      "wins": 16,
+      "losses": 21,
+      "draws": 1
+    },
+    "505": {
+      "wins": 19,
+      "losses": 18,
+      "draws": 0
+    },
+    "506": {
+      "wins": 14,
+      "losses": 20,
+      "draws": 0
+    },
+    "507": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "508": {
+      "wins": 14,
+      "losses": 19,
+      "draws": 0
+    },
+    "509": {
+      "wins": 13,
+      "losses": 24,
+      "draws": 1
+    },
+    "510": {
+      "wins": 17,
+      "losses": 18,
+      "draws": 0
+    },
+    "511": {
+      "wins": 19,
+      "losses": 15,
+      "draws": 0
+    },
+    "512": {
+      "wins": 14,
+      "losses": 17,
+      "draws": 0
+    },
+    "513": {
+      "wins": 17,
+      "losses": 14,
+      "draws": 0
+    },
+    "514": {
+      "wins": 21,
+      "losses": 11,
+      "draws": 1
+    },
+    "515": {
+      "wins": 13,
+      "losses": 22,
+      "draws": 0
+    },
+    "516": {
+      "wins": 17,
+      "losses": 16,
+      "draws": 0
+    },
+    "517": {
+      "wins": 23,
+      "losses": 11,
+      "draws": 0
+    },
+    "518": {
+      "wins": 21,
+      "losses": 12,
+      "draws": 0
+    },
+    "519": {
+      "wins": 15,
+      "losses": 17,
+      "draws": 0
+    },
+    "520": {
+      "wins": 18,
+      "losses": 16,
+      "draws": 0
+    },
+    "521": {
+      "wins": 17,
+      "losses": 15,
+      "draws": 0
+    },
+    "522": {
+      "wins": 16,
+      "losses": 17,
+      "draws": 0
+    },
+    "523": {
+      "wins": 19,
+      "losses": 17,
+      "draws": 0
+    },
+    "524": {
+      "wins": 15,
+      "losses": 19,
+      "draws": 0
+    },
+    "525": {
+      "wins": 11,
+      "losses": 23,
+      "draws": 0
+    },
+    "526": {
+      "wins": 17,
+      "losses": 12,
+      "draws": 0
+    },
+    "527": {
+      "wins": 18,
+      "losses": 18,
+      "draws": 0
+    },
+    "528": {
+      "wins": 20,
+      "losses": 8,
+      "draws": 0
+    },
+    "529": {
+      "wins": 16,
+      "losses": 15,
+      "draws": 1
+    },
+    "530": {
+      "wins": 18,
+      "losses": 13,
+      "draws": 0
+    },
+    "531": {
+      "wins": 15,
+      "losses": 20,
+      "draws": 0
+    },
+    "532": {
+      "wins": 16,
+      "losses": 16,
+      "draws": 0
+    },
+    "533": {
+      "wins": 12,
+      "losses": 21,
+      "draws": 0
+    },
+    "534": {
+      "wins": 18,
+      "losses": 13,
+      "draws": 0
+    },
+    "535": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "536": {
+      "wins": 25,
+      "losses": 7,
+      "draws": 0
+    },
+    "537": {
+      "wins": 18,
+      "losses": 13,
+      "draws": 1
+    },
+    "538": {
+      "wins": 16,
+      "losses": 14,
+      "draws": 1
+    },
+    "539": {
+      "wins": 17,
+      "losses": 14,
+      "draws": 0
+    },
+    "540": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "541": {
+      "wins": 19,
+      "losses": 13,
+      "draws": 0
+    },
+    "542": {
+      "wins": 14,
+      "losses": 17,
+      "draws": 0
+    },
+    "543": {
+      "wins": 17,
+      "losses": 15,
+      "draws": 0
+    },
+    "544": {
+      "wins": 21,
+      "losses": 10,
+      "draws": 1
+    },
+    "545": {
+      "wins": 15,
+      "losses": 17,
+      "draws": 0
+    },
+    "546": {
+      "wins": 15,
+      "losses": 16,
+      "draws": 0
+    },
+    "550": {
+      "wins": 25,
+      "losses": 21,
+      "draws": 1
+    },
+    "600": {
+      "wins": 21,
+      "losses": 25,
+      "draws": 1
+    },
+    "650": {
+      "wins": 22,
+      "losses": 25,
+      "draws": 0
+    },
+    "658": {
+      "wins": 19,
+      "losses": 27,
+      "draws": 1
+    },
+    "659": {
+      "wins": 26,
+      "losses": 21,
+      "draws": 0
+    },
+    "660": {
+      "wins": 26,
+      "losses": 21,
+      "draws": 0
+    },
+    "661": {
+      "wins": 21,
+      "losses": 26,
+      "draws": 0
+    },
+    "662": {
+      "wins": 24,
+      "losses": 23,
+      "draws": 0
+    },
+    "663": {
+      "wins": 27,
+      "losses": 20,
+      "draws": 0
+    },
+    "664": {
+      "wins": 28,
+      "losses": 19,
+      "draws": 0
+    },
+    "665": {
+      "wins": 26,
+      "losses": 21,
+      "draws": 0
+    },
+    "666": {
+      "wins": 21,
+      "losses": 26,
+      "draws": 0
+    },
+    "667": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "668": {
+      "wins": 25,
+      "losses": 22,
+      "draws": 0
+    },
+    "669": {
+      "wins": 25,
+      "losses": 22,
+      "draws": 0
+    },
+    "670": {
+      "wins": 24,
+      "losses": 23,
+      "draws": 0
+    },
+    "671": {
+      "wins": 19,
+      "losses": 28,
+      "draws": 0
+    },
+    "672": {
+      "wins": 19,
+      "losses": 27,
+      "draws": 1
+    },
+    "673": {
+      "wins": 20,
+      "losses": 27,
+      "draws": 0
+    },
+    "674": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "675": {
+      "wins": 25,
+      "losses": 22,
+      "draws": 0
+    },
+    "676": {
+      "wins": 24,
+      "losses": 23,
+      "draws": 0
+    },
+    "677": {
+      "wins": 22,
+      "losses": 24,
+      "draws": 1
+    },
+    "678": {
+      "wins": 26,
+      "losses": 21,
+      "draws": 0
+    },
+    "679": {
+      "wins": 29,
+      "losses": 18,
+      "draws": 0
+    },
+    "680": {
+      "wins": 27,
+      "losses": 19,
+      "draws": 1
+    },
+    "681": {
+      "wins": 32,
+      "losses": 14,
+      "draws": 1
+    },
+    "682": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "683": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "684": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "685": {
+      "wins": 15,
+      "losses": 32,
+      "draws": 0
+    },
+    "686": {
+      "wins": 31,
+      "losses": 16,
+      "draws": 0
+    },
+    "687": {
+      "wins": 26,
+      "losses": 21,
+      "draws": 0
+    },
+    "688": {
+      "wins": 22,
+      "losses": 24,
+      "draws": 1
+    },
+    "689": {
+      "wins": 22,
+      "losses": 25,
+      "draws": 0
+    },
+    "690": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "691": {
+      "wins": 19,
+      "losses": 27,
+      "draws": 1
+    },
+    "692": {
+      "wins": 25,
+      "losses": 22,
+      "draws": 0
+    },
+    "693": {
+      "wins": 20,
+      "losses": 27,
+      "draws": 0
+    },
+    "694": {
+      "wins": 19,
+      "losses": 28,
+      "draws": 0
+    },
+    "695": {
+      "wins": 25,
+      "losses": 22,
+      "draws": 0
+    },
+    "696": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "697": {
+      "wins": 23,
+      "losses": 24,
+      "draws": 0
+    },
+    "698": {
+      "wins": 21,
+      "losses": 26,
+      "draws": 0
+    },
+    "699": {
+      "wins": 27,
+      "losses": 20,
+      "draws": 0
+    },
+    "700": {
+      "wins": 18,
+      "losses": 29,
+      "draws": 0
+    }
+  },
   "benchmark_stats": {
     "5": {
       "vs_random": {
@@ -432,6 +1489,1794 @@
         "wins": 7,
         "losses": 2,
         "draws": 1
+      }
+    },
+    "443": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "444": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "445": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "446": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "447": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "448": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "449": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "450": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "451": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 5,
+        "draws": 1
+      }
+    },
+    "452": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "453": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "454": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "455": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "456": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "457": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "458": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "459": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "460": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "461": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "462": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "463": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "464": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "465": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "466": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "467": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "468": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "469": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "470": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 3,
+        "draws": 1
+      }
+    },
+    "471": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "472": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "473": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 3,
+        "draws": 1
+      }
+    },
+    "474": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "475": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "476": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "477": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "478": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "479": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "480": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "481": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 3,
+        "losses": 7,
+        "draws": 0
+      }
+    },
+    "482": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "483": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "484": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "485": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "486": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "487": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "488": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      }
+    },
+    "489": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 1,
+        "draws": 1
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "490": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "491": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "492": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "493": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "494": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "495": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "496": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "497": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "498": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "499": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "500": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "501": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "502": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "503": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "504": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "505": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "506": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "507": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 3,
+        "losses": 7,
+        "draws": 0
+      }
+    },
+    "508": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "509": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "510": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "511": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "512": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "513": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "514": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "515": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "516": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "517": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "518": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "519": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "520": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "521": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "522": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "523": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 2,
+        "losses": 8,
+        "draws": 0
+      }
+    },
+    "524": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "525": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "526": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "527": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "528": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "529": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "530": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "531": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "532": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "533": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "534": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "535": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "536": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "537": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "538": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "539": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "540": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "541": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "542": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "543": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "544": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "545": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "550": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "600": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 5,
+        "draws": 1
+      }
+    },
+    "650": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "658": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "659": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "660": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "661": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "662": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "663": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "664": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "665": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "666": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "667": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "668": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "669": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "670": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "671": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "672": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "673": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "674": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "675": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "676": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "677": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "678": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "679": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "680": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "681": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 3,
+        "draws": 1
+      }
+    },
+    "682": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "683": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "684": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "685": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      }
+    },
+    "686": {
+      "vs_random": {
+        "wins": 8,
+        "losses": 2,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 4,
+        "losses": 6,
+        "draws": 0
+      }
+    },
+    "687": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "688": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "689": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "690": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "691": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "692": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      }
+    },
+    "693": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "694": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 3,
+        "losses": 7,
+        "draws": 0
+      }
+    },
+    "695": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "696": {
+      "vs_random": {
+        "wins": 7,
+        "losses": 3,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 5,
+        "losses": 5,
+        "draws": 0
+      }
+    },
+    "697": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "698": {
+      "vs_random": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 6,
+        "losses": 4,
+        "draws": 0
+      }
+    },
+    "699": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 9,
+        "losses": 1,
+        "draws": 0
+      }
+    },
+    "700": {
+      "vs_random": {
+        "wins": 10,
+        "losses": 0,
+        "draws": 0
+      },
+      "vs_strategy": {
+        "wins": 2,
+        "losses": 8,
+        "draws": 0
       }
     }
   }
