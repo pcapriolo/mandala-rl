@@ -104,20 +104,11 @@
         .ai-decision-inline { margin-top: 8px; padding: 8px 10px; background: #1a3a6e; border-radius: 6px; font-size: 0.8em; }
         .ai-decision-inline .ai-dec-title { color: #f1c40f; font-weight: 600; margin-bottom: 4px; }
         .ai-decision-inline .ai-dec-eval { color: #888; font-weight: normal; font-size: 0.9em; }
-        .ai-candidates { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
-        .ai-candidate { display: flex; align-items: center; gap: 6px; font-size: 0.9em; }
+        .ai-candidates { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+        .ai-candidate { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
         .ai-candidate.chosen { font-weight: 600; }
-        .ai-candidate .cand-label { min-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .ai-candidate .cand-bar-bg { flex: 1; height: 14px; background: #16213e; border-radius: 3px; overflow: hidden; min-width: 40px; }
-        .ai-candidate .cand-bar { height: 100%; background: #667eea; border-radius: 3px; transition: width 0.3s; }
-        .ai-candidate.chosen .cand-bar { background: #f1c40f; }
-        .ai-candidate .cand-pct { min-width: 40px; text-align: right; color: #aaa; font-size: 0.9em; }
-
-        /* AI hint — feedback after human move */
-        .ai-hint { padding: 8px 14px; background: #1a3a6e; border-radius: 6px; font-size: 0.85em; }
-        .ai-hint.agree { border-left: 3px solid #48bb78; }
-        .ai-hint.differ { border-left: 3px solid #f1c40f; }
-        .ai-hint .hint-title { font-size: 0.75em; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .ai-candidate .cand-label { white-space: nowrap; }
+        .ai-candidate .cand-pct { color: #aaa; font-size: 0.9em; }
 
         /* How to play tooltip */
         .help-btn { background: none; border: 1px solid #555; color: #888; padding: 4px 10px; border-radius: 4px;
@@ -261,8 +252,6 @@
             <div id="movesList"></div>
         </div>
 
-        <!-- AI hint (shows after human move) -->
-        <div class="ai-hint" id="aiHint" style="display:none"></div>
     </div>
 
     <!-- Game over -->
@@ -333,14 +322,11 @@
 
         function renderAiCandidates(moves, chosenAction) {
             if (!moves || moves.length === 0) return '';
-            const maxPct = Math.max(...moves.map(m => m.probability));
             let html = '<div class="ai-candidates">';
             moves.forEach(m => {
                 const isChosen = m.action === chosenAction;
-                const barWidth = maxPct > 0 ? (m.probability / maxPct * 100) : 0;
                 html += `<div class="ai-candidate${isChosen ? ' chosen' : ''}">` +
                     `<span class="cand-label">${isChosen ? '\u25B6 ' : '  '}${m.description}</span>` +
-                    `<span class="cand-bar-bg"><span class="cand-bar" style="width:${barWidth}%"></span></span>` +
                     `<span class="cand-pct">${m.probability.toFixed(1)}%</span>` +
                     `</div>`;
             });
@@ -361,31 +347,35 @@
             lastActionPlayer = null;
             lastAiHint = null;
             aiHintPromise = null;
-            // Clear AI decision from both player areas
-            clearAiDecision();
-            document.getElementById('aiHint').style.display = 'none';
+            // Clear analysis from both player areas
+            clearAllAnalysis();
             renderGame();
             checkAiTurn();
         }
 
-        function clearAiDecision() {
+        function clearAllAnalysis() {
             for (let p = 0; p < 2; p++) {
-                const existing = document.getElementById(`player${p}Area`).querySelector('.ai-decision-inline');
-                if (existing) existing.remove();
+                document.getElementById(`player${p}Area`).querySelectorAll('.ai-decision-inline').forEach(el => el.remove());
             }
         }
 
-        function showAiDecisionInPlayer(aiPlayerIdx, dec) {
-            clearAiDecision();
-            const area = document.getElementById(`player${aiPlayerIdx}Area`);
+        function updatePlayerAnalysis(playerIdx, html) {
+            const area = document.getElementById(`player${playerIdx}Area`);
+            // Replace only this player's analysis, leave the other player's alone
+            area.querySelectorAll('.ai-decision-inline').forEach(el => el.remove());
             const div = document.createElement('div');
             div.className = 'ai-decision-inline';
+            div.innerHTML = html;
+            area.appendChild(div);
+        }
+
+        function showAiDecisionInPlayer(aiPlayerIdx, dec) {
             const valPct = ((dec.value + 1) / 2 * 100).toFixed(0);
             const moves = dec.network_top || dec.top_moves;
-            div.innerHTML =
+            const html =
                 `<div class="ai-dec-title">Played: ${dec.description} <span class="ai-dec-eval">(eval: ${valPct}% win)</span></div>` +
                 renderAiCandidates(moves, dec.action);
-            area.appendChild(div);
+            updatePlayerAnalysis(aiPlayerIdx, html);
         }
 
         function renderGame() {
@@ -567,7 +557,6 @@
 
         function fetchAiHint() {
             lastAiHint = null;
-            document.getElementById('aiHint').style.display = 'none';
             if (!gameId) return;
             aiHintPromise = fetch(`${BASE_URL}/api/ai_hint`, {
                 method: 'POST',
@@ -578,26 +567,22 @@
             }).catch(() => {});
         }
 
-        function showHintComparison(humanAction) {
-            const hintEl = document.getElementById('aiHint');
-            if (!lastAiHint || lastAiHint.error) {
-                hintEl.style.display = 'none';
-                return;
-            }
+        function showHintInPlayerCard(humanPlayerIdx, humanAction) {
+            if (!lastAiHint || lastAiHint.error) return;
+            const valPct = ((lastAiHint.value + 1) / 2 * 100).toFixed(0);
             const agreed = humanAction === lastAiHint.recommended_action;
-            hintEl.className = 'ai-hint ' + (agreed ? 'agree' : 'differ');
+            const top = lastAiHint.top_moves || [];
+
+            let titleText;
             if (agreed) {
-                hintEl.innerHTML = `<div class="hint-title">AI Feedback</div>AI agrees with your move`;
+                titleText = `AI agrees with your move <span class="ai-dec-eval">(eval: ${valPct}% win)</span>`;
             } else {
-                const top = lastAiHint.top_moves || [];
-                let html = `<div class="hint-title">AI Feedback</div>`;
-                html += `AI preferred: <strong>${lastAiHint.recommended_description}</strong>`;
-                if (top.length > 0) {
-                    html += ` (${top[0].probability.toFixed(0)}%)`;
-                }
-                hintEl.innerHTML = html;
+                titleText = `AI preferred: ${lastAiHint.recommended_description} <span class="ai-dec-eval">(eval: ${valPct}% win)</span>`;
             }
-            hintEl.style.display = 'block';
+            const html =
+                `<div class="ai-dec-title" style="color:${agreed ? '#48bb78' : '#f1c40f'}">${titleText}</div>` +
+                renderAiCandidates(top, lastAiHint.recommended_action);
+            updatePlayerAnalysis(humanPlayerIdx, html);
         }
 
         async function makeMove(action) {
@@ -623,8 +608,8 @@
             });
             currentState = await resp.json();
 
-            // Show hint comparison after human's move
-            showHintComparison(action);
+            // Show AI recommendation inline in human player's card
+            showHintInPlayerCard(currentState.human_player, action);
 
             renderGame();
             checkAiTurn();
@@ -671,9 +656,6 @@
                         // Show AI decision inline in AI's player card
                         showAiDecisionInPlayer(1 - currentState.human_player, currentState.ai_decision);
                     }
-
-                    // Hide hint when AI moves (new position)
-                    document.getElementById('aiHint').style.display = 'none';
 
                     renderGame();
                     checkAiTurn();
