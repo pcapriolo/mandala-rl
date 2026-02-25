@@ -10,7 +10,7 @@ network:
 # MCTS Parameters
 mcts:
   num_simulations: 400  # 400 sims plenty for 96-action space; CPU MCTS is bottleneck
-  c_puct: 0.75           # Trust network prior more — high c_puct amplifies strategy fusion toward discard
+  c_puct: 1.25           # Enough exploration to generate expedition plays before policy collapses
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25 # Reduced from 0.35 — less noise, more signal
 
@@ -34,7 +34,8 @@ training:
   replay_buffer_size: 100000  # 100K — buffer no longer saved in checkpoint, rebuilds from self-play
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
-  entropy_weight: 0.05  # Entropy regularization to prevent policy collapse (bumped from 0.02)
+  entropy_weight: 0.15  # Strong anti-collapse pressure — give belief/value heads time to learn
+  policy_weight: 3.0    # Start 3x, decays to 1.0 over 256 iters — let auxiliary heads lead early
 
 # Evaluation Parameters
 evaluation:
