@@ -244,7 +244,7 @@
                 <canvas id="quality-mandala" height="140"></canvas>
             </div>
             <div class="elo-chart-container" style="display:none">
-                <h2>Lost Cities Expeditions</h2>
+                <h2>Lost Cities Play Breakdown</h2>
                 <canvas id="quality-lc" height="140"></canvas>
             </div>
         </div>
@@ -296,10 +296,26 @@
         let eloCharts = {};
         let lossChart = null;
 
+        // Show all hidden LC containers when LC data exists
+        function revealLCContainers() {
+            ['elo-chart-lc', 'gamelen-lc', 'quality-lc', 'lc-replays', 'lc-replays-list'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    // Walk up to the nearest hidden parent
+                    let p = el.parentElement;
+                    while (p && p.style.display !== 'none') p = p.parentElement;
+                    if (p) p.style.display = '';
+                }
+            });
+        }
+
         async function loadLosses() {
             try {
                 const response = await fetch('/api/losses');
                 const games = await response.json();
+
+                // Reveal LC sections if LC data exists
+                if (games['Lost Cities'] && games['Lost Cities'].length > 0) revealLCContainers();
                 const ctx = document.getElementById('loss-chart').getContext('2d');
 
                 const datasets = [];
@@ -624,25 +640,49 @@
                             }
                         ];
                     } else {
-                        // Lost Cities: play rate + avg expeditions (dual axis)
+                        // Lost Cities: play/discard breakdown + avg score + expeditions
                         const lcEntries = qEntries.filter(e => e.play_rate != null);
                         if (lcEntries.length === 0) continue;
                         qualDatasets = [
                             {
-                                label: 'Play Rate',
+                                label: 'Play Rate %',
                                 data: lcEntries.map(e => ({ x: e.iteration, y: (e.play_rate || 0) * 100 })),
-                                borderColor: '#ff6b6b',
+                                borderColor: '#4caf50',
+                                backgroundColor: '#4caf5022',
                                 borderWidth: 2,
                                 tension: 0.3,
                                 pointRadius: 1,
-                                fill: false,
+                                fill: true,
                                 yAxisID: 'y',
+                            },
+                            {
+                                label: 'Discard %',
+                                data: lcEntries.map(e => ({ x: e.iteration, y: (e.discard_pct || (1 - (e.play_rate || 0))) * 100 })),
+                                borderColor: '#ff9800',
+                                backgroundColor: '#ff980022',
+                                borderWidth: 2,
+                                tension: 0.3,
+                                pointRadius: 1,
+                                fill: true,
+                                yAxisID: 'y',
+                            },
+                            {
+                                label: 'Avg Score',
+                                data: lcEntries.map(e => ({ x: e.iteration, y: e.avg_score || 0 })),
+                                borderColor: '#e040fb',
+                                borderWidth: 2,
+                                borderDash: [6, 3],
+                                tension: 0.3,
+                                pointRadius: 2,
+                                fill: false,
+                                yAxisID: 'y1',
                             },
                             {
                                 label: 'Avg Expeditions',
                                 data: lcEntries.map(e => ({ x: e.iteration, y: e.avg_exps || 0 })),
-                                borderColor: '#4caf50',
+                                borderColor: '#4a9eff',
                                 borderWidth: 2,
+                                borderDash: [3, 3],
                                 tension: 0.3,
                                 pointRadius: 1,
                                 fill: false,
@@ -663,12 +703,11 @@
                     } : {
                         x: { type: 'linear', title: { display: true, text: 'Iteration', color: '#888' },
                              ticks: { color: '#888' }, grid: { color: '#333' } },
-                        y: { position: 'left', title: { display: true, text: 'Play Rate %', color: '#888' },
+                        y: { position: 'left', title: { display: true, text: 'Action %', color: '#888' },
                              ticks: { color: '#888' }, grid: { color: '#333' },
                              min: 0, max: 100 },
-                        y1: { position: 'right', title: { display: true, text: 'Expeditions', color: '#666' },
-                              ticks: { color: '#666' }, grid: { drawOnChartArea: false },
-                              suggestedMin: 0, suggestedMax: 5 },
+                        y1: { position: 'right', title: { display: true, text: 'Score / Expeditions', color: '#e040fb' },
+                              ticks: { color: '#e040fb' }, grid: { drawOnChartArea: false } },
                     };
 
                     if (gameQualityCharts[qualKey]) {

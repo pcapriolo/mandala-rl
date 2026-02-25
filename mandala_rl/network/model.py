@@ -199,7 +199,7 @@ class MandalaNet(nn.Module):
         """
         Compute training loss.
 
-        L = policy_weight * policy_loss + value_loss + 0.5 * score_loss
+        L = policy_weight * policy_loss + value_loss + 1.0 * score_loss
             + 0.5 * belief_loss - entropy_weight * entropy
 
         Args:
@@ -236,7 +236,7 @@ class MandalaNet(nn.Module):
             belief_loss = torch.tensor(0.0, device=states.device)
 
         # Total loss
-        total_loss = policy_weight * policy_loss + value_loss + 0.5 * score_loss + 0.5 * belief_loss
+        total_loss = policy_weight * policy_loss + value_loss + 1.0 * score_loss + 0.5 * belief_loss
 
         # Entropy regularization: maximize entropy to prevent policy collapse
         if entropy_weight > 0:

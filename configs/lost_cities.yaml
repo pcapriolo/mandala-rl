@@ -2,25 +2,25 @@
 
 # Network Architecture
 network:
-  input_channels: 96
+  input_channels: 126
   num_actions: 96  # 8 hand_pos * 2 dest * 6 draw_src
   num_res_blocks: 8
   channels: 96
 
 # MCTS Parameters
 mcts:
-  num_simulations: 800  # Reduced from 1600 — ISMCTS wastes zero sims, so 800 effective > 1600 wasteful
-  c_puct: 1.5            # Increased from 1.0 — more MCTS exploration to break degenerate equilibrium
-  dirichlet_alpha: 0.3   # Increased from 0.15 — more uniform noise for broader exploration
-  dirichlet_epsilon: 0.35 # Increased from 0.25 — stronger noise influence at root
+  num_simulations: 400  # 400 sims plenty for 96-action space; CPU MCTS is bottleneck
+  c_puct: 0.75           # Trust network prior more — high c_puct amplifies strategy fusion toward discard
+  dirichlet_alpha: 0.3
+  dirichlet_epsilon: 0.25 # Reduced from 0.35 — less noise, more signal
 
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
-  parallel_games: 32  # Simultaneous games for batched NN inference
-  leaves_per_game: 4  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
+  parallel_games: 128  # Simultaneous games for batched NN inference
+  leaves_per_game: 8  # Virtual loss: collect N leaves per game per MCTS step (bigger GPU batches)
   temperature: 1.0
-  temperature_threshold: 30  # Increased from 15 — explore longer to break degenerate strategy
+  temperature_threshold: 15  # Reduced from 30 — half the game was random, now deterministic after move 15
 
 # Training Parameters
 training:
@@ -35,7 +35,6 @@ training:
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
   entropy_weight: 0.05  # Entropy regularization to prevent policy collapse (bumped from 0.02)
-  min_play_rate: 0.15  # Reject LC games with expedition play rate below this
 
 # Evaluation Parameters
 evaluation:

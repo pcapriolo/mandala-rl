@@ -621,3 +621,12 @@ Added 14 new tensor channels encoding pre-computed scores. The model previously 
 **New channels:** Ch 123-124: total score (my / known opp). Ch 125-136: per-color score contribution for each player. Opponent score uses only **claimed** cup cards (`cups[2:]`), not the 2 hidden starting cards — respects information boundaries. My score uses all cups since I see my own starting cards. Normalization: total `/100`, per-color `/18`.
 
 **Checkpoint migration** handled automatically by existing `conv_input.weight` zero-padding logic (123→137 channels). Old weights preserved, new 14 channels start at zero (no behavior change until training adapts). Color augmentation groups updated to include new per-color channels.
+
+## #51 — LC Reward Signal: Binary → Continuous Score-Margin
+**Feb 24, 2026**
+
+Root-caused the LC degenerate equilibrium (14% play rate, 60% draws, avg score -38). The problem was NOT missing tensor channels — it was the reward signal. `get_reward()` returned nearly binary ±0.8, with a tiny ±0.2 score tiebreaker. When both players discard and score -40, margin=0 → reward=0.0 (draw). With 50-60% draws, the value head got zero gradient signal for most examples and learned "discarding is fine."
+
+**Fix:** Replaced binary reward with continuous `clamp(margin / 100, -1, 1)`. Now winning 80-to-(-30) gives +1.0, a close 10-point win gives +0.1. Also boosted score loss weight from 0.5→1.0 to make the score head a first-class training signal. Removed `min_play_rate` filter that was starving the replay buffer by rejecting low-play-rate games (the network needs to see bad outcomes to learn from them). Fresh training restart with 111ch architecture.
+
+**Files changed:** `cpp/lost_cities_game.cpp` (reward function), `mandala_rl/network/model.py` (score loss weight), `configs/lost_cities.yaml` (remove min_play_rate), `mandala_rl/training/trainer.py` (remove LC play-rate filter).

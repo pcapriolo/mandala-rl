@@ -12,7 +12,7 @@ static constexpr int LC_HAND_SIZE = 8;
 static constexpr int LC_INITIAL_DECK = 44;  // 60 - 2*8
 static constexpr int LC_MAX_TURNS = 60;
 static constexpr int LC_NUM_ACTIONS = 96;
-static constexpr int LC_TENSOR_CHANNELS = 96;
+static constexpr int LC_TENSOR_CHANNELS = 126;
 
 struct LCCard {
     int8_t color;  // 0-4

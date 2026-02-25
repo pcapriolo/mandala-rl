@@ -256,13 +256,19 @@ std::vector<int> BatchedMCTS::finish_move() {
         g.recorded_policies.push_back(action_probs);
         g.recorded_players.push_back(g.state->current_player());
 
-        // Extract belief labels: ground-truth opponent hand + cup colors
-        // 12 floats: [0-5] = P(opp has color c in hand), [6-11] = P(opp has color c in cup)
+        // Extract belief labels: ground-truth opponent hand + cup/expedition colors
+        // 12 floats: Mandala [0-5] hand, [6-11] cup; LC [0-4] hand, [5-9] expedition
         std::vector<float> belief_labels(12, 0.0f);
         if (auto* ms = dynamic_cast<MandalaState*>(g.state.get())) {
             int opp = 1 - ms->current_player_;
             for (int c : ms->hands[opp]) belief_labels[c] = 1.0f;
             for (int c : ms->cups[opp]) belief_labels[6 + c] = 1.0f;
+        } else if (auto* ls = dynamic_cast<LostCitiesState*>(g.state.get())) {
+            int opp = 1 - ls->current_player_;
+            for (auto& card : ls->hands[opp]) belief_labels[card.color] = 1.0f;
+            for (int c = 0; c < LC_NUM_COLORS; c++) {
+                if (!ls->expeditions[opp][c].empty()) belief_labels[5 + c] = 1.0f;
+            }
         }
         g.recorded_belief_labels.push_back(belief_labels);
 

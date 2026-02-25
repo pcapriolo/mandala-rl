@@ -258,17 +258,6 @@ class Trainer:
                 disc_rate = disc / max(total, 1)
                 if disc_rate <= max_discard:
                     kept.append(game)
-            elif s.get('game_type') == 'lost_cities':
-                min_play = self.config.get('min_play_rate', 0)
-                if min_play > 0:
-                    exp_plays = sum(s['expedition_plays'][0]) + sum(s['expedition_plays'][1])
-                    discards = sum(s['color_discards'][0]) + sum(s['color_discards'][1])
-                    total = exp_plays + discards
-                    play_rate = exp_plays / max(total, 1)
-                    if play_rate >= min_play:
-                        kept.append(game)
-                else:
-                    kept.append(game)
             else:
                 kept.append(game)
 
@@ -565,11 +554,17 @@ class Trainer:
 
         play_rate = total_exp_plays / max(1, total_exp_plays + total_discards)
 
+        total_moves_per_player = total_exp_plays + total_discards
+        discard_pct = total_discards / max(1, total_moves_per_player)
+
         self.writer.add_scalar('GameQuality/LC_AvgExpeditions', avg_exps, self.iteration)
         self.writer.add_scalar('GameQuality/LC_PlayRate', play_rate, self.iteration)
+        self.writer.add_scalar('GameQuality/LC_DiscardDrawRate', discard_draw_rate, self.iteration)
 
         self._game_quality['avg_exps'] = round(avg_exps, 2)
         self._game_quality['play_rate'] = round(play_rate, 3)
+        self._game_quality['discard_pct'] = round(discard_pct, 3)
+        self._game_quality['disc_draw_rate'] = round(discard_draw_rate, 2)
 
         assessment.append(f"LC: {avg_exps:.1f} expeditions/player, "
                           f"{play_rate:.0%} play rate, "

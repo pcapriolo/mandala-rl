@@ -103,31 +103,34 @@ class LostCitiesState:
         Convert state to neural network input tensor.
         State is assumed to be in canonical form (current player = index 0).
 
-        96 channels x 8x8 (values broadcast across spatial dims):
-          Ch 0-4:   My hand count per color (/8)
-          Ch 5-9:   My hand wager count per color (/3)
-          Ch 10-14: My expedition top value per color (/10)
-          Ch 15-19: My expedition length per color (/12)
-          Ch 20-24: My expedition wager count per color (/3)
-          Ch 25-29: Opp expedition top value per color (/10)
-          Ch 30-34: Opp expedition length per color (/12)
-          Ch 35-39: Opp expedition wager count per color (/3)
-          Ch 40-44: Discard pile top value per color (/10)
-          Ch 45:    Deck size / 44
-          Ch 46:    Opp hand size / 8
-          Ch 47:    My score / 200 + 0.5
-          Ch 48:    Opp score / 200 + 0.5
-          Ch 49:    Game progress (turns_played / 60)
-          Ch 50-57: Hand position 0-7 card color ((color+1)/6, 0=empty)
-          Ch 58-65: Hand position 0-7 card value ((value+1)/11, 0=empty)
-          Ch 66-70: Belief channels — P(opp has ≥1 of color c)
-          Ch 71-75: My expedition card value sum per color (/54)
-          Ch 76-80: Opp expedition card value sum per color (/54)
-          Ch 81-85: My expedition net score per color (normalized)
-          Ch 86-90: Opp expedition net score per color (normalized)
-          Ch 91-95: Unseen cards per color (/12)
+        111 channels x 8x8 (values broadcast across spatial dims):
+          Ch 0-4:     My hand count per color (/8)
+          Ch 5-9:     My hand wager count per color (/3)
+          Ch 10-14:   My expedition top value per color (/10)
+          Ch 15-19:   My expedition length per color (/12)
+          Ch 20-24:   My expedition wager count per color (/3)
+          Ch 25-29:   Opp expedition top value per color (/10)
+          Ch 30-34:   Opp expedition length per color (/12)
+          Ch 35-39:   Opp expedition wager count per color (/3)
+          Ch 40-44:   Discard pile top value per color (/10)
+          Ch 45:      Deck size / 44
+          Ch 46:      Opp hand size / 8
+          Ch 47:      My score / 200 + 0.5
+          Ch 48:      Opp score / 200 + 0.5
+          Ch 49:      Game progress (turns_played / 60)
+          Ch 50-57:   Hand position 0-7 card color ((color+1)/6, 0=empty)
+          Ch 58-65:   Hand position 0-7 card value ((value+1)/11, 0=empty)
+          Ch 66-70:   Belief channels — P(opp has ≥1 of color c)
+          Ch 71-75:   My expedition card value sum per color (/54)
+          Ch 76-80:   Opp expedition card value sum per color (/54)
+          Ch 81-85:   My expedition net score per color (normalized)
+          Ch 86-90:   Opp expedition net score per color (normalized)
+          Ch 91-95:   Unseen cards per color (/12)
+          Ch 96-100:  Hand value sum per color (/54)
+          Ch 101-105: Projected expedition score per color if all hand cards played
+          Ch 106-110: Playable hand cards per color (/8)
         """
-        tensor = np.zeros((96, 8, 8), dtype=np.float32)
+        tensor = np.zeros((111, 8, 8), dtype=np.float32)
 
         # My hand counts and wager counts per color
         for card in self.hands[0]:
@@ -216,6 +219,46 @@ class LostCitiesState:
         # Ch 91-95: Unseen cards per color
         for c in range(NUM_COLORS):
             tensor[91 + c] = remaining[c] / CARDS_PER_COLOR
+
+        # Ch 96-100: Hand value sum per color (/54)
+        hand_val_sum = [0] * NUM_COLORS
+        hand_wager_count = [0] * NUM_COLORS
+        hand_count = [0] * NUM_COLORS
+        for card in self.hands[0]:
+            hand_count[card.color] += 1
+            if card.value == 0:
+                hand_wager_count[card.color] += 1
+            else:
+                hand_val_sum[card.color] += card.value
+        for c in range(NUM_COLORS):
+            tensor[96 + c] = hand_val_sum[c] / 54.0
+
+        # Ch 101-105: Projected expedition score per color if all hand cards played
+        for c in range(NUM_COLORS):
+            total_cards = len(self.expeditions[0][c]) + hand_count[c]
+            if total_cards == 0:
+                continue
+            exp_sum = sum(card.value for card in self.expeditions[0][c] if card.value > 0)
+            exp_wagers = sum(1 for card in self.expeditions[0][c] if card.value == 0)
+            proj_sum = exp_sum + hand_val_sum[c]
+            proj_wagers = exp_wagers + hand_wager_count[c]
+            proj_net = (proj_sum - 20) * (1 + proj_wagers)
+            if total_cards >= 8:
+                proj_net += 20
+            tensor[101 + c] = np.clip(proj_net / 100.0 + 0.5, 0.0, 1.0)
+
+        # Ch 106-110: Playable hand cards per color (/8)
+        for c in range(NUM_COLORS):
+            exp = self.expeditions[0][c]
+            playable = 0
+            for card in self.hands[0]:
+                if card.color != c:
+                    continue
+                if not exp:
+                    playable += 1
+                elif exp[-1].value == 0 or card.value > exp[-1].value:
+                    playable += 1
+            tensor[106 + c] = playable / HAND_SIZE
 
         return tensor
 

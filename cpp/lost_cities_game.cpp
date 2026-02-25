@@ -160,6 +160,63 @@ void LostCitiesState::to_tensor(std::vector<float>& out) const {
     for (int c = 0; c < LC_NUM_COLORS; c++) {
         set_channel(91 + c, remaining[c] / static_cast<float>(LC_CARDS_PER_COLOR));
     }
+
+    // Ch 96-100: Hand value sum per color (/54)
+    int hand_val_sum[LC_NUM_COLORS] = {};
+    int hand_wager_count[LC_NUM_COLORS] = {};
+    int hand_count[LC_NUM_COLORS] = {};
+    for (auto& card : hands[0]) {
+        hand_count[card.color]++;
+        if (card.value == 0) hand_wager_count[card.color]++;
+        else hand_val_sum[card.color] += card.value;
+    }
+    for (int c = 0; c < LC_NUM_COLORS; c++) {
+        set_channel(96 + c, hand_val_sum[c] / 54.0f);
+    }
+
+    // Ch 101-105: Projected expedition score per color if all hand cards played
+    for (int c = 0; c < LC_NUM_COLORS; c++) {
+        int total_cards = static_cast<int>(expeditions[0][c].size()) + hand_count[c];
+        if (total_cards == 0) continue;
+
+        int exp_sum = 0, exp_wagers = 0;
+        for (auto& card : expeditions[0][c]) {
+            if (card.value == 0) exp_wagers++;
+            else exp_sum += card.value;
+        }
+
+        int proj_sum = exp_sum + hand_val_sum[c];
+        int proj_wagers = exp_wagers + hand_wager_count[c];
+        int proj_net = (proj_sum - 20) * (1 + proj_wagers);
+        if (total_cards >= 8) proj_net += 20;
+        set_channel(101 + c, std::max(0.0f, std::min(1.0f, proj_net / 100.0f + 0.5f)));
+    }
+
+    // Ch 106-110: Playable hand cards per color (/8)
+    for (int c = 0; c < LC_NUM_COLORS; c++) {
+        auto& exp = expeditions[0][c];
+        int playable = 0;
+        for (auto& card : hands[0]) {
+            if (card.color != c) continue;
+            if (exp.empty()) { playable++; continue; }
+            int last_val = exp.back().value;
+            if (last_val == 0 || card.value > last_val) playable++;
+        }
+        set_channel(106 + c, playable / static_cast<float>(LC_HAND_SIZE));
+    }
+
+    // Ch 111-125: Opponent behavioral accumulators (normalized by opp total moves)
+    {
+        float opp_total = static_cast<float>(std::max(total_moves[1], 1));
+        for (int c = 0; c < LC_NUM_COLORS; c++) {
+            // Ch 111-115: Opp expedition play frequency per color
+            set_channel(111 + c, expedition_plays[1][c] / opp_total);
+            // Ch 116-120: Opp discard frequency per color
+            set_channel(116 + c, color_discards[1][c] / opp_total);
+            // Ch 121-125: Opp discard-pile draw frequency per color
+            set_channel(121 + c, discard_pile_draws[1][c] / opp_total);
+        }
+    }
 }
 
 std::unique_ptr<GameState> LostCitiesState::get_canonical() const {
@@ -353,17 +410,10 @@ float LostCitiesGame::get_reward(const GameState& state_base, int player) const 
     int score_opp = s.compute_score(1 - player);
     int margin = score_p - score_opp;
 
-    // Timeout = draw (0.0). In zero-sum training, -1.0 from current player's
-    // perspective becomes +1.0 for the opponent — "both lose" is impossible.
-    // A draw gives both players 0.0, making natural wins (±0.8-1.0) strictly
-    // preferable and giving the value head actual signal to learn from.
-    if (s.turns_played >= LC_MAX_TURNS) {
-        return 0.0f;
-    }
-
-    // Binary win/loss + small margin tiebreaker
-    // Win: [0.8, 1.0], Loss: [-1.0, -0.8], Draw: 0.0
-    if (margin > 0) return 0.8f + std::min(0.2f, margin / 200.0f);
-    if (margin < 0) return -0.8f + std::max(-0.2f, margin / 200.0f);
-    return 0.0f;
+    // Continuous score-margin reward: margin / 100, clamped to [-1, 1].
+    // Typical winning margins in real LC are 30-80 points.
+    // This gives the value head rich gradient signal across all outcomes,
+    // unlike the old binary ±0.8 which produced 0.0 for ~60% draws.
+    float scaled = margin / 100.0f;
+    return std::max(-1.0f, std::min(1.0f, scaled));
 }
