@@ -392,8 +392,8 @@ class Trainer:
             for batch_idx in range(batches_per_epoch):
                 states, policies, values, scores, beliefs = self.replay_buffer.sample(batch_size)
 
-                # Color permutation augmentation (50% of the time)
-                if np.random.random() < 0.5 and states.shape[1] >= 121:
+                # Color permutation augmentation (50% of the time, Mandala only — 6 colors, 137 channels)
+                if np.random.random() < 0.5 and states.shape[1] == 137:
                     states, policies, beliefs = augment_color_permutation_batch(
                         states, policies, beliefs)
 
