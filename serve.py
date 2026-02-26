@@ -271,44 +271,54 @@ def create_lc_blueprint(server):
         session = get_session(data.get('game_id'))
         if not session:
             return jsonify({'error': 'Game not found'}), 404
-        result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        try:
+            result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Move failed: {e}'}), 500
         result['game_id'] = data.get('game_id')
         return jsonify(result)
 
     @bp.route('/api/ai_move', methods=['POST'])
     def ai_move():
-        t_req = time.time()
-        data = request.json or {}
-        session = get_session(data.get('game_id'))
-        if not session:
-            return jsonify({'error': 'Game not found'}), 404
+        try:
+            t_req = time.time()
+            data = request.json or {}
+            session = get_session(data.get('game_id'))
+            if not session:
+                return jsonify({'error': 'Game not found'}), 404
 
-        state = session.state
-        canonical = state.get_canonical_form()
-        tensor = canonical.to_tensor()
-        t_infer = time.time()
-        policy, value = server.predict(tensor)
-        t_done = time.time()
+            state = session.state
+            canonical = state.get_canonical_form()
+            tensor = canonical.to_tensor()
+            t_infer = time.time()
+            policy, value = server.predict(tensor)
+            t_done = time.time()
 
-        valid_moves = server.engine.get_valid_moves(state)
-        valid_policy = policy * valid_moves
-        action = int(valid_policy.argmax())
+            valid_moves = server.engine.get_valid_moves(state)
+            valid_policy = policy * valid_moves
+            action = int(valid_policy.argmax())
 
-        top_actions = valid_policy.argsort()[-5:][::-1]
-        top_moves = [
-            {'action': int(a), 'description': _lc_action_to_display(a, state),
-             'probability': float(policy[a] * 100)}
-            for a in top_actions if valid_moves[a]
-        ]
+            top_actions = valid_policy.argsort()[-5:][::-1]
+            top_moves = [
+                {'action': int(a), 'description': _lc_action_to_display(a, state),
+                 'probability': float(policy[a] * 100)}
+                for a in top_actions if valid_moves[a]
+            ]
 
-        think_ms = int((t_done - t_req) * 1000)
-        print(f"[LC AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
+            think_ms = int((t_done - t_req) * 1000)
+            print(f"[LC AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
 
-        ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
-        result = session.make_move(action, ai_data=ai_data)
-        result['ai_decision'] = {'action': action, 'description': _lc_action_to_display(action, state), 'top_moves': top_moves}
-        result['game_id'] = data.get('game_id')
-        return jsonify(result)
+            ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
+            result = session.make_move(action, ai_data=ai_data)
+            result['ai_decision'] = {'action': action, 'description': _lc_action_to_display(action, state), 'top_moves': top_moves}
+            result['game_id'] = data.get('game_id')
+            return jsonify(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'AI move failed: {e}'}), 500
 
     @bp.route('/api/save', methods=['POST'])
     def save_game():
@@ -452,7 +462,7 @@ class MandalaGameSession:
                     'mountain': cards_to_colors(s.mountains[i]),
                     'field_p0': cards_to_colors(s.fields[i][0]),
                     'field_p1': cards_to_colors(s.fields[i][1]),
-                    'colors': len(set(card.color for card in s.mountains[i])),
+                    'colors': len(s.get_colors_in_mandala(i)),
                 }
                 for i in range(2)
             ],
@@ -465,6 +475,8 @@ class MandalaGameSession:
             'discard_size': len(s.discard),
             'deck_reshuffled': s.deck_reshuffled,
             'game_ends_next_mandala': s.game_ends_next_mandala,
+            'phase': s.phase,
+            'claiming_mandala': s.claiming_mandala,
         }
 
     def make_move(self, action, think_time_ms=None, ai_data=None):
@@ -577,50 +589,60 @@ def create_mandala_blueprint(server):
         session = get_session(data.get('game_id'))
         if not session:
             return jsonify({'error': 'Game not found'}), 404
-        result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        try:
+            result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Move failed: {e}'}), 500
         result['game_id'] = data.get('game_id')
         return jsonify(result)
 
     @bp.route('/api/ai_move', methods=['POST'])
     def ai_move():
-        t_req = time.time()
-        data = request.json or {}
-        session = get_session(data.get('game_id'))
-        if not session:
-            return jsonify({'error': 'Game not found'}), 404
+        try:
+            t_req = time.time()
+            data = request.json or {}
+            session = get_session(data.get('game_id'))
+            if not session:
+                return jsonify({'error': 'Game not found'}), 404
 
-        state = session.state
-        canonical = state.get_canonical_form()
-        tensor = canonical.to_tensor()
-        t_infer = time.time()
-        policy, value = server.predict(tensor)
-        t_done = time.time()
+            state = session.state
+            canonical = state.get_canonical_form()
+            tensor = canonical.to_tensor()
+            t_infer = time.time()
+            policy, value = server.predict(tensor)
+            t_done = time.time()
 
-        valid_moves = server.engine.get_valid_moves(state)
-        valid_policy = policy * valid_moves
-        action = int(valid_policy.argmax())
+            valid_moves = server.engine.get_valid_moves(state)
+            valid_policy = policy * valid_moves
+            action = int(valid_policy.argmax())
 
-        top_actions = valid_policy.argsort()[-5:][::-1]
-        top_moves = [
-            {'action': int(a), 'description': _mandala_action_to_string(a),
-             'probability': float(policy[a] * 100)}
-            for a in top_actions if valid_moves[a]
-        ]
+            top_actions = valid_policy.argsort()[-5:][::-1]
+            top_moves = [
+                {'action': int(a), 'description': _mandala_action_to_string(a),
+                 'probability': float(policy[a] * 100)}
+                for a in top_actions if valid_moves[a]
+            ]
 
-        think_ms = int((t_done - t_req) * 1000)
-        print(f"[Mandala AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
+            think_ms = int((t_done - t_req) * 1000)
+            print(f"[Mandala AI] prep={t_infer-t_req:.3f}s infer={t_done-t_infer:.3f}s total={t_done-t_req:.3f}s")
 
-        ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
-        result = session.make_move(action, ai_data=ai_data)
-        result['ai_decision'] = {
-            'action': action,
-            'description': _mandala_action_to_string(action),
-            'top_moves': top_moves,
-            'network_top': top_moves,  # serve.py uses raw network (no MCTS)
-            'value': value,
-        }
-        result['game_id'] = data.get('game_id')
-        return jsonify(result)
+            ai_data = {'value': value, 'top_moves': top_moves, 'think_time_ms': think_ms}
+            result = session.make_move(action, ai_data=ai_data)
+            result['ai_decision'] = {
+                'action': action,
+                'description': _mandala_action_to_string(action),
+                'top_moves': top_moves,
+                'network_top': top_moves,  # serve.py uses raw network (no MCTS)
+                'value': value,
+            }
+            result['game_id'] = data.get('game_id')
+            return jsonify(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'AI move failed: {e}'}), 500
 
     @bp.route('/api/save', methods=['POST'])
     def save_game():

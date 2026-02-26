@@ -56,6 +56,12 @@
         .color-4 { background: #f1c40f; color: #333; } /* Yellow */
         .color-5 { background: #bdc3c7; color: #333; } /* White */
 
+        .missing-dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 4px; }
+        .missing-dot { width: 22px; height: 22px; border-radius: 4px; display: inline-flex; align-items: center;
+            justify-content: center; font-weight: bold; font-size: 0.6em; opacity: 0.35;
+            border: 2px dashed rgba(255,255,255,0.3); }
+        .m-mandala-title .missing-dot { width: 16px; height: 16px; font-size: 0.5em; }
+
         /* Mandala boards */
         .mandalas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .mandala { background: #16213e; border-radius: 8px; padding: 12px; border: 1px solid #333; }
@@ -472,13 +478,13 @@
         <!-- Mandalas -->
         <div class="mandalas">
             <div class="mandala" id="mandala0">
-                <h3>Mandala 1 (<span id="m0colors">0</span>/6)</h3>
+                <h3>Mandala 1 (<span id="m0colors">0</span>/6) <span id="m0missing" class="missing-dots"></span></h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain0"></div></div>
                 <div class="mandala-section"><div class="label" id="field0_0_label">P0 Field</div><div class="cards-row" id="field0_0"></div></div>
                 <div class="mandala-section"><div class="label" id="field0_1_label">P1 Field</div><div class="cards-row" id="field0_1"></div></div>
             </div>
             <div class="mandala" id="mandala1">
-                <h3>Mandala 2 (<span id="m1colors">0</span>/6)</h3>
+                <h3>Mandala 2 (<span id="m1colors">0</span>/6) <span id="m1missing" class="missing-dots"></span></h3>
                 <div class="mandala-section"><div class="label">Mountain</div><div class="cards-row" id="mountain1"></div></div>
                 <div class="mandala-section"><div class="label" id="field1_0_label">P0 Field</div><div class="cards-row" id="field1_0"></div></div>
                 <div class="mandala-section"><div class="label" id="field1_1_label">P1 Field</div><div class="cards-row" id="field1_1"></div></div>
@@ -641,6 +647,15 @@
         let lastActionPlayer = null;
         let lastAiHint = null;
         let aiHintPromise = null;
+
+        function renderMissingDots(m) {
+            const present = new Set([...m.mountain, ...m.field_p0, ...m.field_p1]);
+            let html = '';
+            for (let c = 0; c < 6; c++) {
+                if (!present.has(c)) html += `<span class="missing-dot color-${c}">${COLOR_SHORT[c]}</span>`;
+            }
+            return html;
+        }
 
         function renderCard(colorIdx) {
             return `<div class="card color-${colorIdx}">${COLOR_SHORT[colorIdx]}</div>`;
@@ -805,6 +820,7 @@
                 document.getElementById(`field${i}_0`).innerHTML = renderCards(m.field_p0);
                 document.getElementById(`field${i}_1`).innerHTML = renderCards(m.field_p1);
                 document.getElementById(`m${i}colors`).textContent = m.colors;
+                document.getElementById(`m${i}missing`).innerHTML = renderMissingDots(m);
             }
 
             // Last played card highlight
@@ -973,12 +989,34 @@
                 aiHintPromise = null;
             }
 
-            const resp = await fetch(`${BASE_URL}/api/move`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({game_id: gameId, action: action, think_time_ms: thinkTime})
-            });
-            currentState = await resp.json();
+            try {
+                const resp = await fetch(`${BASE_URL}/api/move`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId, action: action, think_time_ms: thinkTime})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    document.getElementById('statusBar').textContent = `Error: ${data.error}`;
+                    document.getElementById('statusBar').className = 'status-bar game-over';
+                    if (isMobile()) {
+                        document.getElementById('mSheetStatus').textContent = `Error: ${data.error}`;
+                        document.getElementById('mSheetStatus').className = 'm-sheet-status game-over';
+                    }
+                    console.error('Move error:', data.error);
+                    return;
+                }
+                currentState = data;
+            } catch (e) {
+                document.getElementById('statusBar').textContent = 'Move failed — try starting a new game';
+                document.getElementById('statusBar').className = 'status-bar game-over';
+                if (isMobile()) {
+                    document.getElementById('mSheetStatus').textContent = 'Move failed — try starting a new game';
+                    document.getElementById('mSheetStatus').className = 'm-sheet-status game-over';
+                }
+                console.error('Move failed:', e);
+                return;
+            }
 
             // Show AI recommendation inline in human player's card
             showHintInPlayerCard(currentState.human_player, action);
@@ -1039,6 +1077,10 @@
                     stopThinkTimer();
                     document.getElementById('statusBar').textContent = 'AI error — try starting a new game';
                     document.getElementById('statusBar').className = 'status-bar game-over';
+                    if (isMobile()) {
+                        document.getElementById('mSheetStatus').textContent = 'AI error — try starting a new game';
+                        document.getElementById('mSheetStatus').className = 'm-sheet-status game-over';
+                    }
                     console.error('AI move failed:', e);
                 }
             }
@@ -1256,7 +1298,7 @@
                 document.getElementById(`mField${i}_0_label`).textContent = 'Your Field';
                 document.getElementById(`mField${i}_1`).innerHTML = renderCards(aiField);
                 document.getElementById(`mField${i}_1_label`).textContent = 'AI Field';
-                document.getElementById(`mMTitle${i}`).textContent = `M${i + 1} (${m.colors}/6)`;
+                document.getElementById(`mMTitle${i}`).innerHTML = `M${i+1} (${m.colors}/6) <span class="missing-dots">${renderMissingDots(m)}</span>`;
                 // Highlight mandala in claim
                 const col = document.getElementById(`mMandala${i}`);
                 col.classList.toggle('active-claim', isClaim && m.colors >= 6 && m.mountain.length > 0);
