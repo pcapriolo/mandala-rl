@@ -13,17 +13,21 @@ Usage:
     gunicorn serve:app --bind 0.0.0.0:$PORT --timeout 30 --workers 1
 """
 
+import hashlib
 import json
 import os
 import sys
 import time
 import uuid
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 import onnxruntime as ort
 from flask import Flask, Blueprint, render_template, jsonify, request
+
 def softmax(x):
     """Numpy softmax (replaces scipy.special.softmax)."""
     e = np.exp(x - np.max(x))
@@ -35,6 +39,205 @@ sys.path.insert(0, str(project_root))
 
 template_dir = project_root / 'templates'
 app = Flask(__name__, template_folder=str(template_dir))
+
+# ──────────────────────────────────────────────────────────────
+# Analytics -- lightweight request logging
+# ──────────────────────────────────────────────────────────────
+
+ANALYTICS_DIR = Path(os.environ.get('ANALYTICS_DIR', 'data/analytics'))
+ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
+_analytics_lock = Lock()
+
+def _hash_ip(ip):
+    """Hash IP for privacy -- we only need uniqueness, not the raw IP."""
+    return hashlib.sha256((ip or 'unknown').encode()).hexdigest()[:12]
+
+def _log_request():
+    """Log page view to daily JSONL file."""
+    # Skip static assets and health checks
+    path = request.path
+    if path.startswith('/static') or path == '/health' or path == '/favicon.ico':
+        return
+    # Skip API calls that aren't game starts
+    if '/api/' in path and '/api/new_game' not in path:
+        return
+
+    entry = {
+        'ts': datetime.utcnow().isoformat() + 'Z',
+        'path': path,
+        'visitor': _hash_ip(request.remote_addr),
+        'ref': request.referrer or '',
+        'ua': request.headers.get('User-Agent', '')[:200],
+    }
+
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    log_file = ANALYTICS_DIR / f'{today}.jsonl'
+
+    try:
+        with _analytics_lock:
+            with open(log_file, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+    except Exception:
+        pass  # never break the app over analytics
+
+@app.before_request
+def before_request_analytics():
+    _log_request()
+
+@app.route('/api/stats')
+def api_stats():
+    """Return basic visitor stats. Query params: ?days=7 (default)"""
+    try:
+        days = int(request.args.get('days', 7))
+    except (ValueError, TypeError):
+        days = 7
+    days = max(1, min(90, days))
+    stats = {
+        'period_days': days,
+        'daily': [],
+        'totals': {'page_views': 0, 'unique_visitors': 0, 'game_starts': 0},
+    }
+    all_visitors = set()
+
+    for i in range(days):
+        date = (datetime.utcnow() - timedelta(days=i)).strftime('%Y-%m-%d')
+        log_file = ANALYTICS_DIR / f'{date}.jsonl'
+        day_views = 0
+        day_visitors = set()
+        day_game_starts = 0
+
+        if log_file.exists():
+            try:
+                with open(log_file) as f:
+                    for line in f:
+                        entry = json.loads(line.strip())
+                        day_views += 1
+                        day_visitors.add(entry.get('visitor', ''))
+                        if '/api/new_game' in entry.get('path', ''):
+                            day_game_starts += 1
+            except Exception:
+                pass
+
+        stats['daily'].append({
+            'date': date,
+            'page_views': day_views,
+            'unique_visitors': len(day_visitors),
+            'game_starts': day_game_starts,
+        })
+        stats['totals']['page_views'] += day_views
+        all_visitors.update(day_visitors)
+        stats['totals']['game_starts'] += day_game_starts
+
+    stats['totals']['unique_visitors'] = len(all_visitors)
+    return jsonify(stats)
+
+@app.route('/api/game-stats')
+def api_game_stats():
+    """Return stats computed from saved game JSON files."""
+    games_root = Path('data/human_games')
+    result = {}
+
+    for game_type in ('mandala', 'lost_cities'):
+        game_dir = games_root / game_type
+        games = []
+        if game_dir.exists():
+            for fp in game_dir.glob('*.json'):
+                try:
+                    with open(fp) as f:
+                        games.append(json.load(f))
+                except Exception:
+                    pass
+
+        total = len(games)
+        complete = [g for g in games if g.get('is_complete')]
+        human_wins = sum(1 for g in complete if g.get('winner') == g.get('human_player'))
+        ai_wins = sum(1 for g in complete if g.get('winner') not in (None, -1, g.get('human_player')))
+        draws = sum(1 for g in complete if g.get('winner') == -1)
+
+        visitors = set(g.get('visitor') for g in games if g.get('visitor'))
+        unique_players = len(visitors)
+
+        scores = []
+        for g in complete:
+            fs = g.get('final_scores', {})
+            hp = g.get('human_player', 0)
+            s = fs.get(f'player{hp}')
+            if s is not None:
+                scores.append(s)
+
+        moves_list = [g.get('total_moves', 0) for g in complete]
+
+        durations = []
+        for g in complete:
+            mvs = g.get('moves', [])
+            if len(mvs) >= 2:
+                try:
+                    t0 = datetime.fromisoformat(mvs[0]['timestamp'])
+                    t1 = datetime.fromisoformat(mvs[-1]['timestamp'])
+                    durations.append((t1 - t0).total_seconds())
+                except Exception:
+                    pass
+
+        recent = sorted(complete, key=lambda g: g.get('timestamp', ''), reverse=True)[:10]
+        recent_list = []
+        for g in recent:
+            hp = g.get('human_player', 0)
+            w = g.get('winner')
+            if w == hp:
+                res = 'win'
+            elif w == -1:
+                res = 'draw'
+            else:
+                res = 'loss'
+            fs = g.get('final_scores', {})
+            dur = None
+            mvs = g.get('moves', [])
+            if len(mvs) >= 2:
+                try:
+                    t0 = datetime.fromisoformat(mvs[0]['timestamp'])
+                    t1 = datetime.fromisoformat(mvs[-1]['timestamp'])
+                    dur = round((t1 - t0).total_seconds())
+                except Exception:
+                    pass
+            recent_list.append({
+                'date': g.get('timestamp', ''),
+                'game': game_type,
+                'result': res,
+                'score': fs.get(f'player{hp}'),
+                'moves': g.get('total_moves', 0),
+                'duration_s': dur,
+            })
+
+        feedback_list = []
+        for g in games:
+            fb = g.get('feedback')
+            if fb:
+                feedback_list.append({
+                    'game': game_type,
+                    'game_id': g.get('game_id', ''),
+                    'date': fb.get('submitted_at', ''),
+                    'my_play_rating': fb.get('my_play_rating'),
+                    'bot_play_rating': fb.get('bot_play_rating'),
+                    'comment': fb.get('comment', ''),
+                })
+
+        result[game_type] = {
+            'total_games': total,
+            'complete_games': len(complete),
+            'human_wins': human_wins,
+            'ai_wins': ai_wins,
+            'draws': draws,
+            'win_rate': round(human_wins / len(complete) * 100, 1) if complete else 0,
+            'avg_score': round(sum(scores) / len(scores), 1) if scores else None,
+            'avg_moves': round(sum(moves_list) / len(moves_list), 1) if moves_list else None,
+            'avg_duration_s': round(sum(durations) / len(durations)) if durations else None,
+            'unique_players': unique_players,
+            'games_per_player': round(total / unique_players, 1) if unique_players else None,
+            'recent': recent_list,
+            'feedback': feedback_list,
+        }
+
+    return jsonify(result)
 
 # Configuration
 DEPLOY_DIR = Path(os.environ.get('DEPLOY_DIR', 'data/deploy'))
@@ -207,6 +410,7 @@ class LCGameSession:
             'timestamp': self.game_start_time,
             'model_iteration': self.server.iteration,
             'human_player': self.human_player,
+            'visitor': _hash_ip(request.remote_addr),
             'winner': winner, 'final_scores': final_scores,
             'total_moves': len(self.game_history),
             'is_complete': is_terminal,
@@ -525,6 +729,7 @@ class MandalaGameSession:
             'timestamp': self.game_start_time,
             'model_iteration': self.server.iteration,
             'human_player': self.human_player,
+            'visitor': _hash_ip(request.remote_addr),
             'winner': winner, 'final_scores': final_scores,
             'total_moves': len(self.game_history),
             'is_complete': is_terminal,
@@ -766,6 +971,10 @@ if _mandala_server:
 # ──────────────────────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────────────────────
+
+@app.route('/stats')
+def stats_page():
+    return render_template('stats.html')
 
 @app.route('/')
 def landing():
