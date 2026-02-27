@@ -102,11 +102,21 @@
         </div>
         {% endif %}
 
+        {% if 'lost_cities' in games %}
+        <div class="game-card">
+            <span class="badge badge-new">NEW</span>
+            <h2>Lost Cities</h2>
+            <p class="desc">The classic expedition card game. Start wisely — each expedition costs 20 points to begin, but bonuses await the committed.</p>
+            <p class="model-info">AI trained on {{ games.lost_cities.total_games }} self-play games</p>
+            <a href="/lost-cities/" class="play-btn lc" onclick="trackPlay()">Play Lost Cities</a>
+        </div>
+        {% else %}
         <div class="game-card disabled">
             <h2>Lost Cities</h2>
             <p class="desc">Coming soon — AI is still training.</p>
             <span class="play-btn">Coming Soon</span>
         </div>
+        {% endif %}
     </div>
 
     <div class="footer">
