@@ -60,6 +60,16 @@
             border-radius: 8px; padding: 10px; font-size: 0.85em; resize: vertical; min-height: 60px;
             font-family: inherit; margin-bottom: 14px; display: none; }
         .bounce-comment:focus { outline: none; border-color: #667eea; }
+        .game-vote-section { display: none; margin-bottom: 16px; }
+        .game-vote-section p { color: #aaa; font-size: 0.85em; margin-bottom: 10px; }
+        .game-vote-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .game-vote-btn { background: #1a1a2e; border: 1px solid #333; color: #ccc; padding: 10px 12px;
+            border-radius: 8px; cursor: pointer; font-size: 0.85em; transition: all 0.15s; text-align: center; }
+        .game-vote-btn:hover { border-color: #667eea; color: #fff; }
+        .game-vote-btn.voted { border-color: #48bb78; background: #48bb7822; color: #48bb78; pointer-events: none; }
+        .game-vote-btn .gv-name { font-weight: 600; display: block; margin-bottom: 2px; }
+        .game-vote-btn .gv-desc { font-size: 0.75em; color: #888; }
+        .game-vote-btn.voted .gv-desc { color: #48bb78aa; }
         .bounce-actions { display: flex; gap: 10px; justify-content: center; }
         .bounce-actions button { padding: 10px 24px; border-radius: 8px; font-size: 0.95em;
             cursor: pointer; border: none; font-weight: 600; }
@@ -112,9 +122,39 @@
             <p>What kept you from trying a game?</p>
             <div class="bounce-reasons" id="bounceReasons">
                 <div class="bounce-reason" data-reason="dont_know_game">I don't know Mandala</div>
+                <div class="bounce-reason" data-reason="want_different_game">I'd rather play a different game</div>
                 <div class="bounce-reason" data-reason="no_time">I don't have time right now</div>
                 <div class="bounce-reason" data-reason="not_interested">Not interested in board game AI</div>
                 <div class="bounce-reason" data-reason="other">Something else</div>
+            </div>
+            <div class="game-vote-section" id="gameVoteSection">
+                <p>Which game would you play against an AI? Pick one and we'll build it next.</p>
+                <div class="game-vote-grid" id="gameVoteGrid">
+                    <div class="game-vote-btn" data-game="dominion">
+                        <span class="gv-name">Dominion</span>
+                        <span class="gv-desc">Deck-building classic</span>
+                    </div>
+                    <div class="game-vote-btn" data-game="7_wonders_duel">
+                        <span class="gv-name">7 Wonders Duel</span>
+                        <span class="gv-desc">Civilization card drafting</span>
+                    </div>
+                    <div class="game-vote-btn" data-game="catan">
+                        <span class="gv-name">Catan</span>
+                        <span class="gv-desc">Trade & settle</span>
+                    </div>
+                    <div class="game-vote-btn" data-game="jaipur">
+                        <span class="gv-name">Jaipur</span>
+                        <span class="gv-desc">2-player trading</span>
+                    </div>
+                    <div class="game-vote-btn" data-game="ticket_to_ride">
+                        <span class="gv-name">Ticket to Ride</span>
+                        <span class="gv-desc">Route-building</span>
+                    </div>
+                    <div class="game-vote-btn" data-game="other_game">
+                        <span class="gv-name">Other</span>
+                        <span class="gv-desc">Tell us below</span>
+                    </div>
+                </div>
             </div>
             <textarea class="bounce-comment" id="bounceComment" placeholder="Any other thoughts? (optional)"></textarea>
             <div class="bounce-actions">
@@ -140,13 +180,33 @@
             btn.addEventListener('click', () => { playClicked = true; });
         });
 
+        let selectedGame = '';
+
         document.querySelectorAll('.bounce-reason').forEach(el => {
             el.addEventListener('click', () => {
                 document.querySelectorAll('.bounce-reason').forEach(r => r.classList.remove('selected'));
                 el.classList.add('selected');
                 selectedReason = el.dataset.reason;
-                document.getElementById('bounceComment').style.display =
-                    selectedReason === 'other' ? 'block' : 'block';
+                document.getElementById('bounceComment').style.display = 'block';
+                // Show game voting grid when "want different game" is selected
+                document.getElementById('gameVoteSection').style.display =
+                    selectedReason === 'want_different_game' ? 'block' : 'none';
+            });
+        });
+
+        document.querySelectorAll('.game-vote-btn').forEach(el => {
+            el.addEventListener('click', () => {
+                document.querySelectorAll('.game-vote-btn').forEach(b => b.classList.remove('voted'));
+                el.classList.add('voted');
+                selectedGame = el.dataset.game;
+                // Fire game_interest event immediately on vote
+                navigator.sendBeacon('/api/event', JSON.stringify({
+                    event: 'game_interest',
+                    game: selectedGame
+                }));
+                if (selectedGame === 'other_game') {
+                    document.getElementById('bounceComment').placeholder = 'Which game would you want to play against AI?';
+                }
             });
         });
 
@@ -163,13 +223,16 @@
         function sendBounce() {
             if (!selectedReason) return;
             const comment = document.getElementById('bounceComment').value.trim();
-            navigator.sendBeacon('/api/event', JSON.stringify({
+            const payload = {
                 event: 'bounce_feedback',
                 reason: selectedReason,
                 comment: comment
-            }));
+            };
+            if (selectedGame) payload.voted_game = selectedGame;
+            navigator.sendBeacon('/api/event', JSON.stringify(payload));
             document.getElementById('bounceReasons').style.display = 'none';
             document.getElementById('bounceComment').style.display = 'none';
+            document.getElementById('gameVoteSection').style.display = 'none';
             document.querySelector('.bounce-actions').style.display = 'none';
             document.querySelector('.bounce-box p').style.display = 'none';
             document.getElementById('bounceThanks').style.display = 'block';

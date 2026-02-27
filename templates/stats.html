@@ -150,6 +150,11 @@
         <div class="loading">Loading...</div>
     </div>
 
+    <h3 class="section-title">Game Interest Votes</h3>
+    <div class="funnel" id="game-interest-section">
+        <div class="empty">Loading...</div>
+    </div>
+
     <h3 class="section-title">Bounce Feedback</h3>
     <div class="feedback-section" id="bounce-feedback-section">
         <div class="empty">Loading...</div>
@@ -176,9 +181,19 @@
 
     const REASON_LABELS = {
         'dont_know_game': "Don't know Mandala",
+        'want_different_game': 'Want a different game',
         'no_time': 'No time right now',
         'not_interested': 'Not interested in board game AI',
         'other': 'Other',
+    };
+
+    const GAME_LABELS = {
+        'dominion': 'Dominion',
+        '7_wonders_duel': '7 Wonders Duel',
+        'catan': 'Catan',
+        'jaipur': 'Jaipur',
+        'ticket_to_ride': 'Ticket to Ride',
+        'other_game': 'Other',
     };
 
     async function loadVisitorStats() {
@@ -223,6 +238,26 @@
                     </div>`;
                 }).join('');
             }
+            // Game interest votes
+            const giDiv = document.getElementById('game-interest-section');
+            const gi = d.game_interest || {};
+            const giEntries = Object.entries(gi).sort((a, b) => b[1] - a[1]);
+            const giTotal = giEntries.reduce((sum, e) => sum + e[1], 0);
+            if (giEntries.length === 0) {
+                giDiv.innerHTML = '<div class="empty">No game interest votes yet</div>';
+            } else {
+                const giMax = giEntries[0][1];
+                giDiv.innerHTML = giEntries.map(([game, count]) => {
+                    const label = GAME_LABELS[game] || game;
+                    const pct = Math.max(4, (count / giMax) * 100);
+                    return `<div class="funnel-row">
+                        <span class="funnel-label">${label}</span>
+                        <div class="funnel-bar-bg"><div class="funnel-bar" style="width:${pct}%; background:#48bb78;"></div></div>
+                        <span class="funnel-val" style="color:#48bb78;">${count}</span>
+                    </div>`;
+                }).join('') + `<div style="text-align:center;color:#888;font-size:0.8em;margin-top:8px;">Total votes: ${giTotal}</div>`;
+            }
+
         } catch(e) {
             console.error('Failed to load visitor stats', e);
         }

@@ -101,7 +101,7 @@ def _write_analytics_entry(entry):
 def before_request_analytics():
     _log_request()
 
-VALID_EVENTS = {'play_clicked', 'game_loaded', 'first_move', 'bounce_feedback'}
+VALID_EVENTS = {'play_clicked', 'game_loaded', 'first_move', 'bounce_feedback', 'game_interest'}
 
 @app.route('/api/event', methods=['POST'])
 def api_event():
@@ -114,10 +114,17 @@ def api_event():
     if event_name == 'bounce_feedback':
         reason = data.get('reason', '').strip()[:200]
         comment = data.get('comment', '').strip()[:500]
+        voted_game = data.get('voted_game', '').strip()[:100]
         if reason:
             extra['reason'] = reason
         if comment:
             extra['comment'] = comment
+        if voted_game:
+            extra['voted_game'] = voted_game
+    elif event_name == 'game_interest':
+        game = data.get('game', '').strip()[:100]
+        if game:
+            extra['game'] = game
     _log_event(event_name, extra if extra else None)
     return jsonify({'ok': True})
 
@@ -137,6 +144,7 @@ def api_stats():
         'totals': {'page_views': 0, 'unique_visitors': 0, 'game_starts': 0},
         'funnel': {k: 0 for k in funnel_keys},
         'bounce_feedback': [],
+        'game_interest': {},
     }
     all_visitors = set()
 
@@ -163,7 +171,11 @@ def api_stats():
                                     'ts': entry.get('ts', ''),
                                     'reason': entry.get('reason', ''),
                                     'comment': entry.get('comment', ''),
+                                    'voted_game': entry.get('voted_game', ''),
                                 })
+                            elif event == 'game_interest':
+                                game = entry.get('game', 'unknown')
+                                stats['game_interest'][game] = stats['game_interest'].get(game, 0) + 1
                         else:
                             day_views += 1
                             day_visitors.add(entry.get('visitor', ''))
