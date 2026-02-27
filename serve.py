@@ -54,11 +54,12 @@ def _hash_ip(ip):
 
 def _log_request():
     """Log page view to daily JSONL file."""
-    # Skip static assets and health checks
+    # Skip static assets, health checks, stats page, and non-game-start API calls
     path = request.path
     if path.startswith('/static') or path == '/health' or path == '/favicon.ico':
         return
-    # Skip API calls that aren't game starts
+    if path == '/stats' or path.startswith('/api/stats') or path.startswith('/api/game-stats'):
+        return
     if '/api/' in path and '/api/new_game' not in path:
         return
 
@@ -70,9 +71,25 @@ def _log_request():
         'ua': request.headers.get('User-Agent', '')[:200],
     }
 
+    _write_analytics_entry(entry)
+
+
+def _log_event(event_name, extra=None):
+    """Log a named event to the daily JSONL file."""
+    entry = {
+        'ts': datetime.utcnow().isoformat() + 'Z',
+        'event': event_name,
+        'visitor': _hash_ip(request.remote_addr),
+    }
+    if extra:
+        entry.update(extra)
+    _write_analytics_entry(entry)
+
+
+def _write_analytics_entry(entry):
+    """Write a single analytics entry to today's JSONL file."""
     today = datetime.utcnow().strftime('%Y-%m-%d')
     log_file = ANALYTICS_DIR / f'{today}.jsonl'
-
     try:
         with _analytics_lock:
             with open(log_file, 'a') as f:
@@ -84,18 +101,42 @@ def _log_request():
 def before_request_analytics():
     _log_request()
 
+VALID_EVENTS = {'play_clicked', 'game_loaded', 'first_move', 'bounce_feedback'}
+
+@app.route('/api/event', methods=['POST'])
+def api_event():
+    """Log a custom analytics event."""
+    data = request.json or {}
+    event_name = data.get('event', '')
+    if event_name not in VALID_EVENTS:
+        return jsonify({'error': f'Unknown event: {event_name}'}), 400
+    extra = {}
+    if event_name == 'bounce_feedback':
+        reason = data.get('reason', '').strip()[:200]
+        comment = data.get('comment', '').strip()[:500]
+        if reason:
+            extra['reason'] = reason
+        if comment:
+            extra['comment'] = comment
+    _log_event(event_name, extra if extra else None)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/stats')
 def api_stats():
-    """Return basic visitor stats. Query params: ?days=7 (default)"""
+    """Return visitor stats + funnel events. Query params: ?days=7 (default)"""
     try:
         days = int(request.args.get('days', 7))
     except (ValueError, TypeError):
         days = 7
     days = max(1, min(90, days))
+    funnel_keys = ['play_clicked', 'game_loaded', 'first_move']
     stats = {
         'period_days': days,
         'daily': [],
         'totals': {'page_views': 0, 'unique_visitors': 0, 'game_starts': 0},
+        'funnel': {k: 0 for k in funnel_keys},
+        'bounce_feedback': [],
     }
     all_visitors = set()
 
@@ -105,16 +146,29 @@ def api_stats():
         day_views = 0
         day_visitors = set()
         day_game_starts = 0
+        day_funnel = {k: 0 for k in funnel_keys}
 
         if log_file.exists():
             try:
                 with open(log_file) as f:
                     for line in f:
                         entry = json.loads(line.strip())
-                        day_views += 1
-                        day_visitors.add(entry.get('visitor', ''))
-                        if '/api/new_game' in entry.get('path', ''):
-                            day_game_starts += 1
+                        event = entry.get('event')
+                        if event:
+                            if event in day_funnel:
+                                day_funnel[event] += 1
+                            elif event == 'bounce_feedback':
+                                stats['bounce_feedback'].append({
+                                    'date': date,
+                                    'ts': entry.get('ts', ''),
+                                    'reason': entry.get('reason', ''),
+                                    'comment': entry.get('comment', ''),
+                                })
+                        else:
+                            day_views += 1
+                            day_visitors.add(entry.get('visitor', ''))
+                            if '/api/new_game' in entry.get('path', ''):
+                                day_game_starts += 1
             except Exception:
                 pass
 
@@ -123,10 +177,13 @@ def api_stats():
             'page_views': day_views,
             'unique_visitors': len(day_visitors),
             'game_starts': day_game_starts,
+            'funnel': day_funnel,
         })
         stats['totals']['page_views'] += day_views
         all_visitors.update(day_visitors)
         stats['totals']['game_starts'] += day_game_starts
+        for k in funnel_keys:
+            stats['funnel'][k] += day_funnel[k]
 
     stats['totals']['unique_visitors'] = len(all_visitors)
     return jsonify(stats)

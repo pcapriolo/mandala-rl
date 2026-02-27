@@ -42,6 +42,32 @@
             font-weight: 600; margin-bottom: 12px; }
         .badge-free { background: #48bb78; color: #fff; }
         .badge-new { background: #f1c40f; color: #333; }
+
+        /* Bounce feedback popup */
+        .bounce-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            z-index: 1000; align-items: center; justify-content: center; }
+        .bounce-overlay.show { display: flex; }
+        .bounce-box { background: #16213e; border: 2px solid #667eea; border-radius: 14px;
+            padding: 30px; max-width: 420px; width: 90%; text-align: center; }
+        .bounce-box h3 { color: #667eea; margin-bottom: 8px; font-size: 1.2em; }
+        .bounce-box p { color: #aaa; font-size: 0.9em; margin-bottom: 18px; }
+        .bounce-reasons { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+        .bounce-reason { background: #1a1a2e; border: 1px solid #333; color: #ccc; padding: 10px 16px;
+            border-radius: 8px; cursor: pointer; font-size: 0.9em; transition: all 0.15s; text-align: left; }
+        .bounce-reason:hover { border-color: #667eea; color: #fff; }
+        .bounce-reason.selected { border-color: #667eea; background: #667eea22; color: #fff; }
+        .bounce-comment { width: 100%; background: #1a1a2e; border: 1px solid #333; color: #eee;
+            border-radius: 8px; padding: 10px; font-size: 0.85em; resize: vertical; min-height: 60px;
+            font-family: inherit; margin-bottom: 14px; display: none; }
+        .bounce-comment:focus { outline: none; border-color: #667eea; }
+        .bounce-actions { display: flex; gap: 10px; justify-content: center; }
+        .bounce-actions button { padding: 10px 24px; border-radius: 8px; font-size: 0.95em;
+            cursor: pointer; border: none; font-weight: 600; }
+        .bounce-send { background: #667eea; color: #fff; }
+        .bounce-send:hover { background: #5568d3; }
+        .bounce-skip { background: transparent; color: #666; border: 1px solid #333 !important; }
+        .bounce-skip:hover { color: #aaa; }
+        .bounce-thanks { display: none; color: #48bb78; font-size: 1.1em; padding: 20px 0; }
     </style>
 </head>
 <body>
@@ -56,7 +82,7 @@
             <h2>Mandala</h2>
             <p class="desc">A beautiful 2-player card game of colors and strategy. Play cards to mandalas, claim colors, and outscore your opponent.</p>
             <p class="model-info">AI trained on {{ games.mandala.total_games }} self-play games</p>
-            <a href="/mandala/" class="play-btn">Play Mandala</a>
+            <a href="/mandala/" class="play-btn" onclick="trackPlay()">Play Mandala</a>
         </div>
         {% else %}
         <div class="game-card disabled">
@@ -78,5 +104,88 @@
         <small>No human games needed — the AI learned entirely by playing against itself</small><br>
         <a href="/stats">Stats</a>
     </div>
+
+    <!-- Bounce feedback popup -->
+    <div class="bounce-overlay" id="bounceOverlay">
+        <div class="bounce-box">
+            <h3>Quick question before you go</h3>
+            <p>What kept you from trying a game?</p>
+            <div class="bounce-reasons" id="bounceReasons">
+                <div class="bounce-reason" data-reason="dont_know_game">I don't know Mandala</div>
+                <div class="bounce-reason" data-reason="no_time">I don't have time right now</div>
+                <div class="bounce-reason" data-reason="not_interested">Not interested in board game AI</div>
+                <div class="bounce-reason" data-reason="other">Something else</div>
+            </div>
+            <textarea class="bounce-comment" id="bounceComment" placeholder="Any other thoughts? (optional)"></textarea>
+            <div class="bounce-actions">
+                <button class="bounce-skip" onclick="closeBounce()">No thanks</button>
+                <button class="bounce-send" id="bounceSend" onclick="sendBounce()">Send</button>
+            </div>
+            <div class="bounce-thanks" id="bounceThanks">Thanks for the feedback!</div>
+        </div>
+    </div>
+
+    <script>
+        /* --- Funnel tracking --- */
+        function trackPlay() {
+            navigator.sendBeacon('/api/event', JSON.stringify({event: 'play_clicked'}));
+        }
+
+        /* --- Bounce feedback --- */
+        let bounceShown = false;
+        let selectedReason = '';
+        let playClicked = false;
+
+        document.querySelectorAll('.play-btn').forEach(btn => {
+            btn.addEventListener('click', () => { playClicked = true; });
+        });
+
+        document.querySelectorAll('.bounce-reason').forEach(el => {
+            el.addEventListener('click', () => {
+                document.querySelectorAll('.bounce-reason').forEach(r => r.classList.remove('selected'));
+                el.classList.add('selected');
+                selectedReason = el.dataset.reason;
+                document.getElementById('bounceComment').style.display =
+                    selectedReason === 'other' ? 'block' : 'block';
+            });
+        });
+
+        function showBounce() {
+            if (bounceShown || playClicked) return;
+            bounceShown = true;
+            document.getElementById('bounceOverlay').classList.add('show');
+        }
+
+        function closeBounce() {
+            document.getElementById('bounceOverlay').classList.remove('show');
+        }
+
+        function sendBounce() {
+            if (!selectedReason) return;
+            const comment = document.getElementById('bounceComment').value.trim();
+            navigator.sendBeacon('/api/event', JSON.stringify({
+                event: 'bounce_feedback',
+                reason: selectedReason,
+                comment: comment
+            }));
+            document.getElementById('bounceReasons').style.display = 'none';
+            document.getElementById('bounceComment').style.display = 'none';
+            document.querySelector('.bounce-actions').style.display = 'none';
+            document.querySelector('.bounce-box p').style.display = 'none';
+            document.getElementById('bounceThanks').style.display = 'block';
+            setTimeout(closeBounce, 1500);
+        }
+
+        // Trigger: mouse leaves viewport toward top (desktop intent-to-leave)
+        document.addEventListener('mouseout', (e) => {
+            if (e.clientY < 5 && !e.relatedTarget) showBounce();
+        });
+
+        // Trigger: tab becomes hidden (mobile / tab switch) after 10s on page
+        let pageLoadTime = Date.now();
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && (Date.now() - pageLoadTime > 10000)) showBounce();
+        });
+    </script>
 </body>
 </html>

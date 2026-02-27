@@ -647,6 +647,10 @@
         let lastActionPlayer = null;
         let lastAiHint = null;
         let aiHintPromise = null;
+        let firstMoveTracked = false;
+
+        // Track game page loaded
+        navigator.sendBeacon('/api/event', JSON.stringify({event: 'game_loaded'}));
 
         function renderMissingDots(m) {
             const present = new Set([...m.mountain, ...m.field_p0, ...m.field_p1]);
@@ -969,6 +973,10 @@
         }
 
         async function makeMove(action) {
+            if (!firstMoveTracked) {
+                firstMoveTracked = true;
+                navigator.sendBeacon('/api/event', JSON.stringify({event: 'first_move'}));
+            }
             lastAction = action;
             lastActionPlayer = currentState.current_player;
             const thinkTime = turnStartTime ? Date.now() - turnStartTime : null;

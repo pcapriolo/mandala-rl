@@ -64,6 +64,21 @@
         .feedback-stars { color: #f1c40f; margin-bottom: 6px; font-size: 0.9em; }
         .feedback-comment { font-style: italic; color: #ccc; font-size: 0.9em; }
 
+        .funnel { max-width: 600px; margin: 0 auto 30px; }
+        .funnel-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .funnel-label { width: 110px; text-align: right; font-size: 0.85em; color: #aaa; flex-shrink: 0; }
+        .funnel-bar-bg { flex: 1; background: #16213e; border-radius: 6px; height: 28px; overflow: hidden; }
+        .funnel-bar { height: 100%; background: #667eea; border-radius: 6px; transition: width 0.5s ease;
+            min-width: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; }
+        .funnel-val { width: 60px; font-size: 0.9em; font-weight: 600; color: #667eea; }
+
+        .bounce-card { background: #16213e; border-radius: 10px; padding: 14px 20px; margin-bottom: 10px;
+            border: 1px solid #333; }
+        .bounce-meta { font-size: 0.8em; color: #888; margin-bottom: 4px; }
+        .bounce-reason-tag { display: inline-block; background: #667eea22; color: #667eea; padding: 2px 10px;
+            border-radius: 4px; font-size: 0.82em; margin-bottom: 6px; }
+        .bounce-comment-text { font-style: italic; color: #ccc; font-size: 0.88em; }
+
         .loading { text-align: center; color: #888; padding: 40px; font-size: 0.95em; }
         .empty { text-align: center; color: #555; padding: 20px; font-size: 0.9em; }
         .footer { text-align: center; color: #555; font-size: 0.8em; margin-top: 20px; }
@@ -87,6 +102,35 @@
         <div class="stat-pill"><div class="num" id="vs-games">-</div><div class="label">Games Started</div></div>
     </div>
 
+    <h3 class="section-title">Conversion Funnel</h3>
+    <div class="funnel" id="funnel-container">
+        <div class="funnel-row">
+            <span class="funnel-label">Page Views</span>
+            <div class="funnel-bar-bg"><div class="funnel-bar" id="fb-views"></div></div>
+            <span class="funnel-val" id="fv-views">-</span>
+        </div>
+        <div class="funnel-row">
+            <span class="funnel-label">Play Clicked</span>
+            <div class="funnel-bar-bg"><div class="funnel-bar" id="fb-play"></div></div>
+            <span class="funnel-val" id="fv-play">-</span>
+        </div>
+        <div class="funnel-row">
+            <span class="funnel-label">Game Loaded</span>
+            <div class="funnel-bar-bg"><div class="funnel-bar" id="fb-loaded"></div></div>
+            <span class="funnel-val" id="fv-loaded">-</span>
+        </div>
+        <div class="funnel-row">
+            <span class="funnel-label">Game Started</span>
+            <div class="funnel-bar-bg"><div class="funnel-bar" id="fb-started"></div></div>
+            <span class="funnel-val" id="fv-started">-</span>
+        </div>
+        <div class="funnel-row">
+            <span class="funnel-label">First Move</span>
+            <div class="funnel-bar-bg"><div class="funnel-bar" id="fb-move"></div></div>
+            <span class="funnel-val" id="fv-move">-</span>
+        </div>
+    </div>
+
     <div class="game-cards" id="game-cards">
         <div class="loading">Loading game stats...</div>
     </div>
@@ -104,6 +148,11 @@
     <h3 class="section-title">Player Feedback</h3>
     <div class="feedback-section" id="feedback-section">
         <div class="loading">Loading...</div>
+    </div>
+
+    <h3 class="section-title">Bounce Feedback</h3>
+    <div class="feedback-section" id="bounce-feedback-section">
+        <div class="empty">Loading...</div>
     </div>
 
     <div class="footer">Gamer Gym Stats</div>
@@ -125,6 +174,13 @@
     }
     function stars(n) { return n ? '\u2605'.repeat(n) + '\u2606'.repeat(5 - n) : '-'; }
 
+    const REASON_LABELS = {
+        'dont_know_game': "Don't know Mandala",
+        'no_time': 'No time right now',
+        'not_interested': 'Not interested in board game AI',
+        'other': 'Other',
+    };
+
     async function loadVisitorStats() {
         try {
             const r = await fetch('/api/stats?days=' + currentDays);
@@ -132,6 +188,41 @@
             document.getElementById('vs-views').textContent = fmt(d.totals.page_views);
             document.getElementById('vs-visitors').textContent = fmt(d.totals.unique_visitors);
             document.getElementById('vs-games').textContent = fmt(d.totals.game_starts);
+
+            // Funnel
+            const views = d.totals.page_views;
+            const playClicked = d.funnel ? d.funnel.play_clicked : 0;
+            const gameLoaded = d.funnel ? d.funnel.game_loaded : 0;
+            const gameStarted = d.totals.game_starts;
+            const firstMove = d.funnel ? d.funnel.first_move : 0;
+            const max = Math.max(views, 1);
+
+            function setBar(barId, valId, count) {
+                const pct = Math.max(count > 0 ? 2 : 0, (count / max) * 100);
+                document.getElementById(barId).style.width = pct + '%';
+                document.getElementById(valId).textContent = count;
+            }
+            setBar('fb-views', 'fv-views', views);
+            setBar('fb-play', 'fv-play', playClicked);
+            setBar('fb-loaded', 'fv-loaded', gameLoaded);
+            setBar('fb-started', 'fv-started', gameStarted);
+            setBar('fb-move', 'fv-move', firstMove);
+
+            // Bounce feedback
+            const bfDiv = document.getElementById('bounce-feedback-section');
+            const bf = d.bounce_feedback || [];
+            if (bf.length === 0) {
+                bfDiv.innerHTML = '<div class="empty">No bounce feedback yet</div>';
+            } else {
+                bfDiv.innerHTML = bf.map(fb => {
+                    const label = REASON_LABELS[fb.reason] || fb.reason || 'Unknown';
+                    return `<div class="bounce-card">
+                        <div class="bounce-meta">${fmtDate(fb.ts)}</div>
+                        <span class="bounce-reason-tag">${label}</span>
+                        ${fb.comment ? '<div class="bounce-comment-text">"' + fb.comment.replace(/</g, '&lt;') + '"</div>' : ''}
+                    </div>`;
+                }).join('');
+            }
         } catch(e) {
             console.error('Failed to load visitor stats', e);
         }
