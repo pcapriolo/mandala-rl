@@ -1,38 +1,24 @@
 #!/bin/bash
 # Sync training data from RunPod to local for dashboard monitoring.
-# Uses direct SSH (supports SCP for binary files).
+# Syncs text data (losses, heartbeats) via SSH and latest checkpoints via SCP.
 #
 # Usage:
-#   ./scripts/sync_from_runpod.sh          # sync everything every 30s
-#   ./scripts/sync_from_runpod.sh 60       # custom interval
+#   ./scripts/sync_from_runpod.sh          # sync every 60s
+#   ./scripts/sync_from_runpod.sh 30       # custom interval
 
-REMOTE="root@38.147.83.11"
+REMOTE="root@38.147.83.30"
 KEY="$HOME/.ssh/id_ed25519"
-SSH_PORT=17226
-SSH="ssh -o StrictHostKeyChecking=accept-new -i $KEY -p $SSH_PORT"
-SCP="scp -o StrictHostKeyChecking=accept-new -i $KEY -P $SSH_PORT"
+SSH_PORT=14516
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -p $SSH_PORT"
+SCP="scp -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -P $SSH_PORT"
 REMOTE_BASE="/workspace/mandala-rl/data"
 LOCAL_BASE="data"
-INTERVAL="${1:-30}"
+INTERVAL="${1:-60}"
 
-mkdir -p "$LOCAL_BASE/logs" "$LOCAL_BASE/replays" "$LOCAL_BASE/checkpoints"
-mkdir -p "$LOCAL_BASE/lost_cities/logs" "$LOCAL_BASE/lost_cities/replays" "$LOCAL_BASE/lost_cities/checkpoints"
-
-download_checkpoint() {
-    # Download binary checkpoint via SSH cat pipe (SCP breaks on this connection)
-    local remote_path="$1" local_path="$2"
-    $SSH -o ServerAliveInterval=5 "$REMOTE" "cat '$remote_path'" > "$local_path" 2>/dev/null
-    local rc=$?
-    # Verify file is non-empty (failed transfers produce 0-byte files)
-    if [ $rc -ne 0 ] || [ ! -s "$local_path" ]; then
-        rm -f "$local_path"
-        return 1
-    fi
-    return 0
-}
+mkdir -p "$LOCAL_BASE/checkpoints" "$LOCAL_BASE/lost_cities/checkpoints" "$LOCAL_BASE/dominion/checkpoints"
 
 sync_all() {
-    # Collect all text data in a single SSH session
+    # 1. Sync text data in a single SSH session
     local output
     output=$($SSH "$REMOTE" 'bash -s' << 'CMDS'
 echo "===HEARTBEAT_M==="
@@ -44,8 +30,6 @@ echo
 echo "===LOSSES_M==="
 cat /workspace/mandala-rl/data/losses.jsonl 2>/dev/null || echo ""
 echo
-echo "===ELO_M==="
-echo "{}"
 echo "===HEARTBEAT_LC==="
 cat /workspace/mandala-rl/data/lost_cities/heartbeat.json 2>/dev/null || echo "{}"
 echo
@@ -55,12 +39,18 @@ echo
 echo "===LOSSES_LC==="
 cat /workspace/mandala-rl/data/lost_cities/losses.jsonl 2>/dev/null || echo ""
 echo
-echo "===ELO_LC==="
-echo "{}"
-echo "===CHECKPOINTS_M==="
-for f in /workspace/mandala-rl/data/checkpoints/model_iter_*.pt; do [ -f "$f" ] && basename "$f"; done
-echo "===CHECKPOINTS_LC==="
-for f in /workspace/mandala-rl/data/lost_cities/checkpoints/model_iter_*.pt; do [ -f "$f" ] && basename "$f"; done
+echo "===HEARTBEAT_DOM==="
+cat /workspace/mandala-rl/data/dominion/heartbeat.json 2>/dev/null || echo "{}"
+echo
+echo "===EVAL_HB_DOM==="
+cat /workspace/mandala-rl/data/dominion/eval_heartbeat.json 2>/dev/null || echo "{}"
+echo
+echo "===LOSSES_DOM==="
+cat /workspace/mandala-rl/data/dominion/losses.jsonl 2>/dev/null || echo ""
+echo
+echo "===ELO_DOM==="
+cat /workspace/mandala-rl/data/dominion/elo_ratings.json 2>/dev/null || echo "{}"
+echo
 echo "===DONE==="
 CMDS
     ) 2>/dev/null
@@ -70,7 +60,6 @@ CMDS
         return
     fi
 
-    # Extract content between section markers
     extract_section() {
         echo "$output" | sed -n "/^===$1===/,/^===/p" | grep -v '^==='
     }
@@ -78,52 +67,46 @@ CMDS
     extract_section "HEARTBEAT_M" > "$LOCAL_BASE/heartbeat.json"
     extract_section "EVAL_HB_M" > "$LOCAL_BASE/eval_heartbeat.json"
     extract_section "LOSSES_M" > "$LOCAL_BASE/losses.jsonl"
-    # Elo files are managed locally by eval_daemon — don't overwrite
-    # extract_section "ELO_M" > "$LOCAL_BASE/elo_ratings.json"
     extract_section "HEARTBEAT_LC" > "$LOCAL_BASE/lost_cities/heartbeat.json"
     extract_section "EVAL_HB_LC" > "$LOCAL_BASE/lost_cities/eval_heartbeat.json"
     extract_section "LOSSES_LC" > "$LOCAL_BASE/lost_cities/losses.jsonl"
-    # extract_section "ELO_LC" > "$LOCAL_BASE/lost_cities/elo_ratings.json"
+    extract_section "HEARTBEAT_DOM" > "$LOCAL_BASE/dominion/heartbeat.json"
+    extract_section "EVAL_HB_DOM" > "$LOCAL_BASE/dominion/eval_heartbeat.json"
+    extract_section "LOSSES_DOM" > "$LOCAL_BASE/dominion/losses.jsonl"
+    extract_section "ELO_DOM" > "$LOCAL_BASE/dominion/elo_ratings.json"
 
-    # Extract checkpoint filenames
-    local m_checkpoints lc_checkpoints
-    m_checkpoints=$(extract_section "CHECKPOINTS_M" | grep -oE 'model_iter_[0-9]+\.pt' | sort -u)
-    lc_checkpoints=$(extract_section "CHECKPOINTS_LC" | grep -oE 'model_iter_[0-9]+\.pt' | sort -u)
+    # 2. Sync latest checkpoints via SCP
+    local new=0
+    for game_dir in "" "lost_cities/" "dominion/"; do
+        local remote_ckpt="$REMOTE_BASE/${game_dir}checkpoints/model_latest.pt"
+        local local_ckpt="$LOCAL_BASE/${game_dir}checkpoints/model_latest.pt"
+        local label="${game_dir:-mandala/}"
 
-    local new_m=0 new_lc=0
-    for fn in $m_checkpoints; do
-        if [ ! -f "$LOCAL_BASE/checkpoints/$fn" ]; then
-            echo "  Downloading Mandala $fn..."
-            download_checkpoint "$REMOTE_BASE/checkpoints/$fn" "$LOCAL_BASE/checkpoints/$fn"
+        # Compare remote iteration with local
+        local remote_iter
+        remote_iter=$($SSH "$REMOTE" "python3 -c \"import torch; print(torch.load('$remote_ckpt', map_location='cpu', weights_only=False)['iteration'])\"" 2>/dev/null)
+        local local_iter=0
+        if [ -f "$local_ckpt" ]; then
+            local_iter=$(python3 -c "import torch; print(torch.load('$local_ckpt', map_location='cpu', weights_only=False)['iteration'])" 2>/dev/null || echo 0)
+        fi
+
+        if [ -n "$remote_iter" ] && [ "$remote_iter" != "$local_iter" ]; then
+            $SCP "$REMOTE:$remote_ckpt" "$local_ckpt" 2>/dev/null
             if [ $? -eq 0 ]; then
-                new_m=$((new_m + 1))
-            else
-                echo "  Failed to download $fn"
+                echo "  ${label}latest: iter $local_iter → $remote_iter"
+                new=$((new + 1))
             fi
         fi
     done
 
-    for fn in $lc_checkpoints; do
-        if [ ! -f "$LOCAL_BASE/lost_cities/checkpoints/$fn" ]; then
-            echo "  Downloading LC $fn..."
-            download_checkpoint "$REMOTE_BASE/lost_cities/checkpoints/$fn" "$LOCAL_BASE/lost_cities/checkpoints/$fn"
-            if [ $? -eq 0 ]; then
-                new_lc=$((new_lc + 1))
-            else
-                echo "  Failed to download $fn"
-            fi
-        fi
-    done
-
-    local m_total=$(ls "$LOCAL_BASE/checkpoints/model_iter_"*.pt 2>/dev/null | wc -l | tr -d ' ')
-    local lc_total=$(ls "$LOCAL_BASE/lost_cities/checkpoints/model_iter_"*.pt 2>/dev/null | wc -l | tr -d ' ')
-    local m_remote=$(echo "$m_checkpoints" | grep -c 'model_iter_' 2>/dev/null || echo 0)
-    local lc_remote=$(echo "$lc_checkpoints" | grep -c 'model_iter_' 2>/dev/null || echo 0)
-    echo "[$(date +%H:%M:%S)] Synced (M:${m_total}/${m_remote}ckpts LC:${lc_total}/${lc_remote}ckpts, +${new_m}/+${new_lc} new)"
+    local m_lines=$(wc -l < "$LOCAL_BASE/losses.jsonl" 2>/dev/null | tr -d ' ')
+    local lc_lines=$(wc -l < "$LOCAL_BASE/lost_cities/losses.jsonl" 2>/dev/null | tr -d ' ')
+    local dom_lines=$(wc -l < "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | tr -d ' ')
+    echo "[$(date +%H:%M:%S)] Synced (M:${m_lines} LC:${lc_lines} DOM:${dom_lines} loss entries, ${new} checkpoints updated)"
 }
 
 echo "Syncing from RunPod ($REMOTE:$SSH_PORT) every ${INTERVAL}s..."
-echo "Checkpoints are always synced — local archive is source of truth."
+echo "Syncs: losses.jsonl, heartbeats, model_latest.pt (when iter changes)"
 
 while true; do
     sync_all

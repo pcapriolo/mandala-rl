@@ -284,8 +284,12 @@ std::vector<int> BatchedMCTS::finish_move() {
         g.move_count++;
         g.root.reset();
 
-        // Check terminal
-        if (game_->is_terminal(*g.state)) {
+        // Check terminal or max moves exceeded (safety cap for long games)
+        bool terminal = game_->is_terminal(*g.state);
+        if (!terminal && g.move_count >= 2000) {
+            terminal = true;  // Force end — score by current VP
+        }
+        if (terminal) {
             g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
             g.score_p0 = game_->get_score(*g.state, 0);
             g.score_p1 = game_->get_score(*g.state, 1);
