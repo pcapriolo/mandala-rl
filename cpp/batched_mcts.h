@@ -68,6 +68,7 @@ private:
     int leaves_per_game_;
     std::mt19937 rng_;
 
+    int max_moves_ = 0;  // 0 = no limit
     std::vector<PerGame> games_;
     std::vector<int> active_indices_;  // indices of non-finished games
     std::vector<PendingLeaf> pending_leaves_;

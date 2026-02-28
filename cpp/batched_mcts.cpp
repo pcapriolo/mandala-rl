@@ -23,6 +23,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         game_ = std::make_unique<LostCitiesGame>();
     } else if (game_type == "dominion") {
         game_ = std::make_unique<DominionGame>();
+        max_moves_ = 500;  // Dominion: ~100-300 moves typical, cap degenerate games
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
@@ -286,7 +287,7 @@ std::vector<int> BatchedMCTS::finish_move() {
 
         // Check terminal or max moves exceeded (safety cap for long games)
         bool terminal = game_->is_terminal(*g.state);
-        if (!terminal && g.move_count >= 2000) {
+        if (!terminal && max_moves_ > 0 && g.move_count >= max_moves_) {
             terminal = true;  // Force end — score by current VP
         }
         if (terminal) {
