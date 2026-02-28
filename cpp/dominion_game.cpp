@@ -279,7 +279,96 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         set_channel(142, static_cast<float>(pending.selected_count) / pending.max_select);
     }
 
-    // Ch 143-150: Reserved (zeros)
+    // Ch 143-150: Derived synergy features
+    // These pre-compute relationships the network would otherwise need many
+    // layers to discover from raw card counts.
+    {
+        // Count cards in my full deck by functional category
+        int my_action_givers = 0;   // Cards that give +actions (enable chaining)
+        int my_terminals = 0;       // Action cards that don't give +actions
+        int my_draw = 0;            // Cards that draw (plus_cards > 0)
+        int my_treasure_coins = 0;  // Total static coin value of all treasures
+        int my_victory_cards = 0;   // Green cards (deck dilution)
+        int my_total = 0;
+
+        auto scan = [&](int8_t cid) {
+            my_total++;
+            const auto& cd = CARD_DEFS[cid];
+            if (cd.is_victory() || cd.is_curse()) my_victory_cards++;
+            if (cd.is_treasure()) my_treasure_coins += cd.coins;
+            if (cd.is_action()) {
+                if (cd.plus_actions > 0) my_action_givers++;
+                else my_terminals++;
+                if (cd.plus_cards > 0) my_draw++;
+            }
+        };
+        for (auto c : me.deck) scan(c);
+        for (auto c : me.hand) scan(c);
+        for (auto c : me.discard) scan(c);
+        for (auto c : me.in_play) scan(c);
+
+        // Ch 143: Action density — ratio of +action cards to terminals
+        // High = can chain actions safely. Low = terminals will collide.
+        int total_actions = my_action_givers + my_terminals;
+        if (total_actions > 0) {
+            set_channel(143, static_cast<float>(my_action_givers) / total_actions);
+        }
+
+        // Ch 144: Draw density — fraction of deck that draws cards
+        // High = deck cycles fast, sees key cards more often
+        if (my_total > 0) {
+            set_channel(144, static_cast<float>(my_draw) / my_total);
+        }
+
+        // Ch 145: Payload — average coins per card in deck
+        // Measures economy quality independent of deck size
+        if (my_total > 0) {
+            set_channel(145, static_cast<float>(my_treasure_coins) / my_total / 3.0f);
+        }
+
+        // Ch 146: Green bloat — fraction of deck that's victory/curse cards
+        // High = bad draws, deck is diluted. Chapel trashing lowers this.
+        if (my_total > 0) {
+            set_channel(146, static_cast<float>(my_victory_cards) / my_total);
+        }
+
+        // Ch 147: Terminal collision risk — terminals that exceed action budget
+        // terminal_surplus = max(0, terminals - action_givers - 1) / 5
+        // 0 = safe, high = buying more terminals won't help
+        int surplus = std::max(0, my_terminals - my_action_givers - 1);
+        set_channel(147, std::min(1.0f, surplus / 5.0f));
+
+        // Ch 148: Expected hand value — rough coins per 5-card hand
+        // treasure_coins * 5 / total_cards / 12 (normalized)
+        if (my_total > 0) {
+            float expected = static_cast<float>(my_treasure_coins) * 5.0f / my_total;
+            set_channel(148, std::min(1.0f, expected / 12.0f));
+        }
+
+        // Ch 149: Opponent deck composition — their treasure density
+        {
+            int opp_treasure_coins = 0;
+            int opp_total = opp.total_cards();
+            for (auto c : opp.deck) opp_treasure_coins += CARD_DEFS[c].coins;
+            for (auto c : opp.hand) opp_treasure_coins += CARD_DEFS[c].coins;
+            for (auto c : opp.discard) opp_treasure_coins += CARD_DEFS[c].coins;
+            for (auto c : opp.in_play) opp_treasure_coins += CARD_DEFS[c].coins;
+            if (opp_total > 0) {
+                float opp_expected = static_cast<float>(opp_treasure_coins) * 5.0f / opp_total;
+                set_channel(149, std::min(1.0f, opp_expected / 12.0f));
+            }
+        }
+
+        // Ch 150: Attack pressure — do I have attack cards?
+        {
+            int my_attacks = 0;
+            for (auto c : me.deck) if (CARD_DEFS[c].is_attack()) my_attacks++;
+            for (auto c : me.hand) if (CARD_DEFS[c].is_attack()) my_attacks++;
+            for (auto c : me.discard) if (CARD_DEFS[c].is_attack()) my_attacks++;
+            for (auto c : me.in_play) if (CARD_DEFS[c].is_attack()) my_attacks++;
+            set_channel(150, std::min(1.0f, my_attacks / 3.0f));
+        }
+    }
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {
