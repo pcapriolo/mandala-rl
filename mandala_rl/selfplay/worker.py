@@ -62,7 +62,12 @@ class SelfPlayWorker:
         self.leaves_per_game = leaves_per_game
 
         # Detect game type for C++ engine
-        self._game_type = "mandala" if network.num_actions in (108, 150) else "lost_cities"
+        if network.num_actions in (108, 150):
+            self._game_type = "mandala"
+        elif network.num_actions == 131:
+            self._game_type = "dominion"
+        else:
+            self._game_type = "lost_cities"
 
         # Mixed precision for CUDA inference
         self.use_amp = device == 'cuda'
@@ -85,7 +90,12 @@ class SelfPlayWorker:
 
         # Normalize score margin to ~[-1, 1]
         score_margin = game.score_p0 - game.score_p1
-        max_margin = 60.0 if self._game_type == 'mandala' else 200.0
+        if self._game_type == 'mandala':
+            max_margin = 60.0
+        elif self._game_type == 'dominion':
+            max_margin = 30.0
+        else:
+            max_margin = 200.0
 
         has_beliefs = len(game.belief_labels) == len(game.states)
 

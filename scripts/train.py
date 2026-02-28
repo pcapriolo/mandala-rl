@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--iterations', type=int, default=None,
                       help='Override number of iterations')
     parser.add_argument('--game', type=str, default='mandala',
-                      choices=['mandala', 'lost_cities'],
+                      choices=['mandala', 'lost_cities', 'dominion'],
                       help='Game to train (default: mandala)')
     parser.add_argument('--flush-buffer', action='store_true',
                       help='Discard replay buffer from checkpoint (keep weights)')
@@ -81,6 +81,10 @@ def main():
         from lost_cities.game.engine import LostCitiesGame
         game = LostCitiesGame()
         print("Created Lost Cities game engine")
+    elif args.game == 'dominion':
+        from dominion.game.engine import DominionGame
+        game = DominionGame()
+        print("Created Dominion game engine")
 
     # Create network
     network_config = config['network']

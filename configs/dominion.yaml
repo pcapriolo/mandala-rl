@@ -1,0 +1,66 @@
+# Dominion RL Training Configuration
+
+# Network Architecture
+network:
+  input_channels: 151
+  num_actions: 131  # 3 phase-end + 31*4 card actions + MOAT/DECLINE/ACCEPT/DECLINE
+  num_res_blocks: 10
+  channels: 128
+
+# MCTS Parameters
+mcts:
+  num_simulations: 800
+  c_puct: 1.0
+  dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
+  dirichlet_epsilon: 0.25
+
+# Self-Play Parameters
+selfplay:
+  games_per_iteration: 100
+  parallel_games: 64
+  leaves_per_game: 4
+  temperature: 1.0
+  temperature_threshold: 40  # Higher — Dominion games are longer than Mandala/LC
+
+# Training Parameters
+training:
+  num_iterations: 3000
+  batch_size: 256
+  epochs_per_iteration: 1
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  lr_milestones: [500, 1500, 2500]
+  lr_gamma: 0.3
+  replay_buffer_size: 200000  # Larger — Dominion games produce ~200-600 states each
+  checkpoint_frequency: 1
+  checkpoint_every_n_games: 10
+  entropy_weight: 0.15        # Encourage exploration in large action space
+  policy_weight: 3.0          # Start 3x, decays to 1.0 over 256 iters
+
+# Evaluation Parameters
+evaluation:
+  num_games: 100
+  win_threshold: 0.55
+  eval_frequency: 5
+  eval_num_games: 20
+  eval_mcts_simulations: 400
+  eval_start_iteration: 1
+
+# Paths
+paths:
+  checkpoint_dir: data/dominion/checkpoints
+  replay_dir: data/dominion/replays
+  log_dir: data/dominion/logs
+  elo_file: data/dominion/elo_ratings.json
+
+# Deploy
+deploy_frequency: 25
+
+# Hardware
+device: auto
+
+# Replay saving
+save_replay_frequency: 1
+
+# Reproducibility
+seed: 42

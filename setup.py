@@ -17,6 +17,7 @@ setup(
                 "cpp/mcts_node.cpp",
                 "cpp/mandala_game.cpp",
                 "cpp/lost_cities_game.cpp",
+                "cpp/dominion_game.cpp",
                 "cpp/batched_mcts.cpp",
             ],
             include_dirs=[numpy.get_include()],

@@ -1,6 +1,7 @@
 #include "batched_mcts.h"
 #include "mandala_game.h"
 #include "lost_cities_game.h"
+#include "dominion_game.h"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -20,6 +21,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         game_ = std::make_unique<MandalaGame>();
     } else if (game_type == "lost_cities") {
         game_ = std::make_unique<LostCitiesGame>();
+    } else if (game_type == "dominion") {
+        game_ = std::make_unique<DominionGame>();
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }

@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mandala_rl.network.model import MandalaNet
 from mandala_rl.evaluation.fast_arena import FastArena
 from mandala_rl.evaluation.elo import EloRating
-from mandala_rl.evaluation.benchmark_bots import RandomBot, MandalaStrategyBot, LostCitiesStrategyBot
+from mandala_rl.evaluation.benchmark_bots import RandomBot, MandalaStrategyBot, LostCitiesStrategyBot, DominionStrategyBot
 
 
 def load_elo_with_metadata(elo_file):
@@ -143,7 +143,7 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
         print(f"[EVAL] Missing checkpoint: {current_path}")
         return False
 
-    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else "lost_cities"
+    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else ("dominion" if net_cfg['num_actions'] == 131 else "lost_cities")
     mcts_sims = eval_cfg.get('eval_mcts_simulations', 400)
 
     # Load all models upfront
@@ -261,7 +261,7 @@ def run_benchmarks(iteration, checkpoint_dir, net_cfg, mcts_cfg,
     if not current_path.exists():
         return None
 
-    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else "lost_cities"
+    game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else ("dominion" if net_cfg['num_actions'] == 131 else "lost_cities")
     num_actions = net_cfg['num_actions']
     try:
         current_model = load_model(current_path, net_cfg, device)
@@ -272,6 +272,8 @@ def run_benchmarks(iteration, checkpoint_dir, net_cfg, mcts_cfg,
     random_bot = RandomBot(num_actions)
     if game_type == 'mandala':
         strategy_bot = MandalaStrategyBot(num_actions)
+    elif game_type == 'dominion':
+        strategy_bot = DominionStrategyBot(num_actions)
     else:
         strategy_bot = LostCitiesStrategyBot(num_actions)
 
@@ -350,7 +352,7 @@ def main():
     else:
         device = args.device
 
-    game_name = 'Mandala' if net_cfg['num_actions'] in (108, 150) else 'Lost Cities'
+    game_name = 'Mandala' if net_cfg['num_actions'] in (108, 150) else ('Dominion' if net_cfg['num_actions'] == 131 else 'Lost Cities')
     start_iter = eval_cfg.get('eval_start_iteration', 1)
 
     print(f"[EVAL DAEMON] {game_name} — Tournament mode (device: {device})")

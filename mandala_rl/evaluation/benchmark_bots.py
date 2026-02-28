@@ -476,3 +476,106 @@ class LostCitiesStrategyBot:
 
         values = torch.zeros(N, 1, device=dev)
         return logits, values, torch.zeros(N, 1, device=logits.device), torch.zeros(N, 12, device=logits.device)
+
+
+class DominionStrategyBot:
+    """Big Money heuristic bot for Dominion.
+
+    Buy priority: Province > Gold > Duchy (late) > Silver > Estate (very late).
+    Plays all treasures, ends action phase immediately (no action play).
+    Uses tensor channels for context-aware buying decisions.
+
+    Tensor encoding (151 channels, broadcast 8x8):
+      Ch 31-61:  My hand (count per card type / 10)
+      Ch 93-123: Supply remaining (count per pile / 12)
+      Ch 126:    My coins / 12
+      Ch 128:    My buys remaining / 5
+      Ch 129:    Phase (0=action, 0.33=buy, 0.67=select, 1.0=react)
+      Ch 131:    Provinces remaining / 8
+      Ch 138:    My VP / 40
+      Ch 139:    Opp VP / 40
+
+    Action space (131):
+      0: END_ACTIONS, 1: END_BUYS, 2: DONE_SELECTING
+      3-33: PLAY, 34-64: BUY, 65-95: SELECT, 96-126: GAIN
+      127: REVEAL_MOAT, 128: DECLINE_REACTION, 129: ACCEPT, 130: DECLINE
+    """
+
+    NUM_ACTIONS = 131
+    COPPER, SILVER, GOLD = 0, 1, 2
+    ESTATE, DUCHY, PROVINCE, CURSE = 3, 4, 5, 6
+
+    def __init__(self, num_actions=131):
+        self.num_actions = num_actions
+
+    def eval(self):
+        return self
+
+    def to(self, device):
+        return self
+
+    def __call__(self, batch):
+        N = batch.shape[0]
+        dev = batch.device
+        logits = torch.full((N, self.num_actions), -10.0, device=dev)
+
+        my_hand = batch[:, 31:62, 0, 0] * 10
+        supply = batch[:, 93:124, 0, 0] * 12
+        my_coins = batch[:, 126, 0, 0] * 12
+        my_buys = batch[:, 128, 0, 0] * 5
+        phase = batch[:, 129, 0, 0]
+        provinces_left = batch[:, 131, 0, 0] * 8
+        my_vp = batch[:, 138, 0, 0] * 40
+        opp_vp = batch[:, 139, 0, 0] * 40
+
+        is_action = phase < 0.1
+        is_buy = (phase > 0.2) & (phase < 0.5)
+        is_select = (phase > 0.5) & (phase < 0.9)
+        is_react = phase > 0.9
+        has_buys = my_buys > 0.5
+
+        # Action phase: always end immediately
+        logits[:, 0] = torch.where(is_action, torch.tensor(5.0, device=dev), logits[:, 0])
+
+        # Buy phase: play all treasures first
+        for tid in [self.COPPER, self.SILVER, self.GOLD]:
+            has_t = my_hand[:, tid] > 0.1
+            logits[:, 3 + tid] = torch.where(is_buy & has_t, torch.tensor(8.0, device=dev), logits[:, 3 + tid])
+
+        # Buy Province (cost 8)
+        can = is_buy & has_buys & (my_coins >= 8) & (supply[:, self.PROVINCE] > 0.5)
+        logits[:, 34 + self.PROVINCE] = torch.where(can, torch.tensor(10.0, device=dev), logits[:, 34 + self.PROVINCE])
+
+        # Buy Gold (cost 6)
+        can = is_buy & has_buys & (my_coins >= 6) & (supply[:, self.GOLD] > 0.5)
+        logits[:, 34 + self.GOLD] = torch.where(can, torch.tensor(7.0, device=dev), logits[:, 34 + self.GOLD])
+
+        # Buy Duchy (cost 5) — only when greening (<=4 provinces left)
+        can = is_buy & has_buys & (my_coins >= 5) & (supply[:, self.DUCHY] > 0.5) & (provinces_left < 4.5)
+        logits[:, 34 + self.DUCHY] = torch.where(can, torch.tensor(6.0, device=dev), logits[:, 34 + self.DUCHY])
+
+        # Buy Silver (cost 3)
+        can = is_buy & has_buys & (my_coins >= 3) & (supply[:, self.SILVER] > 0.5)
+        logits[:, 34 + self.SILVER] = torch.where(can, torch.tensor(4.0, device=dev), logits[:, 34 + self.SILVER])
+
+        # Buy Estate (cost 2) — very late game only (<=2 provinces)
+        can = is_buy & has_buys & (my_coins >= 2) & (supply[:, self.ESTATE] > 0.5) & (provinces_left < 2.5)
+        logits[:, 34 + self.ESTATE] = torch.where(can, torch.tensor(3.0, device=dev), logits[:, 34 + self.ESTATE])
+
+        # End buys fallback
+        logits[:, 1] = torch.where(is_buy, torch.tensor(1.0, device=dev), logits[:, 1])
+
+        # React: prefer Moat reveal
+        logits[:, 127] = torch.where(is_react, torch.tensor(5.0, device=dev), logits[:, 127])
+        logits[:, 128] = torch.where(is_react, torch.tensor(1.0, device=dev), logits[:, 128])
+
+        # Select: uniform fallback (C++ masks invalids)
+        logits[:, 129] = torch.where(is_select, torch.tensor(2.0, device=dev), logits[:, 129])
+        logits[:, 130] = torch.where(is_select, torch.tensor(1.0, device=dev), logits[:, 130])
+        logits[:, 2] = torch.where(is_select, torch.tensor(0.5, device=dev), logits[:, 2])
+        for i in range(31):
+            logits[:, 65 + i] = torch.where(is_select, torch.tensor(0.0, device=dev), logits[:, 65 + i])
+            logits[:, 96 + i] = torch.where(is_select, torch.tensor(0.0, device=dev), logits[:, 96 + i])
+
+        values = torch.zeros(N, 1, device=dev)
+        return logits, values, torch.zeros(N, 1, device=logits.device), torch.zeros(N, 12, device=logits.device)

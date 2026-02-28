@@ -6,7 +6,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(mcts_cpp, m) {
-    m.doc() = "C++ MCTS engine for Mandala and Lost Cities";
+    m.doc() = "C++ MCTS engine for Mandala, Lost Cities, and Dominion";
 
     py::class_<BatchedMCTS>(m, "BatchedMCTS")
         .def(py::init<const std::string&, int, int, double, double, double, double, int, int>(),
