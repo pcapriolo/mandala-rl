@@ -59,8 +59,10 @@ fi
 metrics=$($SSH "$REMOTE" 'bash -s' << 'CMDS'
 echo "<<<HEARTBEAT>>>"
 cat /workspace/dominion_data/heartbeat.json 2>/dev/null || echo "{}"
+echo ""
 echo "<<<LOSSES>>>"
 tail -5 /workspace/dominion_data/losses.jsonl 2>/dev/null || echo ""
+echo ""
 echo "<<<DISK>>>"
 df -h /workspace | tail -1
 echo "<<<GPU>>>"
@@ -84,8 +86,8 @@ hb_game=$(echo "$heartbeat" | python3 -c "import json,sys; d=json.load(sys.stdin
 hb_total=$(echo "$heartbeat" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('total_games',0))" 2>/dev/null || echo 0)
 hb_ts=$(echo "$heartbeat" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('timestamp',0))" 2>/dev/null || echo 0)
 
-# Parse last loss entry
-losses=$(extract LOSSES | tail -1)
+# Parse last loss entry (filter empty lines before tail)
+losses=$(extract LOSSES | grep -v '^\s*$' | tail -1)
 if [ -n "$losses" ] && echo "$losses" | python3 -c "import json,sys; json.loads(sys.stdin.readline())" 2>/dev/null; then
     total_loss=$(echo "$losses" | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print(f\"{d.get('total',0):.4f}\")" 2>/dev/null || echo "N/A")
     policy_loss=$(echo "$losses" | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print(f\"{d.get('policy',0):.4f}\")" 2>/dev/null || echo "N/A")
