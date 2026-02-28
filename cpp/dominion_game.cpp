@@ -123,6 +123,11 @@ std::unique_ptr<GameState> DominionState::copy() const {
     s->throne_card = throne_card;
     s->throne_remaining = throne_remaining;
     s->save_phase = save_phase;
+    std::memcpy(s->total_buys, total_buys, sizeof(total_buys));
+    std::memcpy(s->province_buys, province_buys, sizeof(province_buys));
+    std::memcpy(s->treasure_buys, treasure_buys, sizeof(treasure_buys));
+    std::memcpy(s->action_plays, action_plays, sizeof(action_plays));
+    std::memcpy(s->total_moves, total_moves, sizeof(total_moves));
     return s;
 }
 
@@ -679,6 +684,7 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
 std::unique_ptr<GameState> DominionGame::get_next_state(const GameState& state_base, int action) const {
     auto new_state = state_base.copy();
     auto& s = static_cast<DominionState&>(*new_state);
+    s.total_moves[s.current_player_]++;
 
     if (s.pending.active()) {
         resolve_pending(s, action);
@@ -721,6 +727,7 @@ void DominionGame::play_card(DominionState& s, int8_t card_id) const {
     }
 
     // Action card
+    s.action_plays[s.current_player_]++;
     if (s.phase == DOM_PHASE_ACTION) {
         s.actions_remaining -= 1;
     }
@@ -1397,11 +1404,17 @@ void DominionGame::do_throne_replay(DominionState& s) const {
 }
 
 void DominionGame::buy_card(DominionState& s, int8_t card_id) const {
-    auto& player = s.players[s.current_player_];
+    int p = s.current_player_;
     s.coins -= CARD_DEFS[card_id].cost;
     s.buys_remaining--;
     s.supply[card_id]--;
-    player.discard.push_back(card_id);
+    s.players[p].discard.push_back(card_id);
+
+    // Track buys
+    s.total_buys[p]++;
+    if (card_id == CARD_PROVINCE) s.province_buys[p]++;
+    if (card_id == CARD_SILVER || card_id == CARD_GOLD) s.treasure_buys[p]++;
+
     check_game_end(s);
 }
 

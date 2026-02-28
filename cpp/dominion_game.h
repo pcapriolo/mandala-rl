@@ -229,6 +229,13 @@ public:
     int8_t throne_remaining = 0;
     DomPhase save_phase = DOM_PHASE_ACTION;
 
+    // Behavioral tracking for game quality assessment
+    int16_t total_buys[2] = {};           // Total cards bought per player
+    int16_t province_buys[2] = {};        // Province buys per player
+    int16_t treasure_buys[2] = {};        // Treasure buys per player (Silver/Gold)
+    int16_t action_plays[2] = {};         // Action cards played per player
+    int16_t total_moves[2] = {};          // Total decisions made per player
+
     // Override GameState
     int current_player() const override { return current_player_; }
     int tensor_channels() const override { return DOM_TENSOR_CHANNELS; }

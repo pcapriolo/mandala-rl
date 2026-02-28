@@ -46,6 +46,8 @@ class TrainingObserver:
             return self.replays_dir
         elif game == 'lost_cities':
             return self.data_dir / 'lost_cities' / 'replays'
+        elif game == 'dominion':
+            return self.data_dir / 'dominion' / 'replays'
         return None
 
     def _elo_file_for(self, game: str) -> Path:
@@ -53,6 +55,8 @@ class TrainingObserver:
             return self.data_dir / 'elo_ratings.json'
         elif game == 'lost_cities':
             return self.data_dir / 'lost_cities' / 'elo_ratings.json'
+        elif game == 'dominion':
+            return self.data_dir / 'dominion' / 'elo_ratings.json'
         return None
 
     def _checkpoints_dir_for(self, game: str) -> Path:
@@ -60,6 +64,8 @@ class TrainingObserver:
             return self.checkpoints_dir
         elif game == 'lost_cities':
             return self.data_dir / 'lost_cities' / 'checkpoints'
+        elif game == 'dominion':
+            return self.data_dir / 'dominion' / 'checkpoints'
         return None
 
     def _game_health(self, game: str) -> dict:
@@ -70,7 +76,12 @@ class TrainingObserver:
 
         # Training heartbeat (live progress from trainer process)
         heartbeat = {}
-        hb_dir = self.data_dir if game == 'mandala' else self.data_dir / 'lost_cities'
+        if game == 'mandala':
+            hb_dir = self.data_dir
+        elif game == 'lost_cities':
+            hb_dir = self.data_dir / 'lost_cities'
+        else:
+            hb_dir = self.data_dir / game
         hb_file = hb_dir / 'heartbeat.json'
         if hb_file.exists():
             try:
@@ -180,7 +191,8 @@ class TrainingObserver:
     def _config_for(self, game: str) -> dict:
         """Load training config for a game."""
         base = self.data_dir.parent
-        path = base / 'configs' / ('default.yaml' if game == 'mandala' else 'lost_cities.yaml')
+        config_map = {'mandala': 'default.yaml', 'lost_cities': 'lost_cities.yaml', 'dominion': 'dominion.yaml'}
+        path = base / 'configs' / config_map.get(game, 'default.yaml')
         if path.exists():
             with open(path) as f:
                 return yaml.safe_load(f)
@@ -204,8 +216,10 @@ class TrainingObserver:
                 pass
 
         # Load loss data
-        subdir = '' if game == 'mandala' else 'lost_cities'
-        losses_path = self.data_dir / subdir / 'losses.jsonl' if subdir else self.data_dir / 'losses.jsonl'
+        if game == 'mandala':
+            losses_path = self.data_dir / 'losses.jsonl'
+        else:
+            losses_path = self.data_dir / game / 'losses.jsonl'
         loss_entries = []
         if losses_path.exists():
             for line in open(losses_path):
@@ -369,6 +383,7 @@ class TrainingObserver:
             return jsonify({
                 'mandala': self._game_health('mandala'),
                 'lost_cities': self._game_health('lost_cities'),
+                'dominion': self._game_health('dominion'),
                 'timestamp': time.time(),
             })
 
@@ -463,7 +478,7 @@ class TrainingObserver:
         def api_losses():
             """Get training loss history for all games."""
             games = {}
-            for key, subdir in [('Mandala', ''), ('Lost Cities', 'lost_cities')]:
+            for key, subdir in [('Mandala', ''), ('Lost Cities', 'lost_cities'), ('Dominion', 'dominion')]:
                 path = self.data_dir / subdir / 'losses.jsonl' if subdir else self.data_dir / 'losses.jsonl'
                 if path.exists():
                     entries = []
@@ -482,7 +497,8 @@ class TrainingObserver:
             """Get Elo ratings for all games, including per-iter win/loss stats."""
             games = {}
             for name, path in [('Mandala', self.data_dir / 'elo_ratings.json'),
-                               ('Lost Cities', self.data_dir / 'lost_cities' / 'elo_ratings.json')]:
+                               ('Lost Cities', self.data_dir / 'lost_cities' / 'elo_ratings.json'),
+                               ('Dominion', self.data_dir / 'dominion' / 'elo_ratings.json')]:
                 if not path.exists():
                     continue
                 with open(path) as f:
@@ -513,6 +529,7 @@ class TrainingObserver:
             return jsonify({
                 'mandala': self._compute_kpis('mandala'),
                 'lost_cities': self._compute_kpis('lost_cities'),
+                'dominion': self._compute_kpis('dominion'),
             })
 
         @self.app.route('/replay/<game>/<filename>')

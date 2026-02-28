@@ -443,15 +443,27 @@ class Trainer:
                              self.iteration)
         self.writer.add_scalar('Training/PolicyWeight', policy_weight, self.iteration)
 
-        # Log policy entropy (network health monitor)
+        # Log policy entropy and value head diagnostics
         self.network.eval()
         with torch.no_grad():
-            policy_logits = self.network(states)[0]
+            policy_logits, pred_values = self.network(states)[:2]
             network_policy = F.softmax(policy_logits, dim=1)
             entropy = -torch.sum(network_policy * torch.log(network_policy + 1e-8), dim=1).mean()
             max_prob = torch.max(network_policy, dim=1)[0].mean()
             self.writer.add_scalar('Network/PolicyEntropy', entropy.item(), self.iteration)
             self.writer.add_scalar('Network/MaxActionProb', max_prob.item(), self.iteration)
+
+            # Value head diagnostics
+            pv = pred_values.squeeze()
+            tv = values
+            val_pred_mean = pv.mean().item()
+            val_pred_std = pv.std().item()
+            val_target_mean = tv.mean().item()
+            val_target_std = tv.std().item()
+            self.writer.add_scalar('ValueHead/PredMean', val_pred_mean, self.iteration)
+            self.writer.add_scalar('ValueHead/PredStd', val_pred_std, self.iteration)
+            self.writer.add_scalar('ValueHead/TargetMean', val_target_mean, self.iteration)
+            self.writer.add_scalar('ValueHead/TargetStd', val_target_std, self.iteration)
 
         print(f"Loss - Total: {epoch_total_loss:.4f}, "
               f"Policy: {epoch_policy_loss:.4f} (w={policy_weight:.2f}), "
@@ -459,6 +471,8 @@ class Trainer:
               f"Score: {epoch_score_loss:.4f}, "
               f"Belief: {epoch_belief_loss:.4f} "
               f"({total_steps} gradient steps)")
+        print(f"  Value head: pred {val_pred_mean:+.3f}±{val_pred_std:.3f}, "
+              f"target {val_target_mean:+.3f}±{val_target_std:.3f}")
 
         # Append to losses.jsonl for dashboard charts
         losses_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'losses.jsonl'
@@ -528,6 +542,8 @@ class Trainer:
             assessment, warnings = self._assess_lc(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
         elif game_type == 'mandala':
             assessment, warnings = self._assess_mandala(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
+        elif game_type == 'dominion':
+            assessment, warnings = self._assess_dominion(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
 
         # Print summary
         print(f"  Game quality: {avg_len:.0f} avg moves (±{std_len:.1f}), "
@@ -630,6 +646,53 @@ class Trainer:
 
         if std_len < 2.0 and n >= 20:
             warnings.append(f"Low game length variance (±{std_len:.1f}) — possible degenerate pattern")
+
+        if n >= 20 and max(p0w, p1w) / n > 0.70:
+            dominant = "P0" if p0w > p1w else "P1"
+            warnings.append(f"{dominant} wins {max(p0w,p1w)/n:.0%} — severe player imbalance")
+
+        return assessment, warnings
+
+    def _assess_dominion(self, summaries, n, avg_len, std_len, p0w, p1w, draws):
+        """Qualitative assessment of Dominion gameplay."""
+        assessment = []
+        warnings = []
+
+        avg_buys = sum(s['total_buys'][0] + s['total_buys'][1]
+                       for s in summaries) / (2 * n)
+        avg_provinces = sum(s['province_buys'][0] + s['province_buys'][1]
+                           for s in summaries) / (2 * n)
+        avg_treasures = sum(s['treasure_buys'][0] + s['treasure_buys'][1]
+                           for s in summaries) / (2 * n)
+        avg_actions = sum(s['action_plays'][0] + s['action_plays'][1]
+                         for s in summaries) / (2 * n)
+        avg_turns = sum(s.get('turn_number', 0) for s in summaries) / n
+
+        action_rate = avg_actions / max(1, avg_len) * 2  # per-player fraction
+
+        self.writer.add_scalar('GameQuality/DOM_AvgBuys', avg_buys, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgProvinces', avg_provinces, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgTreasures', avg_treasures, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_ActionRate', action_rate, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgTurns', avg_turns, self.iteration)
+
+        self._game_quality['avg_buys'] = round(avg_buys, 2)
+        self._game_quality['avg_provinces'] = round(avg_provinces, 2)
+        self._game_quality['avg_treasures'] = round(avg_treasures, 2)
+        self._game_quality['action_rate'] = round(action_rate, 3)
+        self._game_quality['avg_turns'] = round(avg_turns, 1)
+
+        assessment.append(f"Dominion: {avg_buys:.1f} buys/player, "
+                          f"{avg_provinces:.1f} provinces, {avg_treasures:.1f} treasures, "
+                          f"{avg_actions:.1f} action plays")
+        assessment.append(f"  {avg_turns:.0f} turns, {action_rate:.0%} action play rate")
+
+        if avg_provinces < 0.5 and avg_turns > 15:
+            warnings.append("LOW PROVINCES: bot rarely buys provinces — no winning strategy")
+        if avg_buys < 2.0:
+            warnings.append(f"FEW BUYS ({avg_buys:.1f}/player) — bot not buying enough cards")
+        if avg_actions < 0.5 and avg_turns > 10:
+            warnings.append("NO ACTIONS: bot rarely plays action cards")
 
         if n >= 20 and max(p0w, p1w) / n > 0.70:
             dominant = "P0" if p0w > p1w else "P1"

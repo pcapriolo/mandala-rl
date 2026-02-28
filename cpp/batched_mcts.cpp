@@ -409,6 +409,18 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
         }
         summary["num_expeditions"] = py::make_tuple(exps_p0, exps_p1);
     }
+    else if (auto* ds = dynamic_cast<DominionState*>(g.state.get())) {
+        summary["game_type"] = "dominion";
+        DominionGame dom_game;
+        summary["score_p0"] = dom_game.get_score(*ds, 0);
+        summary["score_p1"] = dom_game.get_score(*ds, 1);
+        summary["turn_number"] = static_cast<int>(ds->turn_number);
+        summary["total_buys"] = py::make_tuple(ds->total_buys[0], ds->total_buys[1]);
+        summary["province_buys"] = py::make_tuple(ds->province_buys[0], ds->province_buys[1]);
+        summary["treasure_buys"] = py::make_tuple(ds->treasure_buys[0], ds->treasure_buys[1]);
+        summary["action_plays"] = py::make_tuple(ds->action_plays[0], ds->action_plays[1]);
+        summary["total_moves"] = py::make_tuple(ds->total_moves[0], ds->total_moves[1]);
+    }
 
     return summary;
 }
