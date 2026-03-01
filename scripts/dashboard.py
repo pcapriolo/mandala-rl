@@ -30,6 +30,13 @@ GAMES = {
         'elo_file': Path('data/lost_cities/elo_ratings.json'),
         'template': 'replay_viewer_lc.html',
     },
+    'dominion': {
+        'name': 'Dominion',
+        'replay_dir': Path('data/dominion/replays'),
+        'elo_file': Path('data/dominion/elo_ratings.json'),
+        'losses_file': Path('data/dominion/losses.jsonl'),
+        'template': 'dashboard_dominion.html',
+    },
 }
 
 
@@ -73,7 +80,14 @@ def index():
     game_info = []
     for key, cfg in GAMES.items():
         replay_count = len(list(cfg['replay_dir'].glob("game_*.json"))) if cfg['replay_dir'].exists() else 0
-        game_info.append({'key': key, 'name': cfg['name'], 'replay_count': replay_count})
+        # For games with losses.jsonl, show iteration count as subtitle
+        losses_file = cfg.get('losses_file')
+        if losses_file and losses_file.exists():
+            iter_count = sum(1 for line in losses_file.read_text().strip().split('\n') if line.strip())
+            subtitle = f'{iter_count} iterations'
+        else:
+            subtitle = f'{replay_count} replays'
+        game_info.append({'key': key, 'name': cfg['name'], 'replay_count': replay_count, 'subtitle': subtitle})
     return render_template('dashboard.html', games=game_info)
 
 
@@ -130,6 +144,29 @@ def list_games(game, iteration):
     replays_by_iter = load_replay_index(GAMES[game]['replay_dir'])
     games = replays_by_iter.get(iteration, [])
     return jsonify({'games': games})
+
+
+@app.route('/<game>/api/training')
+def training_data(game):
+    """Return per-iteration training metrics from losses.jsonl."""
+    if game not in GAMES:
+        return jsonify({'error': 'Game not found'}), 404
+
+    losses_file = GAMES[game].get('losses_file')
+    if not losses_file or not losses_file.exists():
+        return jsonify({'iterations': []})
+
+    iterations = []
+    for line in losses_file.read_text().strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            iterations.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    return jsonify({'iterations': iterations})
 
 
 @app.route('/<game>/api/replay/<game_id>')

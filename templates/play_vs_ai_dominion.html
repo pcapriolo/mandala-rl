@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dominion - Play vs AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+        .header { text-align: center; padding: 10px; background: #16213e; border-bottom: 2px solid #333; }
+        .header h1 { font-size: 1.4em; color: #667eea; display: inline; }
+        .header-controls { display: inline-block; margin-left: 20px; }
+        .header-controls button { background: #333; color: #ccc; border: 1px solid #444; border-radius: 6px;
+            padding: 5px 12px; cursor: pointer; font-size: 0.85em; margin: 0 3px; }
+        .header-controls button:hover { background: #444; color: #fff; }
+        .header a { color: #667eea; text-decoration: none; margin-left: 15px; font-size: 0.85em; }
+
+        /* Supply */
+        .supply { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 10px;
+            background: #0f1729; border-bottom: 1px solid #333; }
+        .supply-card { background: #1e2d4a; border: 2px solid #333; border-radius: 8px; padding: 6px 10px;
+            min-width: 80px; text-align: center; cursor: pointer; transition: all 0.15s; position: relative; }
+        .supply-card:hover { border-color: #667eea; transform: translateY(-2px); }
+        .supply-card.buyable { border-color: #48bb78; box-shadow: 0 0 8px #48bb7844; }
+        .supply-card.empty { opacity: 0.3; pointer-events: none; }
+        .supply-card .card-name { font-size: 0.8em; font-weight: 600; white-space: nowrap; }
+        .supply-card .card-cost { position: absolute; top: -6px; left: -6px; background: #f1c40f; color: #333;
+            border-radius: 50%; width: 20px; height: 20px; font-size: 0.7em; font-weight: 700;
+            display: flex; align-items: center; justify-content: center; }
+        .supply-card .card-count { font-size: 0.7em; color: #888; }
+        .supply-card.treasure .card-name { color: #f1c40f; }
+        .supply-card.victory .card-name { color: #48bb78; }
+        .supply-card.curse .card-name { color: #e74c3c; }
+        .supply-card.action .card-name { color: #ccc; }
+
+        /* Opponent info */
+        .opp-info { display: flex; justify-content: center; gap: 20px; padding: 8px;
+            background: #16213e; font-size: 0.85em; color: #888; }
+        .opp-info span { }
+        .opp-info .label { color: #555; }
+
+        /* Play area */
+        .play-area { min-height: 70px; padding: 8px; background: #1a1a2e; border-bottom: 1px solid #222;
+            display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; align-items: center; }
+        .play-area-label { color: #555; font-size: 0.8em; width: 100%; text-align: center; margin-bottom: 4px; }
+        .played-card { background: #2a3a5a; border: 1px solid #444; border-radius: 6px;
+            padding: 4px 8px; font-size: 0.75em; }
+
+        /* Resource bar */
+        .resource-bar { display: flex; justify-content: center; gap: 30px; padding: 10px;
+            background: #16213e; border-top: 1px solid #333; border-bottom: 1px solid #333; font-size: 0.95em; }
+        .resource { text-align: center; }
+        .resource .value { font-size: 1.3em; font-weight: 700; }
+        .resource .label { font-size: 0.75em; color: #888; }
+        .resource.actions .value { color: #e94560; }
+        .resource.coins .value { color: #f1c40f; }
+        .resource.buys .value { color: #48bb78; }
+        .resource.phase .value { color: #667eea; font-size: 1.0em; }
+
+        /* Hand */
+        .hand-area { padding: 10px; }
+        .hand-label { text-align: center; font-size: 0.85em; color: #888; margin-bottom: 6px; }
+        .hand { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+        .hand-card { background: #1e2d4a; border: 2px solid #444; border-radius: 10px; padding: 8px 12px;
+            min-width: 85px; text-align: center; cursor: pointer; transition: all 0.15s; position: relative; }
+        .hand-card:hover { border-color: #667eea; transform: translateY(-4px); }
+        .hand-card.playable { border-color: #667eea; box-shadow: 0 0 10px #667eea44; }
+        .hand-card.selectable { border-color: #e94560; box-shadow: 0 0 10px #e9456044; }
+        .hand-card .hc-name { font-size: 0.85em; font-weight: 600; }
+        .hand-card .hc-type { font-size: 0.65em; color: #888; }
+        .hand-card.treasure .hc-name { color: #f1c40f; }
+        .hand-card.victory .hc-name { color: #48bb78; }
+        .hand-card.action .hc-name { color: #ccc; }
+        .hand-card.curse .hc-name { color: #e74c3c; }
+
+        /* Action panel */
+        .action-panel { padding: 10px; text-align: center; }
+        .action-panel button { background: #667eea; color: white; border: none; border-radius: 8px;
+            padding: 10px 24px; font-size: 1em; font-weight: 600; cursor: pointer;
+            margin: 3px; transition: all 0.15s; }
+        .action-panel button:hover { background: #5568d3; transform: scale(1.02); }
+        .action-panel button.secondary { background: #333; color: #ccc; }
+        .action-panel button.secondary:hover { background: #444; }
+        .action-panel button.danger { background: #e94560; }
+        .action-panel button.accept { background: #48bb78; }
+        .action-panel .phase-hint { color: #888; font-size: 0.85em; margin-bottom: 8px; }
+
+        /* Turn log */
+        .turn-log { max-height: 150px; overflow-y: auto; padding: 8px 15px; background: #0f1729;
+            font-size: 0.8em; color: #666; border-top: 1px solid #222; }
+        .turn-log .log-entry { padding: 2px 0; }
+        .turn-log .log-entry.human { color: #667eea; }
+        .turn-log .log-entry.ai { color: #e94560; }
+        .turn-log .log-entry.system { color: #48bb78; }
+
+        /* Card tooltip */
+        .tooltip { display: none; position: fixed; background: #16213e; border: 2px solid #667eea;
+            border-radius: 10px; padding: 12px; max-width: 280px; z-index: 100; font-size: 0.85em; }
+        .tooltip.show { display: block; }
+        .tooltip .tt-name { font-weight: 700; color: #667eea; font-size: 1.1em; margin-bottom: 4px; }
+        .tooltip .tt-cost { color: #f1c40f; }
+        .tooltip .tt-types { color: #888; font-size: 0.85em; margin-bottom: 6px; }
+        .tooltip .tt-text { color: #ccc; line-height: 1.4; }
+
+        /* Game over overlay */
+        .game-over { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+            z-index: 200; align-items: center; justify-content: center; }
+        .game-over.show { display: flex; }
+        .game-over-box { background: #16213e; border: 2px solid #667eea; border-radius: 14px;
+            padding: 30px; max-width: 400px; width: 90%; text-align: center; }
+        .game-over-box h2 { color: #667eea; margin-bottom: 10px; }
+        .game-over-box .result { font-size: 1.8em; font-weight: 700; margin-bottom: 15px; }
+        .game-over-box .result.win { color: #48bb78; }
+        .game-over-box .result.loss { color: #e94560; }
+        .game-over-box .result.draw { color: #f1c40f; }
+        .game-over-box .vp-breakdown { text-align: left; margin-bottom: 15px; font-size: 0.9em; }
+        .game-over-box .vp-row { display: flex; justify-content: space-between; padding: 3px 0;
+            border-bottom: 1px solid #333; }
+        .game-over-box button { background: #667eea; color: white; border: none; border-radius: 8px;
+            padding: 12px 30px; font-size: 1.1em; cursor: pointer; margin-top: 10px; }
+
+        /* Pending info bar */
+        .pending-bar { background: #2a1a3e; padding: 8px; text-align: center; color: #d4a5f1;
+            font-size: 0.9em; border-bottom: 1px solid #444; display: none; }
+        .pending-bar.show { display: block; }
+
+        /* AI thinking indicator */
+        .ai-thinking { display: none; text-align: center; padding: 15px; color: #e94560; }
+        .ai-thinking.show { display: block; }
+        .ai-thinking .spinner { display: inline-block; width: 20px; height: 20px;
+            border: 3px solid #333; border-top: 3px solid #e94560; border-radius: 50%;
+            animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @media (max-width: 600px) {
+            .supply-card { min-width: 60px; padding: 4px 6px; }
+            .supply-card .card-name { font-size: 0.7em; }
+            .hand-card { min-width: 70px; padding: 6px 8px; }
+            .resource-bar { gap: 15px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Dominion</h1>
+        <span class="header-controls">
+            <button onclick="newGame()">New Game</button>
+            <button onclick="newGame(1)">Play as P2</button>
+        </span>
+        <a href="/">Home</a>
+    </div>
+
+    <div class="supply" id="supply"></div>
+    <div class="opp-info" id="oppInfo"></div>
+    <div class="pending-bar" id="pendingBar"></div>
+    <div class="play-area" id="playArea">
+        <div class="play-area-label">Cards in play</div>
+    </div>
+    <div class="resource-bar" id="resourceBar"></div>
+    <div class="ai-thinking" id="aiThinking">
+        <span class="spinner"></span> AI is thinking...
+    </div>
+    <div class="hand-area">
+        <div class="hand-label" id="handLabel">Your Hand</div>
+        <div class="hand" id="hand"></div>
+    </div>
+    <div class="action-panel" id="actionPanel"></div>
+    <div class="turn-log" id="turnLog"></div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <div class="game-over" id="gameOver">
+        <div class="game-over-box">
+            <h2>Game Over</h2>
+            <div class="result" id="goResult"></div>
+            <div class="vp-breakdown" id="goBreakdown"></div>
+            <button onclick="newGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+    const BASE_URL = '{{ base_url }}';
+    let gameId = null;
+    let gameState = null;
+    let humanPlayer = 0;
+    let aiRunning = false;
+
+    // Card data for tooltips
+    const CARD_TEXT = {
+        'Copper': '$1', 'Silver': '$2', 'Gold': '$3',
+        'Estate': '1 VP', 'Duchy': '3 VP', 'Province': '6 VP', 'Curse': '-1 VP',
+        'Cellar': '+1 Action. Discard any number, draw that many.',
+        'Moat': '+2 Cards. Reaction: reveal to block attacks.',
+        'Chapel': 'Trash up to 4 cards from hand.',
+        'Harbinger': '+1 Card, +1 Action. Look through discard, may topdeck one.',
+        'Merchant': '+1 Card, +1 Action. First Silver played this turn: +$1.',
+        'Vassal': '+$2. Discard top card; if Action, may play it.',
+        'Village': '+1 Card, +2 Actions.',
+        'Workshop': 'Gain a card costing up to $4.',
+        'Bureaucrat': 'Gain Silver to top of deck. Each opponent puts Victory on deck.',
+        'Gardens': 'Worth 1 VP per 10 cards you have.',
+        'Militia': '+$2. Each opponent discards down to 3.',
+        'Moneylender': 'Trash a Copper. If you do, +$3.',
+        'Poacher': '+1 Card, +1 Action, +$1. Discard per empty supply pile.',
+        'Remodel': 'Trash a card. Gain one costing up to $2 more.',
+        'Smithy': '+3 Cards.',
+        'Throne Room': 'Choose an Action from hand. Play it twice.',
+        'Artisan': 'Gain a card to hand costing up to $5. Put a card on deck.',
+        'Bandit': 'Gain a Gold. Each opponent reveals top 2, trashes a non-Copper treasure.',
+        'Council Room': '+4 Cards, +1 Buy. Each opponent draws 1.',
+        'Library': 'Draw until 7 cards in hand. May set aside Actions.',
+        'Market': '+1 Card, +1 Action, +1 Buy, +$1.',
+        'Mine': 'Trash a Treasure. Gain a Treasure to hand costing up to $3 more.',
+        'Sentry': '+1 Card, +1 Action. Look at top 2: trash/discard/put back each.',
+        'Witch': '+2 Cards. Each opponent gains a Curse.',
+    };
+
+    const CARD_TYPES_DISPLAY = {
+        'Copper': 'Treasure', 'Silver': 'Treasure', 'Gold': 'Treasure',
+        'Estate': 'Victory', 'Duchy': 'Victory', 'Province': 'Victory', 'Curse': 'Curse',
+    };
+
+    function getCardClass(name) {
+        const t = CARD_TYPES_DISPLAY[name];
+        if (t === 'Treasure') return 'treasure';
+        if (t === 'Victory') return 'victory';
+        if (t === 'Curse') return 'curse';
+        return 'action';
+    }
+
+    async function apiCall(endpoint, data = null) {
+        const opts = data ? {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        } : {};
+        const resp = await fetch(BASE_URL + endpoint, opts);
+        return resp.json();
+    }
+
+    async function newGame(asPlayer) {
+        humanPlayer = asPlayer || 0;
+        const data = await apiCall('/api/new_game', {human_player: humanPlayer});
+        gameId = data.game_id;
+        gameState = data;
+        document.getElementById('gameOver').classList.remove('show');
+        document.getElementById('turnLog').innerHTML = '';
+        render();
+        if (gameState.current_player !== humanPlayer && !gameState.is_terminal) {
+            doAiTurn();
+        }
+    }
+
+    function render() {
+        if (!gameState) return;
+        const st = gameState.state;
+        const validMoves = {};
+        (gameState.valid_moves || []).forEach(m => { validMoves[m.action] = m.description; });
+
+        renderSupply(st, validMoves);
+        renderOppInfo(st);
+        renderPlayArea(st);
+        renderResourceBar(st);
+        renderHand(st, validMoves);
+        renderActionPanel(validMoves);
+        renderPendingBar(st);
+
+        if (gameState.is_terminal) {
+            showGameOver();
+        }
+    }
+
+    function renderSupply(st, validMoves) {
+        const el = document.getElementById('supply');
+        el.innerHTML = '';
+        const supply = st.supply;
+        // Sort: basic first (Copper..Curse), then kingdom alphabetical
+        const basicOrder = ['Copper','Silver','Gold','Estate','Duchy','Province','Curse'];
+        const kingdom = Object.keys(supply).filter(n => !basicOrder.includes(n)).sort();
+        const order = [...basicOrder, ...kingdom];
+
+        order.forEach(name => {
+            if (!(name in supply)) return;
+            const count = supply[name];
+            const cost = st.card_costs[name] || 0;
+            const buyAction = st.action_ids?.buy?.[name];
+            const isBuyable = buyAction !== undefined && validMoves[buyAction] !== undefined;
+            const isEmpty = count === 0;
+
+            const div = document.createElement('div');
+            div.className = `supply-card ${getCardClass(name)} ${isBuyable ? 'buyable' : ''} ${isEmpty ? 'empty' : ''}`;
+            div.innerHTML = `<div class="card-cost">${cost}</div><div class="card-name">${name}</div><div class="card-count">${count}</div>`;
+            div.onmouseenter = e => showTooltip(e, name);
+            div.onmouseleave = hideTooltip;
+            if (isBuyable) {
+                div.onclick = () => makeMove(buyAction);
+            }
+            el.appendChild(div);
+        });
+    }
+
+    function renderOppInfo(st) {
+        const opp = humanPlayer === 0 ? 1 : 0;
+        const p = st.players[opp];
+        document.getElementById('oppInfo').innerHTML =
+            `<span><span class="label">Opponent Hand:</span> ${p.hand_size}</span>
+             <span><span class="label">Deck:</span> ${p.deck_size}</span>
+             <span><span class="label">Discard:</span> ${p.discard_size}</span>
+             <span><span class="label">VP:</span> ${p.vp}</span>
+             <span><span class="label">Cards:</span> ${p.total_cards}</span>`;
+    }
+
+    function renderPlayArea(st) {
+        const el = document.getElementById('playArea');
+        const me = st.players[humanPlayer];
+        const inPlay = me.in_play || [];
+        if (inPlay.length === 0) {
+            el.innerHTML = '<div class="play-area-label">Cards in play</div>';
+        } else {
+            el.innerHTML = '<div class="play-area-label">In play</div>' +
+                inPlay.map(n => `<span class="played-card">${n}</span>`).join('');
+        }
+    }
+
+    function renderResourceBar(st) {
+        const isMyTurn = gameState.current_player === humanPlayer;
+        document.getElementById('resourceBar').innerHTML =
+            `<div class="resource actions"><div class="value">${st.actions_remaining}</div><div class="label">Actions</div></div>
+             <div class="resource coins"><div class="value">$${st.coins}</div><div class="label">Coins</div></div>
+             <div class="resource buys"><div class="value">${st.buys_remaining}</div><div class="label">Buys</div></div>
+             <div class="resource phase"><div class="value">${st.phase.toUpperCase()}</div><div class="label">${isMyTurn ? 'Your turn' : 'Opponent\'s turn'}</div></div>
+             <div class="resource"><div class="value">${st.turn_number}</div><div class="label">Turn</div></div>`;
+    }
+
+    function renderHand(st, validMoves) {
+        const el = document.getElementById('hand');
+        el.innerHTML = '';
+        const me = st.players[humanPlayer];
+        const hand = me.hand || [];
+
+        hand.forEach((name, i) => {
+            const playAction = st.action_ids?.play?.[name];
+            const selectAction = st.action_ids?.select?.[name];
+            const isPlayable = playAction !== undefined && validMoves[playAction] !== undefined;
+            const isSelectable = selectAction !== undefined && validMoves[selectAction] !== undefined;
+
+            const div = document.createElement('div');
+            div.className = `hand-card ${getCardClass(name)} ${isPlayable ? 'playable' : ''} ${isSelectable ? 'selectable' : ''}`;
+            div.innerHTML = `<div class="hc-name">${name}</div><div class="hc-type">${CARD_TYPES_DISPLAY[name] || 'Action'}</div>`;
+            div.onmouseenter = e => showTooltip(e, name);
+            div.onmouseleave = hideTooltip;
+            if (isPlayable) {
+                div.onclick = () => makeMove(playAction);
+            } else if (isSelectable) {
+                div.onclick = () => makeMove(selectAction);
+            }
+            el.appendChild(div);
+        });
+    }
+
+    function renderActionPanel(validMoves) {
+        const el = document.getElementById('actionPanel');
+        el.innerHTML = '';
+        const st = gameState.state;
+
+        // Contextual hint
+        let hint = '';
+        if (st.pending) {
+            hint = `Resolving: ${st.pending_description || st.pending}`;
+        } else if (st.phase === 'action') {
+            hint = 'Action Phase: Play action cards or end actions';
+        } else if (st.phase === 'buy') {
+            hint = 'Buy Phase: Play treasures, buy cards, or end turn';
+        }
+        if (hint) {
+            const h = document.createElement('div');
+            h.className = 'phase-hint';
+            h.textContent = hint;
+            el.appendChild(h);
+        }
+
+        // Action buttons based on valid moves
+        const actionDefs = gameState.valid_moves || [];
+        const specialActions = actionDefs.filter(m =>
+            m.action <= 2 || m.action >= 127
+        );
+
+        specialActions.forEach(m => {
+            const btn = document.createElement('button');
+            btn.textContent = m.description;
+            if (m.action === 0) btn.className = 'secondary'; // End Actions
+            if (m.action === 1) btn.className = 'secondary'; // End Buys
+            if (m.action === 2) btn.className = 'secondary'; // Done Selecting
+            if (m.action === 129) btn.className = 'accept';  // Accept
+            if (m.action === 130) btn.className = 'danger';  // Decline
+            btn.onclick = () => makeMove(m.action);
+            el.appendChild(btn);
+        });
+
+        // Gain buttons (for Workshop, Remodel, etc.) are in supply cards
+        // But add gain actions for cards not in supply view
+        const gainActions = actionDefs.filter(m => m.action >= 96 && m.action < 127);
+        if (gainActions.length > 0 && !st.pending?.includes?.('gain')) {
+            // Gain actions are handled through supply card clicks
+        }
+    }
+
+    function renderPendingBar(st) {
+        const bar = document.getElementById('pendingBar');
+        if (st.pending_description) {
+            bar.textContent = st.pending_description;
+            bar.classList.add('show');
+        } else {
+            bar.classList.remove('show');
+        }
+    }
+
+    async function makeMove(action) {
+        if (aiRunning) return;
+        const data = await apiCall('/api/move', {game_id: gameId, action: action});
+        if (data.error) { console.error(data.error); return; }
+        addLog(data.last_action_description || `Action ${action}`, 'human');
+        gameState = data;
+        render();
+
+        if (!gameState.is_terminal && gameState.current_player !== humanPlayer) {
+            doAiTurn();
+        }
+    }
+
+    async function doAiTurn() {
+        if (aiRunning || gameState.is_terminal) return;
+        aiRunning = true;
+        document.getElementById('aiThinking').classList.add('show');
+
+        while (!gameState.is_terminal && gameState.current_player !== humanPlayer) {
+            await new Promise(r => setTimeout(r, 300));
+            try {
+                const data = await apiCall('/api/ai_move', {game_id: gameId});
+                if (data.error) { console.error(data.error); break; }
+                addLog(data.ai_decision?.description || 'AI move', 'ai');
+                gameState = data;
+                render();
+            } catch (e) {
+                console.error('AI move error:', e);
+                break;
+            }
+        }
+
+        document.getElementById('aiThinking').classList.remove('show');
+        aiRunning = false;
+    }
+
+    function addLog(text, type) {
+        const log = document.getElementById('turnLog');
+        const div = document.createElement('div');
+        div.className = `log-entry ${type}`;
+        div.textContent = text;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function showTooltip(e, name) {
+        const tt = document.getElementById('tooltip');
+        const text = CARD_TEXT[name] || '';
+        tt.innerHTML = `<div class="tt-name">${name}</div>
+            <div class="tt-types">${CARD_TYPES_DISPLAY[name] || 'Action'}</div>
+            <div class="tt-text">${text}</div>`;
+        tt.classList.add('show');
+        const x = Math.min(e.clientX + 10, window.innerWidth - 300);
+        const y = Math.min(e.clientY + 10, window.innerHeight - 150);
+        tt.style.left = x + 'px';
+        tt.style.top = y + 'px';
+    }
+
+    function hideTooltip() {
+        document.getElementById('tooltip').classList.remove('show');
+    }
+
+    function showGameOver() {
+        const el = document.getElementById('gameOver');
+        const resultEl = document.getElementById('goResult');
+        const breakdownEl = document.getElementById('goBreakdown');
+
+        const scores = gameState.scores;
+        const myScore = scores[`player${humanPlayer}`];
+        const oppScore = scores[`player${1 - humanPlayer}`];
+
+        if (gameState.winner === humanPlayer) {
+            resultEl.textContent = 'You Win!';
+            resultEl.className = 'result win';
+        } else if (gameState.winner === 1 - humanPlayer) {
+            resultEl.textContent = 'You Lose';
+            resultEl.className = 'result loss';
+        } else {
+            resultEl.textContent = 'Draw';
+            resultEl.className = 'result draw';
+        }
+
+        breakdownEl.innerHTML =
+            `<div class="vp-row"><span>Your VP</span><span>${myScore}</span></div>
+             <div class="vp-row"><span>Opponent VP</span><span>${oppScore}</span></div>`;
+
+        el.classList.add('show');
+
+        // Auto-save
+        apiCall('/api/save', {game_id: gameId});
+    }
+
+    // Start game on load
+    newGame();
+    </script>
+</body>
+</html>

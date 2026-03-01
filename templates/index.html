@@ -31,6 +31,9 @@
         .play-btn.lc { background: #e94560; }
         .play-btn.lc:hover { background: #d63851; }
 
+        .play-btn.dom { background: #8b5cf6; }
+        .play-btn.dom:hover { background: #7c3aed; }
+
         .game-card.disabled { opacity: 0.4; pointer-events: none; }
         .game-card.disabled .play-btn { background: #555; }
 
@@ -117,6 +120,21 @@
             <span class="play-btn">Coming Soon</span>
         </div>
         {% endif %}
+        {% if 'dominion' in games %}
+        <div class="game-card">
+            <span class="badge badge-new">NEW</span>
+            <h2>Dominion</h2>
+            <p class="desc">The classic deck-building game. Start with a small deck, buy powerful cards, and build an engine to claim Provinces.</p>
+            <p class="model-info">AI: {{ games.dominion.checkpoint }}</p>
+            <a href="/dominion/" class="play-btn dom" onclick="trackPlay()">Play Dominion</a>
+        </div>
+        {% else %}
+        <div class="game-card disabled">
+            <h2>Dominion</h2>
+            <p class="desc">Coming soon — deck-building AI in development.</p>
+            <span class="play-btn">Coming Soon</span>
+        </div>
+        {% endif %}
     </div>
 
     <div class="footer">
@@ -178,7 +196,7 @@
     <script>
         /* --- Funnel tracking --- */
         function trackPlay() {
-            navigator.sendBeacon('/api/event', JSON.stringify({event: 'play_clicked'}));
+            navigator.sendBeacon('/api/event', new Blob([JSON.stringify({event: 'play_clicked'})], {type: 'application/json'}));
         }
 
         /* --- Bounce feedback --- */
@@ -210,10 +228,10 @@
                 el.classList.add('voted');
                 selectedGame = el.dataset.game;
                 // Fire game_interest event immediately on vote
-                navigator.sendBeacon('/api/event', JSON.stringify({
+                navigator.sendBeacon('/api/event', new Blob([JSON.stringify({
                     event: 'game_interest',
                     game: selectedGame
-                }));
+                })], {type: 'application/json'}));
                 if (selectedGame === 'other_game') {
                     document.getElementById('bounceComment').placeholder = 'Which game would you want to play against AI?';
                 }
@@ -239,7 +257,7 @@
                 comment: comment
             };
             if (selectedGame) payload.voted_game = selectedGame;
-            navigator.sendBeacon('/api/event', JSON.stringify(payload));
+            navigator.sendBeacon('/api/event', new Blob([JSON.stringify(payload)], {type: 'application/json'}));
             document.getElementById('bounceReasons').style.display = 'none';
             document.getElementById('bounceComment').style.display = 'none';
             document.getElementById('gameVoteSection').style.display = 'none';

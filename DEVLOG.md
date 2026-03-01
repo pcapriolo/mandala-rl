@@ -630,3 +630,31 @@ Root-caused the LC degenerate equilibrium (14% play rate, 60% draws, avg score -
 **Fix:** Replaced binary reward with continuous `clamp(margin / 100, -1, 1)`. Now winning 80-to-(-30) gives +1.0, a close 10-point win gives +0.1. Also boosted score loss weight from 0.5→1.0 to make the score head a first-class training signal. Removed `min_play_rate` filter that was starving the replay buffer by rejecting low-play-rate games (the network needs to see bad outcomes to learn from them). Fresh training restart with 111ch architecture.
 
 **Files changed:** `cpp/lost_cities_game.cpp` (reward function), `mandala_rl/network/model.py` (score loss weight), `configs/lost_cities.yaml` (remove min_play_rate), `mandala_rl/training/trainer.py` (remove LC play-rate filter).
+
+---
+
+## #52 — Dominion Training Launch + Monk Hourly System
+**Feb 28, 2026**
+
+Two milestones today: Dominion self-play training started on RunPod, and the Monk autonomous monitoring system went live.
+
+**Dominion Training (first 6 iterations):**
+Started training at ~15:40. C++ engine with 131 actions, 151 tensor channels, ~4M param network (10 res blocks, 128 channels, 800 MCTS sims). Early results after 6 iterations (575 games):
+- Policy loss: 1.11 → 0.28 (healthy drop, network learning action structure)
+- Value loss: 0.0000 (expected — all games hitting 500-move cap, no decisive outcomes yet)
+- Avg provinces: 0.00, avg game length: 500 (games not terminating naturally yet)
+- GPU: ~20-40% utilization, 906 MiB / 49 GiB VRAM, disk at 51%
+
+The zero-province/500-move pattern is expected at iteration 0-10. The network hasn't learned to buy provinces yet — it's still learning basic action structure. Province buying should emerge around iter 20-50 as policy loss drops further and the network discovers that provinces end the game and contribute to score.
+
+**Monk Hourly System:**
+Built `scripts/monk_hourly.sh` — an autonomous hourly wake-up that:
+1. Reads latest metrics from `data/dominion/monitor.jsonl` (fed by the 10-min monitor)
+2. Checks `GG_Monk_Inbox.md` for [NEW] CEO messages
+3. Assesses training health (OK/WARNING/CRITICAL based on stall detection, disk usage, connectivity)
+4. Posts a per-game stats table to `GG_CEO_Inbox.md` as a `[NEW]` message
+5. Appends machine-readable JSON to `data/monk_hourly.jsonl`
+
+Runs via launchd (`com.gg.monk-hourly.plist`, every 3600s). CEO checks `GG_CEO_Inbox.md` for formatted hourly reports with full metric tables. Complements the existing 10-min `dominion_monitor.sh` which handles restart logic and raw metric collection.
+
+**Files added:** `scripts/monk_hourly.sh`, `~/Library/LaunchAgents/com.gg.monk-hourly.plist`

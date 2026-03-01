@@ -650,7 +650,7 @@
         let firstMoveTracked = false;
 
         // Track game page loaded
-        navigator.sendBeacon('/api/event', JSON.stringify({event: 'game_loaded'}));
+        navigator.sendBeacon('/api/event', new Blob([JSON.stringify({event: 'game_loaded'})], {type: 'application/json'}));
 
         function renderMissingDots(m) {
             const present = new Set([...m.mountain, ...m.field_p0, ...m.field_p1]);
@@ -975,7 +975,7 @@
         async function makeMove(action) {
             if (!firstMoveTracked) {
                 firstMoveTracked = true;
-                navigator.sendBeacon('/api/event', JSON.stringify({event: 'first_move'}));
+                navigator.sendBeacon('/api/event', new Blob([JSON.stringify({event: 'first_move'})], {type: 'application/json'}));
             }
             lastAction = action;
             lastActionPlayer = currentState.current_player;

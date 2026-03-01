@@ -6,9 +6,13 @@
 #   ./scripts/sync_from_runpod.sh          # sync every 60s
 #   ./scripts/sync_from_runpod.sh 30       # custom interval
 
+# launchd runs with minimal env — set PATH explicitly
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export HOME="${HOME:-/Users/paulcapriolo}"
+
 REMOTE="root@38.147.83.30"
 KEY="$HOME/.ssh/id_ed25519"
-SSH_PORT=14516
+SSH_PORT=26242
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -p $SSH_PORT"
 SCP="scp -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -P $SSH_PORT"
 REMOTE_BASE="/workspace/mandala-rl/data"
@@ -40,16 +44,16 @@ echo "===LOSSES_LC==="
 cat /workspace/mandala-rl/data/lost_cities/losses.jsonl 2>/dev/null || echo ""
 echo
 echo "===HEARTBEAT_DOM==="
-cat /workspace/mandala-rl/data/dominion/heartbeat.json 2>/dev/null || echo "{}"
+cat /workspace/dominion_data/heartbeat.json 2>/dev/null || echo "{}"
 echo
 echo "===EVAL_HB_DOM==="
-cat /workspace/mandala-rl/data/dominion/eval_heartbeat.json 2>/dev/null || echo "{}"
+cat /workspace/dominion_data/eval_heartbeat.json 2>/dev/null || echo "{}"
 echo
 echo "===LOSSES_DOM==="
-cat /workspace/mandala-rl/data/dominion/losses.jsonl 2>/dev/null || echo ""
+cat /workspace/dominion_data/losses.jsonl 2>/dev/null || echo ""
 echo
 echo "===ELO_DOM==="
-cat /workspace/mandala-rl/data/dominion/elo_ratings.json 2>/dev/null || echo "{}"
+cat /workspace/dominion_data/elo_ratings.json 2>/dev/null || echo "{}"
 echo
 echo "===DONE==="
 CMDS
@@ -78,7 +82,11 @@ CMDS
     # 2. Sync latest checkpoints via SCP
     local new=0
     for game_dir in "" "lost_cities/" "dominion/"; do
-        local remote_ckpt="$REMOTE_BASE/${game_dir}checkpoints/model_latest.pt"
+        if [ "$game_dir" = "dominion/" ]; then
+            local remote_ckpt="/workspace/dominion_data/checkpoints/model_latest.pt"
+        else
+            local remote_ckpt="$REMOTE_BASE/${game_dir}checkpoints/model_latest.pt"
+        fi
         local local_ckpt="$LOCAL_BASE/${game_dir}checkpoints/model_latest.pt"
         local label="${game_dir:-mandala/}"
 

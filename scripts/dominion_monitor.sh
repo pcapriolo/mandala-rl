@@ -14,6 +14,10 @@
 #   - Alert on stalled progress (no new iteration in 30 min)
 #   - Log all metrics for trend analysis
 
+# launchd runs with minimal env — set PATH explicitly
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export HOME="${HOME:-/Users/paulcapriolo}"
+
 REMOTE="root@38.147.83.30"
 KEY="$HOME/.ssh/id_ed25519"
 SSH_PORT=26242

@@ -46,6 +46,8 @@ app = Flask(__name__, template_folder=str(template_dir))
 
 ANALYTICS_DIR = Path(os.environ.get('ANALYTICS_DIR', 'data/analytics'))
 ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
+HUMAN_GAMES_DIR = Path(os.environ.get('HUMAN_GAMES_DIR', 'data/human_games'))
+HUMAN_GAMES_DIR.mkdir(parents=True, exist_ok=True)
 _analytics_lock = Lock()
 
 def _hash_ip(ip):
@@ -106,7 +108,14 @@ VALID_EVENTS = {'play_clicked', 'game_loaded', 'first_move', 'bounce_feedback', 
 @app.route('/api/event', methods=['POST'])
 def api_event():
     """Log a custom analytics event."""
-    data = request.json or {}
+    # sendBeacon with JSON.stringify sends text/plain, so request.json may be None.
+    # Fall back to parsing request.data manually.
+    data = request.json
+    if data is None:
+        try:
+            data = json.loads(request.data)
+        except Exception:
+            data = {}
     event_name = data.get('event', '')
     if event_name not in VALID_EVENTS:
         return jsonify({'error': f'Unknown event: {event_name}'}), 400
@@ -203,7 +212,7 @@ def api_stats():
 @app.route('/api/game-stats')
 def api_game_stats():
     """Return stats computed from saved game JSON files."""
-    games_root = Path('data/human_games')
+    games_root = HUMAN_GAMES_DIR
     result = {}
 
     for game_type in ('mandala', 'lost_cities'):
@@ -462,7 +471,7 @@ class LCGameSession:
     def save_game(self):
         if not self.game_history:
             return {'error': 'No game to save'}
-        save_dir = Path("data/human_games/lost_cities")
+        save_dir = HUMAN_GAMES_DIR / "lost_cities"
         save_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         game_id = f"lost_cities_{timestamp}"
@@ -780,7 +789,7 @@ class MandalaGameSession:
     def save_game(self):
         if not self.game_history:
             return {'error': 'No game to save'}
-        save_dir = Path("data/human_games/mandala")
+        save_dir = HUMAN_GAMES_DIR / "mandala"
         save_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         game_id = f"mandala_{timestamp}"
@@ -1035,6 +1044,417 @@ if _mandala_server:
         'total_games': _mandala_server.total_games,
         'checkpoint': Path(_mandala_server.checkpoint_path).name,
     }
+
+
+# ──────────────────────────────────────────────────────────────
+# Dominion
+# ──────────────────────────────────────────────────────────────
+
+from dominion.game.engine import DominionGame
+from dominion.game.state import (
+    NUM_ACTIONS as DOM_NUM_ACTIONS, END_ACTIONS as DOM_END_ACTIONS,
+    END_BUYS as DOM_END_BUYS, DONE_SELECTING as DOM_DONE_SELECTING,
+    PLAY_OFFSET as DOM_PLAY_OFFSET, BUY_OFFSET as DOM_BUY_OFFSET,
+    SELECT_OFFSET as DOM_SELECT_OFFSET, GAIN_OFFSET as DOM_GAIN_OFFSET,
+    REVEAL_MOAT as DOM_REVEAL_MOAT, DECLINE_REACTION as DOM_DECLINE_REACTION,
+    ACCEPT as DOM_ACCEPT, DECLINE as DOM_DECLINE,
+)
+from dominion.game.cards import (
+    CARD_BY_ID as DOM_CARD_BY_ID, card_name as dom_card_name,
+    NUM_CARD_TYPES as DOM_NUM_CARD_TYPES,
+    COPPER as DOM_COPPER, SILVER as DOM_SILVER, GOLD as DOM_GOLD,
+    PROVINCE as DOM_PROVINCE, DUCHY as DOM_DUCHY,
+)
+
+
+class DominionHeuristicServer:
+    """Big Money heuristic AI for Dominion — no trained model needed."""
+
+    def __init__(self, engine):
+        self.engine = engine
+        self.iteration = 'heuristic'
+        self.total_games = 0
+        self.checkpoint_path = 'heuristic'
+
+    def get_action(self, state):
+        """Choose an action using Big Money heuristic."""
+        valid = self.engine.get_valid_moves(state)
+        valid_actions = np.where(valid > 0)[0]
+
+        if len(valid_actions) == 1:
+            return int(valid_actions[0])
+
+        # During pending resolution, take reasonable defaults
+        if state.pending:
+            return self._handle_pending(state, valid_actions)
+
+        if state.phase == 'action':
+            return self._action_phase(state, valid_actions)
+        elif state.phase == 'buy':
+            return self._buy_phase(state, valid_actions)
+
+        return int(valid_actions[0])
+
+    def _action_phase(self, state, valid_actions):
+        """Play simple non-terminal actions, then end."""
+        # Play action cards that give +actions (non-terminal)
+        for a in valid_actions:
+            if a >= DOM_PLAY_OFFSET and a < DOM_BUY_OFFSET:
+                cid = a - DOM_PLAY_OFFSET
+                card = DOM_CARD_BY_ID[cid]
+                if 'Action' in card.types and card.plus_actions >= 1:
+                    return int(a)
+
+        # Play terminal actions that draw cards
+        for a in valid_actions:
+            if a >= DOM_PLAY_OFFSET and a < DOM_BUY_OFFSET:
+                cid = a - DOM_PLAY_OFFSET
+                card = DOM_CARD_BY_ID[cid]
+                if 'Action' in card.types and card.plus_cards > 0 and state.actions_remaining > 0:
+                    return int(a)
+
+        # End actions
+        if DOM_END_ACTIONS in valid_actions:
+            return DOM_END_ACTIONS
+        return int(valid_actions[0])
+
+    def _buy_phase(self, state, valid_actions):
+        """Play all treasures, then buy: Province > Gold > Silver."""
+        # Play treasures first
+        for a in valid_actions:
+            if a >= DOM_PLAY_OFFSET and a < DOM_BUY_OFFSET:
+                cid = a - DOM_PLAY_OFFSET
+                card = DOM_CARD_BY_ID[cid]
+                if 'Treasure' in card.types:
+                    return int(a)
+
+        # Buy by priority
+        buy_priority = [DOM_PROVINCE.id, DOM_GOLD.id, DOM_SILVER.id]
+        for cid in buy_priority:
+            buy_a = DOM_BUY_OFFSET + cid
+            if buy_a in valid_actions:
+                return int(buy_a)
+
+        # End buys
+        if DOM_END_BUYS in valid_actions:
+            return DOM_END_BUYS
+        return int(valid_actions[0])
+
+    def _handle_pending(self, state, valid_actions):
+        """Handle pending decisions with simple heuristics."""
+        p = state.pending
+        # Accept reactions (reveal Moat)
+        if DOM_REVEAL_MOAT in valid_actions:
+            return DOM_REVEAL_MOAT
+        # Accept Vassal plays
+        if DOM_ACCEPT in valid_actions and p.decision_type == 'vassal_play':
+            return DOM_ACCEPT
+        # Decline Library action skips
+        if DOM_DECLINE in valid_actions and p.decision_type == 'library_draw':
+            return DOM_DECLINE
+        # Done selecting when possible
+        if DOM_DONE_SELECTING in valid_actions:
+            return DOM_DONE_SELECTING
+        # For gains, prefer most expensive
+        gain_actions = [a for a in valid_actions if a >= DOM_GAIN_OFFSET and a < DOM_REVEAL_MOAT]
+        if gain_actions:
+            best = max(gain_actions, key=lambda a: DOM_CARD_BY_ID[a - DOM_GAIN_OFFSET].cost)
+            return int(best)
+        # For selections (discard), pick cheapest
+        select_actions = [a for a in valid_actions if a >= DOM_SELECT_OFFSET and a < DOM_GAIN_OFFSET]
+        if select_actions:
+            worst = min(select_actions, key=lambda a: DOM_CARD_BY_ID[a - DOM_SELECT_OFFSET].cost)
+            return int(worst)
+        # Accept/decline fallback
+        if DOM_ACCEPT in valid_actions:
+            return DOM_ACCEPT
+        if DOM_DECLINE in valid_actions:
+            return DOM_DECLINE
+        return int(valid_actions[0])
+
+
+class DominionGameSession:
+    def __init__(self, server, human_player=0):
+        self.server = server
+        self.engine = server.engine
+        self.state = self.engine.get_initial_state()
+        self.human_player = human_player
+        self.move_count = 0
+        self.game_history = []
+        self.game_start_time = datetime.now().isoformat()
+        self.last_activity = time.time()
+        self.last_save_filepath = None
+
+    def get_game_state_dict(self):
+        valid_moves = self.engine.get_valid_moves(self.state)
+        valid_actions = [
+            {'action': int(i), 'description': self.engine.action_to_string(i)}
+            for i, valid in enumerate(valid_moves) if valid
+        ]
+        is_terminal = self.engine.is_terminal(self.state)
+        winner, scores = None, None
+        if is_terminal:
+            vp0 = self.state.players[0].count_vp(self.state.kingdom_cards)
+            vp1 = self.state.players[1].count_vp(self.state.kingdom_cards)
+            scores = {'player0': vp0, 'player1': vp1}
+            winner = 0 if vp0 > vp1 else (1 if vp1 > vp0 else -1)
+
+        return {
+            'state': self._format_state(),
+            'current_player': self.state.current_player,
+            'human_player': self.human_player,
+            'valid_moves': valid_actions,
+            'is_terminal': is_terminal,
+            'winner': winner,
+            'scores': scores,
+            'move_count': self.move_count,
+            'model_info': {
+                'iteration': self.server.iteration,
+                'total_games': self.server.total_games,
+                'checkpoint': str(self.server.checkpoint_path),
+            }
+        }
+
+    def _format_state(self):
+        s = self.state
+        def player_info(p):
+            ps = s.players[p]
+            is_me = (p == self.human_player)
+            hand = [dom_card_name(c) for c in sorted(ps.hand)] if is_me else []
+            return {
+                'hand': hand,
+                'hand_size': len(ps.hand),
+                'in_play': [dom_card_name(c) for c in ps.in_play],
+                'deck_size': len(ps.deck),
+                'discard_size': len(ps.discard),
+                'total_cards': ps.total_cards(),
+                'vp': ps.count_vp(s.kingdom_cards),
+            }
+
+        # Build action_ids maps for the frontend
+        action_ids = {'play': {}, 'buy': {}, 'select': {}, 'gain': {}}
+        for cid in range(DOM_NUM_CARD_TYPES):
+            name = dom_card_name(cid)
+            action_ids['play'][name] = DOM_PLAY_OFFSET + cid
+            action_ids['buy'][name] = DOM_BUY_OFFSET + cid
+            action_ids['select'][name] = DOM_SELECT_OFFSET + cid
+            action_ids['gain'][name] = DOM_GAIN_OFFSET + cid
+
+        card_costs = {}
+        for cid in range(DOM_NUM_CARD_TYPES):
+            card_costs[dom_card_name(cid)] = DOM_CARD_BY_ID[cid].cost
+
+        supply = {dom_card_name(cid): cnt for cid, cnt in sorted(s.supply.items())}
+
+        pending_desc = None
+        if s.pending:
+            pending_desc = f"{s.pending.decision_type} ({dom_card_name(s.pending.card_id)})"
+
+        return {
+            'players': [player_info(0), player_info(1)],
+            'supply': supply,
+            'card_costs': card_costs,
+            'action_ids': action_ids,
+            'phase': s.phase,
+            'actions_remaining': s.actions_remaining,
+            'buys_remaining': s.buys_remaining,
+            'coins': s.coins,
+            'turn_number': s.turn_number,
+            'kingdom_cards': [dom_card_name(c) for c in s.kingdom_cards],
+            'pending': s.pending.decision_type if s.pending else None,
+            'pending_description': pending_desc,
+        }
+
+    def make_move(self, action, think_time_ms=None, ai_data=None):
+        if self.engine.is_terminal(self.state):
+            return {'error': 'No active game'}
+        valid_moves = self.engine.get_valid_moves(self.state)
+        if not valid_moves[action]:
+            return {'error': f'Invalid move: {action}'}
+        move_record = {
+            'move_num': self.move_count + 1,
+            'player': int(self.state.current_player),
+            'is_human': self.state.current_player == self.human_player,
+            'action': int(action),
+            'action_description': self.engine.action_to_string(action),
+            'timestamp': datetime.now().isoformat(),
+            'think_time_ms': think_time_ms,
+        }
+        if ai_data:
+            move_record['ai_value'] = ai_data.get('value')
+            move_record['think_time_ms'] = ai_data.get('think_time_ms')
+        self.game_history.append(move_record)
+        last_desc = self.engine.action_to_string(action)
+        self.state = self.engine.get_next_state(self.state, action)
+        self.move_count += 1
+        result = self.get_game_state_dict()
+        result['last_action_description'] = last_desc
+        return result
+
+    def save_game(self):
+        if not self.game_history:
+            return {'error': 'No game to save'}
+        save_dir = HUMAN_GAMES_DIR / "dominion"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        game_id = f"dominion_{timestamp}"
+        filepath = save_dir / f"{game_id}.json"
+        is_terminal = self.engine.is_terminal(self.state)
+        winner, final_scores = None, None
+        if is_terminal:
+            vp0 = self.state.players[0].count_vp(self.state.kingdom_cards)
+            vp1 = self.state.players[1].count_vp(self.state.kingdom_cards)
+            final_scores = {'player0': vp0, 'player1': vp1}
+            winner = 0 if vp0 > vp1 else (1 if vp1 > vp0 else -1)
+        game_data = {
+            'game_id': game_id, 'game': 'dominion',
+            'timestamp': self.game_start_time,
+            'model_iteration': self.server.iteration,
+            'human_player': self.human_player,
+            'visitor': _hash_ip(request.remote_addr),
+            'winner': winner, 'final_scores': final_scores,
+            'total_moves': len(self.game_history),
+            'is_complete': is_terminal,
+            'moves': self.game_history,
+        }
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        self.last_save_filepath = str(filepath)
+        return {'success': True, 'filename': filepath.name, 'moves': len(self.game_history)}
+
+
+def create_dominion_blueprint(server):
+    bp = Blueprint('dominion', __name__, template_folder=str(template_dir))
+    sessions = {}
+
+    def get_session(game_id):
+        s = sessions.get(game_id)
+        if s:
+            s.last_activity = time.time()
+        return s
+
+    def cleanup():
+        now = time.time()
+        for gid in [g for g, s in sessions.items() if now - s.last_activity > 3600]:
+            del sessions[gid]
+
+    @bp.route('/')
+    def index():
+        return render_template('play_vs_ai_dominion.html', base_url='/dominion')
+
+    @bp.route('/api/info')
+    def info():
+        return jsonify({
+            'game': 'dominion', 'iteration': server.iteration,
+            'total_games': server.total_games,
+            'checkpoint': str(server.checkpoint_path),
+            'active_sessions': len(sessions),
+        })
+
+    @bp.route('/api/new_game', methods=['POST'])
+    def new_game():
+        cleanup()
+        data = request.json or {}
+        game_id = str(uuid.uuid4())
+        sessions[game_id] = DominionGameSession(server, data.get('human_player', 0))
+        state = sessions[game_id].get_game_state_dict()
+        state['game_id'] = game_id
+        return jsonify(state)
+
+    @bp.route('/api/state')
+    def get_state():
+        session = get_session(request.args.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        state = session.get_game_state_dict()
+        state['game_id'] = request.args.get('game_id')
+        return jsonify(state)
+
+    @bp.route('/api/move', methods=['POST'])
+    def make_move():
+        data = request.json
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        try:
+            result = session.make_move(data.get('action'), think_time_ms=data.get('think_time_ms'))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Move failed: {e}'}), 500
+        result['game_id'] = data.get('game_id')
+        return jsonify(result)
+
+    @bp.route('/api/ai_move', methods=['POST'])
+    def ai_move():
+        try:
+            t_req = time.time()
+            data = request.json or {}
+            session = get_session(data.get('game_id'))
+            if not session:
+                return jsonify({'error': 'Game not found'}), 404
+
+            state = session.state
+            action = server.get_action(state)
+            desc = session.engine.action_to_string(action)
+            t_done = time.time()
+            think_ms = int((t_done - t_req) * 1000)
+
+            ai_data = {'think_time_ms': think_ms}
+            result = session.make_move(action, ai_data=ai_data)
+            result['ai_decision'] = {'action': action, 'description': desc}
+            result['game_id'] = data.get('game_id')
+            return jsonify(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'AI move failed: {e}'}), 500
+
+    @bp.route('/api/save', methods=['POST'])
+    def save_game():
+        session = get_session((request.json or {}).get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        return jsonify(session.save_game())
+
+    @bp.route('/api/feedback', methods=['POST'])
+    def submit_feedback():
+        data = request.json or {}
+        session = get_session(data.get('game_id'))
+        if not session:
+            return jsonify({'error': 'Game not found'}), 404
+        if not session.last_save_filepath:
+            return jsonify({'error': 'Game not saved yet'}), 400
+        filepath = Path(session.last_save_filepath)
+        if not filepath.exists():
+            return jsonify({'error': 'Save file not found'}), 404
+        feedback = {'submitted_at': datetime.now().isoformat()}
+        for key in ['my_play_rating', 'bot_play_rating']:
+            val = data.get(key)
+            if val is not None:
+                feedback[key] = max(1, min(5, int(val)))
+        comment = data.get('comment', '').strip()
+        if comment:
+            feedback['comment'] = comment
+        with open(filepath, 'r') as f:
+            game_data = json.load(f)
+        game_data['feedback'] = feedback
+        with open(filepath, 'w') as f:
+            json.dump(game_data, f, indent=2)
+        return jsonify({'success': True})
+
+    return bp
+
+
+# Load Dominion (heuristic AI — no trained model needed)
+_dominion_server = DominionHeuristicServer(DominionGame())
+app.register_blueprint(create_dominion_blueprint(_dominion_server), url_prefix='/dominion')
+loaded_games['dominion'] = {
+    'iteration': 'heuristic',
+    'total_games': 0,
+    'checkpoint': 'Big Money Heuristic',
+}
+print("[serve] Dominion loaded with heuristic AI (Big Money)")
 
 
 # ──────────────────────────────────────────────────────────────

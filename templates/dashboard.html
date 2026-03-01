@@ -43,7 +43,7 @@
             {% for game in games %}
             <a class="game-card" href="/{{ game.key }}/">
                 <h2>{{ game.name }}</h2>
-                <div class="count">{{ game.replay_count }} replays</div>
+                <div class="count">{{ game.subtitle or (game.replay_count ~ ' replays') }}</div>
             </a>
             {% endfor %}
         </div>
