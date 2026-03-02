@@ -1,157 +1,322 @@
 #!/bin/bash
-# Monk Hourly Wake-Up
-# Runs every hour via launchd. Pulls training metrics, checks inbox, posts CEO update.
-#
-# Flow:
-#   1. Pull latest metrics from monitor.jsonl
-#   2. Check GG_Monk_Inbox.md for [NEW] items (flag for human attention)
-#   3. Post hourly report to GG_CEO_Inbox.md
-#   4. Append machine-readable entry to monk_hourly.jsonl
+# Monk Wake-Up (every 2 hours)
+# Runs via launchd. Collects training metrics, invokes Claude (sonnet) to:
+#   - Assess training health across all channels (losses, gameplay, infra)
+#   - Process CEO inbox instructions
+#   - Fix/improve training if needed (code changes, deploy, restart)
+#   - Post concise CEO update with metric trends
+#   - Log with "watching" notes for continuity between runs
+# Hard timeout: 10 minutes.
 
 # launchd runs with minimal env — set PATH explicitly
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="/Users/paulcapriolo/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export HOME="${HOME:-/Users/paulcapriolo}"
 
-GG_DIR="$HOME/GG"
-REPO_DIR="$GG_DIR/mandala-rl"
-CEO_INBOX="$GG_DIR/GG_CEO_Inbox.md"
-MONK_INBOX="$GG_DIR/GG_Monk_Inbox.md"
-MONITOR_LOG="$REPO_DIR/data/dominion/monitor.jsonl"
+REPO_DIR="$HOME/GG/mandala-rl"
+LOSSES="$REPO_DIR/data/dominion/losses.jsonl"
+MONITOR="$REPO_DIR/data/dominion/monitor.jsonl"
 HOURLY_LOG="$REPO_DIR/data/monk_hourly.jsonl"
+MONK_INBOX="$HOME/GG/GG_Monk_Inbox.md"
+PROMPT_FILE="/tmp/monk_hourly_prompt.md"
+
+ts=$(date +"%Y-%m-%d %H:%M:%S")
+echo "=== Monk Hourly: $ts ==="
 
 mkdir -p "$(dirname "$HOURLY_LOG")"
 
-ts=$(date +"%Y-%m-%d %H:%M")
-ts_full=$(date +"%Y-%m-%d %H:%M:%S")
+# --- Check Telegram for CEO replies ---
+TG_BOT="7938362544:AAFPlpBnE6cFkuGogysauo7Yg5NvkA1eUZA"
+TG_CHAT="8330350412"
+TG_OFFSET_FILE="/tmp/monk_tg_offset"
 
-echo "=== Monk Hourly: $ts ==="
+LAST_OFFSET=0
+[ -f "$TG_OFFSET_FILE" ] && LAST_OFFSET=$(cat "$TG_OFFSET_FILE")
 
-# --- 1. Pull latest training metrics ---
+python3 << TGEOF
+import json, urllib.request, datetime
 
-latest=""
-if [ -f "$MONITOR_LOG" ]; then
-    latest=$(tail -1 "$MONITOR_LOG" 2>/dev/null)
+bot = "${TG_BOT}"
+chat = "${TG_CHAT}"
+offset = ${LAST_OFFSET}
+inbox = "${MONK_INBOX}"
+
+url = f"https://api.telegram.org/bot{bot}/getUpdates?offset={offset + 1}&timeout=1"
+try:
+    r = json.loads(urllib.request.urlopen(url, timeout=5).read())
+    if not r.get("ok") or not r.get("result"):
+        raise SystemExit(0)
+
+    max_id = offset
+    for u in r["result"]:
+        uid = u["update_id"]
+        if uid > max_id:
+            max_id = uid
+        msg = u.get("message", {})
+        if str(msg.get("chat", {}).get("id")) != chat:
+            continue
+        text = msg.get("text", "").strip()
+        if not text:
+            continue
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        entry = f'\n### [NEW] {ts} — CEO via Telegram\nPriority: HIGH\n\n{text}\n'
+        with open(inbox, "a") as f:
+            f.write(entry)
+        print(f"  Telegram inbox: {text[:80]}")
+
+    with open("${TG_OFFSET_FILE}", "w") as f:
+        f.write(str(max_id))
+except Exception as e:
+    print(f"  Telegram poll error: {e}")
+TGEOF
+
+# --- Collect raw data ---
+
+RECENT_LOSSES=""
+if [ -f "$LOSSES" ]; then
+    RECENT_LOSSES=$(grep -v '^\s*$' "$LOSSES" | tail -10)
 fi
 
-if [ -z "$latest" ]; then
-    status="no_data"
-    iter="N/A"; phase="N/A"; total_games="N/A"
-    total_loss="N/A"; policy_loss="N/A"; value_loss="N/A"
-    avg_score="N/A"; avg_provinces="N/A"; avg_len="N/A"
-    disk_avail="N/A"; disk_pct="N/A"; gpu="N/A"
-    pid="N/A"; stalled="N/A"
-else
-    # Parse JSON fields with python3
-    field() { echo "$latest" | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print(d.get('$1','N/A'))" 2>/dev/null || echo "N/A"; }
-    status=$(field status)
-    iter=$(field iter)
-    phase=$(field phase)
-    total_games=$(field total_games)
-    total_loss=$(field total_loss)
-    policy_loss=$(field policy_loss)
-    value_loss=$(field value_loss)
-    avg_score=$(field avg_score)
-    avg_provinces=$(field avg_provinces)
-    avg_len=$(field avg_len)
-    disk_avail=$(field disk_avail)
-    disk_pct=$(field disk_pct)
-    gpu=$(field gpu)
-    pid=$(field pid)
-    stalled=$(field stalled)
+LATEST_MONITOR=""
+if [ -f "$MONITOR" ]; then
+    LATEST_MONITOR=$(tail -1 "$MONITOR")
 fi
 
-# Compute iteration rate from monitor log (iters in last hour)
-iter_rate="N/A"
-if [ -f "$MONITOR_LOG" ] && [ "$iter" != "N/A" ]; then
-    one_hour_ago=$(date -v-1H +"%Y-%m-%d %H:%M" 2>/dev/null || date -d "1 hour ago" +"%Y-%m-%d %H:%M" 2>/dev/null)
-    if [ -n "$one_hour_ago" ]; then
-        old_iter=$(grep -F "$one_hour_ago" "$MONITOR_LOG" 2>/dev/null | head -1 | python3 -c "import json,sys; d=json.loads(sys.stdin.readline()); print(d.get('iter',0))" 2>/dev/null)
-        if [ -n "$old_iter" ] && [ "$old_iter" != "0" ] && [ "$iter" != "N/A" ]; then
-            iter_rate=$(( iter - old_iter ))
-        fi
-    fi
-fi
-
-# Check for pending inbox items
-inbox_new=0
+INBOX_NEW=0
 if [ -f "$MONK_INBOX" ]; then
-    inbox_new=$(grep -c '^### \[NEW\]' "$MONK_INBOX" 2>/dev/null || echo 0)
+    INBOX_NEW=$(grep -c '^### \[NEW\]' "$MONK_INBOX" 2>/dev/null)
+    INBOX_NEW=${INBOX_NEW:-0}
 fi
 
-echo "  Status: $status | Iter: $iter | Games: $total_games"
-echo "  Loss: total=$total_loss policy=$policy_loss value=$value_loss"
-echo "  Quality: score=$avg_score provinces=$avg_provinces len=$avg_len"
-echo "  Disk: $disk_avail ($disk_pct) | GPU: $gpu | Stalled: $stalled"
-echo "  Inbox [NEW]: $inbox_new"
-
-# --- 2. Health assessment ---
-
-health="OK"
-alerts=""
-
-if [ "$status" = "unreachable" ] || [ "$status" = "restart_failed" ]; then
-    health="CRITICAL"
-    alerts="${alerts}\n- RunPod unreachable or restart failed"
+PRIOR_LOGS=""
+if [ -f "$HOURLY_LOG" ]; then
+    PRIOR_LOGS=$(tail -10 "$HOURLY_LOG")
 fi
 
-if [ "$stalled" = "yes" ]; then
-    health="WARNING"
-    alerts="${alerts}\n- Training stalled (no heartbeat update in >30 min)"
-fi
-
-if [ "$disk_pct" != "N/A" ]; then
-    pct_num=$(echo "$disk_pct" | tr -d '%')
-    if [ "$pct_num" -gt 85 ] 2>/dev/null; then
-        health="WARNING"
-        alerts="${alerts}\n- Disk usage high: $disk_pct"
+RECENT_DEVLOG=""
+DEVLOG="$REPO_DIR/DEVLOG.md"
+if [ -f "$DEVLOG" ]; then
+    # Last 5 entries only (grep ## DEVLOG headings, take last 5, read from first match)
+    FIRST_LINE=$(grep -n '^## ' "$DEVLOG" | tail -5 | head -1 | cut -d: -f1)
+    if [ -n "$FIRST_LINE" ]; then
+        RECENT_DEVLOG=$(tail -n +"$FIRST_LINE" "$DEVLOG")
     fi
 fi
 
-# --- 3. Post CEO update ---
+# --- Write prompt to temp file (avoids heredoc escaping issues with JSON) ---
 
-# Build the report
-report="### [NEW] $ts — Hourly Dominion Training Report
-Priority: LOW
+cat > "$PROMPT_FILE" << 'STATIC_EOF'
+You are the Monk, waking up for your scheduled check. Be fast and focused. You have a 10-minute hard timeout.
 
-**Health: $health**
+## Step 1: Read your prior log
+Your last hourly log entry (below) has a "watching" field — this is what past-you flagged for this run. Check those items first.
 
-| Metric | Value |
-|--------|-------|
-| Iteration | $iter |
-| Phase | $phase |
-| Total Games | $total_games |
-| Policy Loss | $policy_loss |
-| Value Loss | $value_loss |
-| Total Loss | $total_loss |
-| Avg Score | $avg_score |
-| Avg Provinces | $avg_provinces |
-| Avg Game Length | $avg_len |
-| GPU | $gpu |
-| Disk | $disk_avail free ($disk_pct used) |
-| PID | $pid |
-| Stalled | $stalled |"
+## Step 2: Assess training health
+Compare the last 10 iterations (losses.jsonl below) against your prior check. Evaluate across all channels:
 
-if [ -n "$alerts" ]; then
-    report="$report
+**Loss heads:**
+- policy_loss: should decrease over time (network learning action structure)
+- value_loss: must be nonzero (>0.001). Zero = value head blind, training stuck
+- score_loss: auxiliary signal, should track value_loss
 
-**Alerts:**$(echo -e "$alerts")"
-fi
+**Gameplay quality:**
+- avg_provinces: THE key milestone. >0 means bot discovered province buying
+- avg_treasures: Silver/Gold buying (prerequisite for provinces)
+- avg_estates / avg_duchies: VP card awareness
+- avg_buys: total economic activity per player
+- avg_curses: should be ~0 (buying curses = degenerate)
+- action_rate: are action cards being played?
 
-if [ "$inbox_new" -gt 0 ]; then
-    report="$report
+**Game dynamics:**
+- avg_len / avg_turns: 200 = all games hitting move cap (no natural endings)
+- draw_rate: high draw rate + low value_loss = value head can't differentiate
+- p0_wr: first-player win rate (should be ~0.5, strong bias = bug)
 
-**Note:** $inbox_new unread message(s) in Monk Inbox awaiting processing."
-fi
+**Infrastructure:**
+- Is training process alive? (check monitor.jsonl status + pid)
+- Disk usage trending dangerously?
+- GPU utilization reasonable?
 
-# Append to CEO inbox (before the closing, or at end)
-echo "" >> "$CEO_INBOX"
-echo "$report" >> "$CEO_INBOX"
+Flag anything that is **stuck** (no change across 5+ iterations) or **regressing** (metric going wrong direction).
 
-echo "  CEO inbox updated."
+## Step 3: Process CEO inbox
+Read ~/GG/GG_Monk_Inbox.md for [NEW] messages. Act on instructions, mark [ACKNOWLEDGED] or [DONE] with `> Monk:` reply.
 
-# --- 4. Machine-readable log ---
+**IMPORTANT:** For each [NEW] CEO message you process, also append your reply to /tmp/monk_ceo_replies.txt (one per line, plain text). This file is sent to the CEO via Telegram so they see your response on their phone. Keep each reply concise (1-2 sentences). Clear the file first by writing (not appending) your first reply, then append subsequent ones.
 
-echo "{\"ts\":\"$ts_full\",\"health\":\"$health\",\"status\":\"$status\",\"iter\":\"$iter\",\"phase\":\"$phase\",\"total_games\":\"$total_games\",\"total_loss\":\"$total_loss\",\"policy_loss\":\"$policy_loss\",\"value_loss\":\"$value_loss\",\"avg_score\":\"$avg_score\",\"avg_provinces\":\"$avg_provinces\",\"avg_len\":\"$avg_len\",\"disk_avail\":\"$disk_avail\",\"disk_pct\":\"$disk_pct\",\"gpu\":\"$gpu\",\"stalled\":\"$stalled\",\"pid\":\"$pid\",\"inbox_new\":$inbox_new}" >> "$HOURLY_LOG"
+## Step 4: Take action if needed
+If the CEO gave instructions, or if training is clearly stuck/broken, fix it:
+- Make code changes, scp to RunPod, rebuild (`cd /root/mandala-dom && pip install -e .`), restart training
+- Write a DEVLOG entry in ~/GG/mandala-rl/DEVLOG.md for any substantive change
+- RunPod SSH: `ssh root@38.147.83.30 -p 26242 -i ~/.ssh/id_ed25519`
+- RunPod repo: /root/mandala-dom, data: /workspace/dominion_data
+- Config: `sed 's|data/dominion|/workspace/dominion_data|g' configs/dominion.yaml > /tmp/dominion_runpod.yaml`
+- Don't change game rules to fix degenerate behavior. Fix training signal instead.
 
-echo "  Logged to $HOURLY_LOG"
+If nothing needs fixing, skip this step entirely.
+
+## Step 5: Post CEO update
+Append a [NEW] message to ~/GG/GG_CEO_Inbox.md. Format:
+```
+### [NEW] YYYY-MM-DD HH:MM — Monk Check: <1-line summary>
+Priority: LOW/MEDIUM/HIGH
+
+**Iter X→Y** (since last check)
+| Metric | Last Check | Now | Trend |
+| ... | ... | ... | ... |
+
+<2-3 sentence assessment. What changed, what matters, what to watch.>
+```
+
+## Step 6: Log for next run
+Append ONE JSON line to ~/GG/mandala-rl/data/monk_hourly.jsonl:
+```json
+{"ts":"...","health":"OK|WARNING|CRITICAL","iter":N,"policy_loss":...,"value_loss":...,"avg_provinces":...,"avg_treasures":...,"avg_buys":...,"draw_rate":...,"avg_len":...,"action":"what you did or 'observation only'","watching":"specific things for next run to check"}
+```
+The "watching" field is your note to future-you. Be specific: "value_loss should be >0.01 by iter 85" not "watch value loss".
+STATIC_EOF
+
+# Append dynamic data
+cat >> "$PROMPT_FILE" << DYNAMIC_EOF
+
+## Current state ($(date +"%Y-%m-%d %H:%M"))
+
+### Last 10 training iterations (losses.jsonl):
+\`\`\`
+${RECENT_LOSSES}
+\`\`\`
+
+### Latest infrastructure snapshot (monitor.jsonl):
+\`\`\`
+${LATEST_MONITOR}
+\`\`\`
+
+### Monk Inbox [NEW] messages: ${INBOX_NEW}
+
+### Your last 10 hourly logs (monk_hourly.jsonl) — this is YOUR prior history:
+\`\`\`
+${PRIOR_LOGS}
+\`\`\`
+
+### Recent DEVLOG entries (last 5):
+\`\`\`
+${RECENT_DEVLOG}
+\`\`\`
+DYNAMIC_EOF
+
+# --- Clear CEO replies file before Claude runs ---
+> /tmp/monk_ceo_replies.txt
+
+# --- Invoke Claude with 10-minute timeout ---
+echo "  Invoking Claude for analysis..."
+TIMEOUT=600  # 10 minutes
+
+cd "$REPO_DIR"
+cat "$PROMPT_FILE" | claude -p "Execute the Monk wake-up. All context and instructions are in stdin." \
+    --model sonnet \
+    --allowedTools "Read Edit Write Bash Glob Grep" \
+    >> /tmp/monk-hourly.log 2>&1 &
+CLAUDE_PID=$!
+
+# Wait up to TIMEOUT seconds, then kill
+ELAPSED=0
+while kill -0 $CLAUDE_PID 2>/dev/null; do
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+    if [ $ELAPSED -ge $TIMEOUT ]; then
+        echo "  Claude TIMED OUT after ${TIMEOUT}s — killing PID $CLAUDE_PID"
+        kill $CLAUDE_PID 2>/dev/null
+        sleep 5
+        kill -9 $CLAUDE_PID 2>/dev/null
+        break
+    fi
+done
+wait $CLAUDE_PID 2>/dev/null
+EXIT_CODE=$?
+echo "  Claude exited with code $EXIT_CODE at $(date +"%Y-%m-%d %H:%M:%S")"
+
+# --- Telegram notification ---
+TG_MSG="/tmp/monk_tg_msg.txt"
+
+python3 << 'PYEOF'
+import json
+from html import escape
+
+LOSSES = "/Users/paulcapriolo/GG/mandala-rl/data/dominion/losses.jsonl"
+MONK_LOG = "/Users/paulcapriolo/GG/mandala-rl/data/monk_hourly.jsonl"
+OUT = "/tmp/monk_tg_msg.txt"
+
+try:
+    # Metrics from losses.jsonl (always has all fields)
+    with open(LOSSES) as f:
+        loss_lines = [l.strip() for l in f if l.strip()]
+    m = json.loads(loss_lines[-1])
+
+    # Monk state from monk_hourly.jsonl (action/watching)
+    monk = {}
+    try:
+        with open(MONK_LOG) as f:
+            monk_lines = [l.strip() for l in f if l.strip()]
+        monk = json.loads(monk_lines[-1])
+    except Exception:
+        pass
+
+    health = monk.get("health", "OK")
+    icon = {"OK": "\u2705", "WARNING": "\u26a0\ufe0f", "CRITICAL": "\U0001f6a8"}.get(health, "\u2753")
+    it = m.get("iteration", "?")
+
+    def f(v):
+        """Format a number nicely."""
+        try:
+            v = float(v)
+            if v == 0: return "0"
+            if v < 0.01: return f"{v:.4f}"
+            return f"{v:.2f}"
+        except (TypeError, ValueError):
+            return "0"
+
+    def pct(v):
+        try: return f"{float(v)*100:.0f}%"
+        except (TypeError, ValueError): return "0%"
+
+    msg = f"""{icon} <b>Monk \u2014 Iter {it}</b>
+
+<pre>Policy    {f(m.get('policy'))}    Value   {f(m.get('value'))}
+Draws     {pct(m.get('draw_rate'))}     Len     {f(m.get('avg_len'))}
+
+Provinces {f(m.get('avg_provinces'))}    Duchies  {f(m.get('avg_duchies', 0))}
+Estates   {f(m.get('avg_estates', 0))}    Curses   {f(m.get('avg_curses', 0))}
+Silver/Au {f(m.get('avg_treasures'))}    Actions  {f(m.get('avg_action_buys', 0))}
+Buys/plyr {f(m.get('avg_buys'))}    Score    {f(m.get('avg_score'))}</pre>"""
+
+    # CEO replies (monk's responses to inbox messages)
+    try:
+        with open("/tmp/monk_ceo_replies.txt") as f:
+            replies = f.read().strip()
+        if replies:
+            msg += f"\n\n\U0001f4ac <b>CEO Replies:</b>\n{escape(replies)}"
+    except Exception:
+        pass
+
+    action = monk.get("action", "")
+    if action and action not in ("none", "observation only", ""):
+        msg += f"\n\n\U0001f527 <b>Changed:</b>\n{escape(action)}"
+
+    watching = monk.get("watching", "")
+    if watching:
+        msg += f"\n\n\U0001f441 <b>Watching:</b>\n{escape(watching)}"
+
+    msg += "\n\n<i>Reply to send instructions to the Monk</i>"
+
+    with open(OUT, "w") as f:
+        f.write(msg)
+except Exception as e:
+    with open(OUT, "w") as f:
+        f.write(f"Monk check complete (error: {e})")
+PYEOF
+
+curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+    -d chat_id="$TG_CHAT" \
+    -d parse_mode=HTML \
+    --data-urlencode text@"$TG_MSG" > /dev/null 2>&1
+
 echo "=== Monk Hourly Complete ==="
