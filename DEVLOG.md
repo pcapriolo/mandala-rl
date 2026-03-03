@@ -4,6 +4,36 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #68 — 2026-03-03: Smart ActionBigMoney seed + opponent diversity + buffer persistence
+
+**Problem:** After rollback to iter 190, Big Money recovered to 3.7 provinces/game (iter 198) but the bot still ignores all 24 kingdom action cards (action_rate=0%). Pure self-play can't escape the Big Money local optimum — both players play identically, no action card games exist in training data, no gradient signal. Previous forcing approaches (DEVLOG #58-65) all failed by disrupting the economy.
+
+**Root cause (re-confirmed):** The value head has zero calibration for action card positions. It's never seen a game where buying Smithy → playing Smithy → drawing 3 extra cards → more coins → more provinces led to a win. The information is in the tensor (channels 151-155 encode action card bonuses), but without training examples the network can't connect inputs to outcomes.
+
+**Fix 1: Smart ActionBigMoney seed.** `scripts/seed_dominion_smart_abm.py` — a general heuristic that evaluates available kingdom cards by scoring function: `plus_cards*3 + plus_actions*2 + plus_coins*2 + plus_buys + special_bonus`. Buys top 1-2 action cards, plays in chain order (villages first for +actions, then draw cards), falls back to BigMoney. Handles all pending decisions (Chapel trashing, Moat reactions, Vassal/Library choices, etc.). Generated 300 games of ABM vs pure BM: 75K examples, 11.7 action plays/game, ABM wins 39%. Top cards bought: Chapel (195), Smithy (106), Village (104), Moat (54), Market (21). Seed provides diverse action card training signal across many different kingdom setups.
+
+**Fix 2: Re-enabled opponent diversity.** `opponent_diversity_ratio: 0.2` — 20% of full-sim games play against older (weaker) checkpoints. Checkpoint pool from iter 191-206 is clean BigMoney. Against weaker opponents, marginal strategies (Smithy+BM) become visibly winning, creating gradient signal for action card learning.
+
+**Fix 3: Buffer persistence.** Modified `trainer.py` to save `buffer_latest.pkl` alongside model checkpoints, and auto-load on `--resume`. Prevents the iter 190-210 degradation where rollback preserved weights but lost the buffer context that supported them. Buffer is saved as a separate file (not embedded in checkpoint) to avoid the OOM from 3x memory spikes (DEVLOG #35).
+
+**Deployed:** Seed injected on top of existing 128K BigMoney buffer (no flush). Resumed from iter 206 (model_latest.pt). All forcing still disabled — seed provides calibration, diversity provides exploration, no economy disruption.
+
+**Expected:** Value head should learn action card positions have nonzero value within 5-10 iterations. Policy should start voluntarily buying action cards (action_buys > 1.0) within 15-20 iterations. Province count should remain stable at 3.0+ (no economy disruption from seed-only approach). If action_buys don't emerge by iter 225, generate more diverse seed games with 3-4 action cards per deck.
+
+**Files changed:** `scripts/seed_dominion_smart_abm.py` (new), `mandala_rl/training/trainer.py` (buffer save/load), `configs/dominion.yaml` (opponent_diversity_ratio: 0.2).
+
+## DEVLOG #67 — 2026-03-03: Buffer loss caused iter 190-210 degradation (root cause + fix)
+
+**Problem:** After DEVLOG #66 rollback to iter 190, provinces never recovered to the 3.5 baseline. Instead they declined from 2.9 → 1.4 over 20 iterations (iter 191-210), with copper buys rising and purchasing power stuck at $4.8.
+
+**Root cause:** The rollback preserved network weights but NOT the replay buffer. The original iter 190 had 100K+ examples of strong BigMoney play accumulated over iters 77-190 (bootstrapped by the DEVLOG #57 BigMoney seed). After restart, the buffer rebuilt from scratch with only self-play from the rolled-back model. Early games were noisy (small buffer = high variance training), policy degraded slightly, degraded policy produced worse games, buffer filled with mediocre data — a vicious cycle. By iter 210 the buffer was 100K mediocre games reinforcing mediocre play.
+
+**Fix (applied):** Re-rolled back to iter 190 with BigMoney seed re-injected (padded to 156 channels). Immediate recovery: iter 191 hit 2.9 provinces, iter 194 hit 3.7 — matching the original post-seed trajectory from DEVLOG #57.
+
+**Permanent fix:** Added buffer persistence to `trainer.py`. Buffer saved as `buffer_latest.pkl` (separate from checkpoint to avoid OOM). Auto-loaded on `--resume`. Future restarts preserve buffer context.
+
+---
+
 ## DEVLOG #66 — 2026-03-03: Rollback to iter_190 — DEVLOG #65 restart never applied (PID crash + ghost config)
 
 **Problem (root cause discovery):** DEVLOG #65 (09:22) claimed to disable `action_play_force_rate: 0.15→0.0` and restart training. But between 09:22 and 10:22, the training process crashed (PID 1907007 → 1916223, unexplained restart with no logged intervention). The crash caused an auto-restart using the **original config on disk**, which still had `action_play_force_rate: 0.15`. The Monk's 10:22 check saw the new PID and accepted it as the configured restart. Iters 277-287 were trained with play-forcing still active — `action_buys` remaining stuck at 2.27-2.39 (should have dropped toward 1.5) is the telltale. The DEVLOG #65 fix never actually ran.
