@@ -13,6 +13,11 @@ export PATH="/Users/paulcapriolo/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin
 export HOME="${HOME:-/Users/paulcapriolo}"
 
 REPO_DIR="$HOME/GG/mandala-rl"
+
+# Load secrets from .env (not tracked in git)
+if [ -f "$REPO_DIR/.env" ]; then
+    set -a; source "$REPO_DIR/.env"; set +a
+fi
 LOSSES="$REPO_DIR/data/dominion/losses.jsonl"
 MONITOR="$REPO_DIR/data/dominion/monitor.jsonl"
 HOURLY_LOG="$REPO_DIR/data/monk_hourly.jsonl"
@@ -25,8 +30,8 @@ echo "=== Monk Hourly: $ts ==="
 mkdir -p "$(dirname "$HOURLY_LOG")"
 
 # --- Check Telegram for CEO replies ---
-TG_BOT="7938362544:AAFPlpBnE6cFkuGogysauo7Yg5NvkA1eUZA"
-TG_CHAT="8330350412"
+TG_BOT="${TG_BOT_TOKEN:?Set TG_BOT_TOKEN env var}"
+TG_CHAT="${TG_CHAT_ID:?Set TG_CHAT_ID env var}"
 TG_OFFSET_FILE="/tmp/monk_tg_offset"
 
 LAST_OFFSET=0

@@ -35,3 +35,4 @@ build/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+.env
