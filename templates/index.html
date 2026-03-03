@@ -88,6 +88,15 @@
     <p class="subtitle">Play board games against AI trained through self-play</p>
     <p class="tagline">No signup. No download. Just play.</p>
 
+    <a href="/mandala/challenge" style="display:block; max-width:680px; width:90%; margin:0 auto 24px;
+        background:linear-gradient(135deg, #16213e, #1a1a2e); border:2px solid #f1c40f; border-radius:12px;
+        padding:20px 24px; text-decoration:none; text-align:center; transition: transform 0.2s, border-color 0.2s;"
+        onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+        <span style="color:#f1c40f; font-weight:700; font-size:1.2em;">[$4 PRIZE] The Mandala Challenge</span><br>
+        <span style="color:#aaa; font-size:0.95em;">Win 7 games before losing 3 against our AI.</span><br>
+        <span style="color:#667eea; font-size:0.9em; font-weight:600; margin-top:8px; display:inline-block;">Take the Challenge &rarr;</span>
+    </a>
+
     <div class="games">
         {% if 'mandala' in games %}
         <div class="game-card">
@@ -125,7 +134,7 @@
             <span class="badge badge-new">NEW</span>
             <h2>Dominion</h2>
             <p class="desc">The classic deck-building game. Start with a small deck, buy powerful cards, and build an engine to claim Provinces.</p>
-            <p class="model-info">AI: {{ games.dominion.checkpoint }}</p>
+            <p class="model-info">Self-taught AI — trained on {{ games.dominion.total_games }} self-play games</p>
             <a href="/dominion/" class="play-btn dom" onclick="trackPlay()">Play Dominion</a>
         </div>
         {% else %}
@@ -272,11 +281,6 @@
             if (e.clientY < 5 && !e.relatedTarget) showBounce();
         });
 
-        // Trigger: tab becomes hidden (mobile / tab switch) after 10s on page
-        let pageLoadTime = Date.now();
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden && (Date.now() - pageLoadTime > 10000)) showBounce();
-        });
     </script>
 </body>
 </html>

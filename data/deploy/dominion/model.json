@@ -1,0 +1,7 @@
+{
+  "iteration": 105,
+  "total_games": 10500,
+  "source": "/workspace/dominion_data/checkpoints/model_latest.pt",
+  "input_channels": 151,
+  "num_actions": 131
+}

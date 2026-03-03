@@ -48,7 +48,112 @@ ANALYTICS_DIR = Path(os.environ.get('ANALYTICS_DIR', 'data/analytics'))
 ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
 HUMAN_GAMES_DIR = Path(os.environ.get('HUMAN_GAMES_DIR', 'data/human_games'))
 HUMAN_GAMES_DIR.mkdir(parents=True, exist_ok=True)
+CHALLENGES_DIR = Path(os.environ.get('CHALLENGES_DIR', 'data/challenges'))
+CHALLENGES_DIR.mkdir(parents=True, exist_ok=True)
 _analytics_lock = Lock()
+_challenges_lock = Lock()
+
+
+class ChallengeManager:
+    """Manages $4 Mandala Challenge: win 7 before losing 3."""
+
+    WINS_NEEDED = 7
+    LOSSES_ALLOWED = 3
+
+    @staticmethod
+    def create(email, payment_handle, visitor_hash):
+        cid = str(uuid.uuid4())
+        data = {
+            'challenge_id': cid,
+            'email': email,
+            'payment_handle': payment_handle,
+            'visitor': visitor_hash,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'status': 'active',
+            'games': [],
+            'wins': 0,
+            'losses': 0,
+            'verified': False,
+        }
+        with _challenges_lock:
+            with open(CHALLENGES_DIR / f'{cid}.json', 'w') as f:
+                json.dump(data, f, indent=2)
+        return data
+
+    @staticmethod
+    def get(challenge_id):
+        path = CHALLENGES_DIR / f'{challenge_id}.json'
+        if not path.exists():
+            return None
+        with _challenges_lock:
+            with open(path) as f:
+                return json.load(f)
+
+    @staticmethod
+    def record_game(challenge_id, game_id, result, scores, completed_at):
+        path = CHALLENGES_DIR / f'{challenge_id}.json'
+        with _challenges_lock:
+            if not path.exists():
+                return None
+            with open(path) as f:
+                data = json.load(f)
+            if data['status'] != 'active':
+                return data
+            data['games'].append({
+                'game_id': game_id,
+                'result': result,
+                'scores': scores,
+                'completed_at': completed_at,
+            })
+            if result == 'win':
+                data['wins'] += 1
+            else:
+                data['losses'] += 1
+            if data['wins'] >= ChallengeManager.WINS_NEEDED:
+                data['status'] = 'won'
+            elif data['losses'] >= ChallengeManager.LOSSES_ALLOWED:
+                data['status'] = 'lost'
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+        return data
+
+    @staticmethod
+    def lookup_by_email(email):
+        results = []
+        with _challenges_lock:
+            for p in CHALLENGES_DIR.glob('*.json'):
+                with open(p) as f:
+                    d = json.load(f)
+                if d.get('email') == email:
+                    results.append(d)
+        results.sort(key=lambda x: (x['status'] != 'active', x['created_at']), reverse=False)
+        return results
+
+    @staticmethod
+    def list_all(status=None):
+        results = []
+        with _challenges_lock:
+            for p in CHALLENGES_DIR.glob('*.json'):
+                with open(p) as f:
+                    d = json.load(f)
+                if status is None or d.get('status') == status:
+                    results.append(d)
+        results.sort(key=lambda x: x['created_at'], reverse=True)
+        return results
+
+    @staticmethod
+    def verify(challenge_id):
+        path = CHALLENGES_DIR / f'{challenge_id}.json'
+        with _challenges_lock:
+            if not path.exists():
+                return None
+            with open(path) as f:
+                data = json.load(f)
+            data['verified'] = True
+            data['verified_at'] = datetime.utcnow().isoformat() + 'Z'
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+        return data
 
 def _hash_ip(ip):
     """Hash IP for privacy -- we only need uniqueness, not the raw IP."""
@@ -676,10 +781,11 @@ def _mandala_action_to_string(action):
 
 
 class MandalaGameSession:
-    def __init__(self, server, human_player=0):
+    def __init__(self, server, human_player=0, challenge_id=None):
         self.server = server
         self.state = server.engine.get_initial_state()
         self.human_player = human_player
+        self.challenge_id = challenge_id
         self.move_count = 0
         self.game_history = []
         self.game_start_time = datetime.now().isoformat()
@@ -816,7 +922,19 @@ class MandalaGameSession:
         with open(filepath, 'w') as f:
             json.dump(game_data, f, indent=2)
         self.last_save_filepath = str(filepath)
-        return {'success': True, 'filename': filepath.name, 'moves': len(self.game_history)}
+        result = {'success': True, 'filename': filepath.name, 'moves': len(self.game_history)}
+
+        # Record challenge result if applicable
+        if self.challenge_id and is_terminal:
+            ch_result = 'win' if winner == self.human_player else 'loss'
+            challenge = ChallengeManager.record_game(
+                self.challenge_id, game_id, ch_result, final_scores,
+                datetime.utcnow().isoformat() + 'Z'
+            )
+            if challenge:
+                result['challenge'] = challenge
+
+        return result
 
 
 def create_mandala_blueprint(server):
@@ -838,6 +956,42 @@ def create_mandala_blueprint(server):
     def index():
         return render_template('play_vs_ai.html', base_url='/mandala')
 
+    @bp.route('/challenge')
+    def challenge_page():
+        cid = request.args.get('id', '')
+        cdata = ChallengeManager.get(cid) if cid else None
+        return render_template('play_vs_ai.html', base_url='/mandala',
+                               challenge_id=cid, challenge_data=cdata)
+
+    @bp.route('/api/challenge/register', methods=['POST'])
+    def challenge_register():
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+        payment_handle = (data.get('payment_handle') or '').strip()
+        if not email or '@' not in email:
+            return jsonify({'error': 'Valid email required'}), 400
+        if not payment_handle:
+            return jsonify({'error': 'Payment handle required'}), 400
+        visitor = _hash_ip(request.remote_addr)
+        challenge = ChallengeManager.create(email, payment_handle, visitor)
+        _log_event('challenge_registered', {'challenge_id': challenge['challenge_id'], 'email': email})
+        return jsonify(challenge)
+
+    @bp.route('/api/challenge/lookup', methods=['POST'])
+    def challenge_lookup():
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            return jsonify({'error': 'Email required'}), 400
+        return jsonify(ChallengeManager.lookup_by_email(email))
+
+    @bp.route('/api/challenge/<challenge_id>')
+    def challenge_status(challenge_id):
+        challenge = ChallengeManager.get(challenge_id)
+        if not challenge:
+            return jsonify({'error': 'Challenge not found'}), 404
+        return jsonify(challenge)
+
     @bp.route('/api/info')
     def info():
         return jsonify({
@@ -852,7 +1006,13 @@ def create_mandala_blueprint(server):
         cleanup()
         data = request.json or {}
         game_id = str(uuid.uuid4())
-        sessions[game_id] = MandalaGameSession(server, data.get('human_player', 0))
+        challenge_id = data.get('challenge_id')
+        if challenge_id:
+            ch = ChallengeManager.get(challenge_id)
+            if not ch or ch['status'] != 'active':
+                challenge_id = None
+        sessions[game_id] = MandalaGameSession(server, data.get('human_player', 0),
+                                                challenge_id=challenge_id)
         state = sessions[game_id].get_game_state_dict()
         state['game_id'] = game_id
         return jsonify(state)
@@ -1065,6 +1225,27 @@ from dominion.game.cards import (
     COPPER as DOM_COPPER, SILVER as DOM_SILVER, GOLD as DOM_GOLD,
     PROVINCE as DOM_PROVINCE, DUCHY as DOM_DUCHY,
 )
+
+
+class DominionModelServer:
+    """Dominion RL model server — ONNX inference with greedy masked policy."""
+
+    def __init__(self, onnx_server, engine):
+        self.onnx = onnx_server
+        self.engine = engine
+        self.iteration = onnx_server.iteration
+        self.total_games = onnx_server.total_games
+        self.checkpoint_path = onnx_server.checkpoint_path
+
+    def get_action(self, state):
+        canonical = state.get_canonical_form()
+        tensor = canonical.to_tensor()
+        policy, _ = self.onnx.predict(tensor)
+        valid_moves = self.engine.get_valid_moves(state)
+        masked = policy * valid_moves
+        if masked.sum() == 0:
+            return int(np.where(valid_moves > 0)[0][0])
+        return int(masked.argmax())
 
 
 class DominionHeuristicServer:
@@ -1449,17 +1630,29 @@ def create_dominion_blueprint(server):
 # Load Dominion (heuristic AI — no trained model needed)
 _dominion_server = DominionHeuristicServer(DominionGame())
 app.register_blueprint(create_dominion_blueprint(_dominion_server), url_prefix='/dominion')
-loaded_games['dominion'] = {
-    'iteration': 'heuristic',
-    'total_games': 0,
-    'checkpoint': 'Big Money Heuristic',
-}
 print("[serve] Dominion loaded with heuristic AI (Big Money)")
 
 
 # ──────────────────────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────────────────────
+
+@app.route('/api/challenges')
+def list_challenges():
+    status = request.args.get('status')
+    verified = request.args.get('verified')
+    results = ChallengeManager.list_all(status=status)
+    if verified is not None:
+        v = verified.lower() == 'true'
+        results = [c for c in results if c.get('verified') == v]
+    return jsonify(results)
+
+@app.route('/api/challenges/<challenge_id>/verify', methods=['POST'])
+def verify_challenge(challenge_id):
+    challenge = ChallengeManager.verify(challenge_id)
+    if not challenge:
+        return jsonify({'error': 'Challenge not found'}), 404
+    return jsonify(challenge)
 
 @app.route('/stats')
 def stats_page():

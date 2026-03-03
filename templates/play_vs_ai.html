@@ -170,6 +170,69 @@
         .new-game-popup p { color: #888; font-size: 0.9em; margin: 0 0 8px; }
         .new-game-popup .btn { width: 100%; }
 
+        /* Challenge tracker bar */
+        .challenge-tracker { display: none; padding: 8px 20px; background: #1a1a2e; border-bottom: 1px solid #333;
+            align-items: center; gap: 12px; flex-wrap: wrap; }
+        .challenge-tracker.show { display: flex; }
+        .challenge-tracker .tracker-title { color: #f1c40f; font-weight: 600; font-size: 0.9em; }
+        .challenge-tracker .tracker-squares { display: flex; gap: 4px; align-items: center; }
+        .challenge-tracker .sq { width: 20px; height: 20px; border-radius: 4px; display: inline-block; }
+        .challenge-tracker .sq.win { background: #48bb78; }
+        .challenge-tracker .sq.loss { background: #e94560; }
+        .challenge-tracker .sq.empty { background: #333; }
+        .challenge-tracker .tracker-record { color: #aaa; font-size: 0.85em; margin-left: auto; }
+
+        /* Challenge registration overlay */
+        .challenge-reg-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+            display: none; align-items: center; justify-content: center; z-index: 600; }
+        .challenge-reg-overlay.show { display: flex; }
+        .challenge-reg-box { background: #16213e; padding: 30px; border-radius: 14px;
+            max-width: 400px; width: 90%; text-align: center; }
+        .challenge-reg-box h2 { color: #f1c40f; font-size: 1.6em; margin: 0 0 4px; }
+        .challenge-reg-box .prize { color: #48bb78; font-size: 1.1em; margin-bottom: 12px; }
+        .challenge-reg-box .rules { color: #aaa; font-size: 0.9em; margin-bottom: 18px; line-height: 1.5; }
+        .challenge-reg-box input { width: 100%; padding: 10px 14px; background: #1a1a2e; border: 1px solid #333;
+            color: #eee; border-radius: 8px; font-size: 0.95em; margin-bottom: 10px; font-family: inherit; }
+        .challenge-reg-box input:focus { outline: none; border-color: #667eea; }
+        .challenge-reg-box .btn-challenge { width: 100%; padding: 12px; background: #f1c40f; color: #1a1a2e;
+            border: none; border-radius: 8px; font-size: 1em; font-weight: 700; cursor: pointer; margin-top: 4px; }
+        .challenge-reg-box .btn-challenge:hover { background: #e6b800; }
+        .challenge-reg-box .resume-link { color: #667eea; font-size: 0.85em; margin-top: 14px;
+            cursor: pointer; display: inline-block; }
+        .challenge-reg-box .resume-link:hover { text-decoration: underline; }
+        .challenge-reg-box .reg-error { color: #e94560; font-size: 0.85em; display: none; margin-top: 6px; }
+
+        /* Challenge interstitial / celebration / failure overlays */
+        .challenge-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+            display: none; align-items: center; justify-content: center; z-index: 600; }
+        .challenge-overlay.show { display: flex; }
+        .challenge-overlay .ch-box { background: #16213e; padding: 30px; border-radius: 14px;
+            max-width: 420px; width: 90%; text-align: center; }
+        .challenge-overlay .ch-title { font-size: 1.5em; font-weight: 700; margin-bottom: 6px; }
+        .challenge-overlay .ch-title.win { color: #48bb78; }
+        .challenge-overlay .ch-title.loss { color: #e94560; }
+        .challenge-overlay .ch-title.celebrate { color: #f1c40f; }
+        .challenge-overlay .ch-subtitle { color: #aaa; font-size: 0.95em; margin-bottom: 16px; }
+        .challenge-overlay .ch-tracker { display: flex; gap: 4px; justify-content: center; margin-bottom: 18px; }
+        .challenge-overlay .sq { width: 22px; height: 22px; border-radius: 4px; display: inline-block; }
+        .challenge-overlay .sq.win { background: #48bb78; }
+        .challenge-overlay .sq.loss { background: #e94560; }
+        .challenge-overlay .sq.empty { background: #333; }
+        .challenge-overlay .ch-record { color: #ccc; font-size: 1.1em; font-weight: 600; margin-bottom: 16px; }
+        .challenge-overlay .btn-next { padding: 12px 32px; background: #667eea; color: white;
+            border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 4px; }
+        .challenge-overlay .btn-next:hover { background: #5568d3; }
+        .challenge-overlay .btn-share { padding: 10px 24px; background: #1da1f2; color: white;
+            border: none; border-radius: 8px; font-size: 0.9em; font-weight: 600; cursor: pointer; margin: 4px;
+            text-decoration: none; display: inline-block; }
+        .challenge-overlay .btn-share:hover { background: #1a91da; }
+        .challenge-overlay .btn-copy { padding: 10px 24px; background: #333; color: #ccc;
+            border: none; border-radius: 8px; font-size: 0.9em; cursor: pointer; margin: 4px; }
+        .challenge-overlay .btn-copy:hover { background: #444; }
+        .challenge-overlay .btn-retry { padding: 12px 32px; background: #e94560; color: white;
+            border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 4px; }
+        .challenge-overlay .btn-retry:hover { background: #d63851; }
+
         /* ===== MOBILE: Hide mobile-only elements on desktop ===== */
         .mobile-header, .m-board, .m-mandalas-row, .m-info-row,
         .m-bottom-sheet, .m-help-overlay, .m-menu-drawer { display: none; }
@@ -450,6 +513,13 @@
         <button class="btn btn-save" onclick="saveGame()">Save Game</button>
     </div>
 
+    <!-- Challenge tracker bar -->
+    <div class="challenge-tracker" id="challengeTracker">
+        <span class="tracker-title">The Mandala Challenge</span>
+        <span class="tracker-squares" id="trackerSquares"></span>
+        <span class="tracker-record" id="trackerRecord"></span>
+    </div>
+
     <div class="game-area">
         <!-- How to play -->
         <div class="help-panel" id="helpPanel">
@@ -635,8 +705,66 @@
         </div>
     </div>
 
+    <!-- Challenge registration overlay -->
+    <div class="challenge-reg-overlay" id="challengeRegOverlay">
+        <div class="challenge-reg-box">
+            <h2>The Mandala Challenge</h2>
+            <p class="prize">Win 7 games before losing 3 — earn $4</p>
+            <p class="rules">Play against our self-taught AI. Wins and losses are tracked across games. Draws count as losses. You can resume anytime.</p>
+            <input type="email" id="regEmail" placeholder="Email (for payout notification)">
+            <input type="text" id="regPayment" placeholder="Venmo handle (e.g. @yourname)">
+            <button class="btn-challenge" onclick="registerChallenge()">Start Challenge</button>
+            <div class="reg-error" id="regError"></div>
+            <div class="resume-link" onclick="showResumeLookup()">Resume your challenge</div>
+            <div id="resumeSection" style="display:none; margin-top: 12px;">
+                <input type="email" id="resumeEmail" placeholder="Email used to register">
+                <button class="btn-challenge" style="background:#667eea;color:white;" onclick="lookupChallenge()">Look Up</button>
+                <div id="resumeResults" style="margin-top: 8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Challenge interstitial overlay (shown between games) -->
+    <div class="challenge-overlay" id="challengeInterstitial">
+        <div class="ch-box">
+            <div class="ch-title" id="chInterTitle">Win!</div>
+            <div class="ch-subtitle" id="chInterSubtitle">Nice work. Keep going!</div>
+            <div class="ch-tracker" id="chInterSquares"></div>
+            <div class="ch-record" id="chInterRecord"></div>
+            <button class="btn-next" onclick="challengeNextGame()">Next Game</button>
+        </div>
+    </div>
+
+    <!-- Challenge celebration overlay (7 wins) -->
+    <div class="challenge-overlay" id="challengeCelebration">
+        <div class="ch-box">
+            <div class="ch-title celebrate">You Won the Challenge!</div>
+            <div class="ch-subtitle">You beat the AI 7 times. $4 is on its way.</div>
+            <div class="ch-tracker" id="chCelebSquares"></div>
+            <div class="ch-record" id="chCelebRecord"></div>
+            <a class="btn-share" id="chShareBtn" href="#" target="_blank">Share on X</a>
+            <button class="btn-copy" onclick="copyChallengeLink()">Copy Link</button>
+            <br>
+            <button class="btn-next" style="margin-top:12px;" onclick="closeChallengeOverlays(); closeNewGamePopup();">Play Again</button>
+        </div>
+    </div>
+
+    <!-- Challenge failure overlay (3 losses) -->
+    <div class="challenge-overlay" id="challengeFailure">
+        <div class="ch-box">
+            <div class="ch-title loss">Challenge Over</div>
+            <div class="ch-subtitle" id="chFailSubtitle">The AI got the best of you this time.</div>
+            <div class="ch-tracker" id="chFailSquares"></div>
+            <div class="ch-record" id="chFailRecord"></div>
+            <button class="btn-retry" onclick="retryChallenge()">Try Again?</button>
+            <button class="btn-next" style="background:#333;" onclick="closeChallengeOverlays(); closeNewGamePopup();">Just Play</button>
+        </div>
+    </div>
+
     <script>
         const BASE_URL = '{{ base_url }}';
+        const challengeId = '{{ challenge_id | default("", true) }}';
+        const challengeData = {{ (challenge_data | tojson) if challenge_data else 'null' }};
         const COLOR_NAMES = ['Red', 'Green', 'Purple', 'Orange', 'Yellow', 'White'];
         const COLOR_SHORT = ['R', 'G', 'P', 'O', 'Y', 'W'];
         let currentState = null;
@@ -701,10 +829,12 @@
         }
 
         async function newGame(humanPlayer) {
+            const body = {human_player: humanPlayer};
+            if (challengeId) body.challenge_id = challengeId;
             const resp = await fetch(`${BASE_URL}/api/new_game`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({human_player: humanPlayer})
+                body: JSON.stringify(body)
             });
             currentState = await resp.json();
             gameId = currentState.game_id;
@@ -1114,6 +1244,11 @@
         }
 
         function showGameOver() {
+            if (challengeId) {
+                saveGameAndUpdateChallenge();
+                return;
+            }
+
             const w = currentState.winner;
             const hp = currentState.human_player;
             const s = currentState.scores;
@@ -1216,6 +1351,198 @@
                 console.error('Feedback submit failed:', e);
             }
             closeGameOver();
+        }
+
+        // ===== CHALLENGE FUNCTIONS =====
+
+        function renderTrackerSquares(containerId, wins, losses, maxWins, maxLosses) {
+            const el = document.getElementById(containerId);
+            let html = '';
+            for (let i = 0; i < maxWins; i++) {
+                html += `<span class="sq ${i < wins ? 'win' : 'empty'}"></span>`;
+            }
+            html += '<span style="width:8px"></span>';
+            for (let i = 0; i < maxLosses; i++) {
+                html += `<span class="sq ${i < losses ? 'loss' : 'empty'}"></span>`;
+            }
+            el.innerHTML = html;
+        }
+
+        function updateChallengeTracker(data) {
+            if (!data) return;
+            const tracker = document.getElementById('challengeTracker');
+            tracker.classList.add('show');
+            renderTrackerSquares('trackerSquares', data.wins, data.losses, 7, 3);
+            document.getElementById('trackerRecord').textContent = `${data.wins}W - ${data.losses}L`;
+        }
+
+        let _challengeState = challengeData;
+
+        async function saveGameAndUpdateChallenge() {
+            if (!gameId) return;
+            try {
+                const resp = await fetch(`${BASE_URL}/api/save`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({game_id: gameId})
+                });
+                const result = await resp.json();
+                if (result.challenge) {
+                    _challengeState = result.challenge;
+                    updateChallengeTracker(_challengeState);
+                    showChallengeResult(_challengeState);
+                }
+            } catch (e) {
+                console.error('Challenge save failed:', e);
+            }
+        }
+
+        function showChallengeResult(ch) {
+            const w = currentState.winner;
+            const hp = currentState.human_player;
+            const s = currentState.scores;
+            const yourScore = hp === 0 ? s.player0 : s.player1;
+            const aiScore = hp === 0 ? s.player1 : s.player0;
+            const gameResult = w === hp ? 'win' : 'loss';
+            const scoreText = `You: ${yourScore} — AI: ${aiScore}`;
+
+            if (ch.status === 'won') {
+                // Celebration
+                renderTrackerSquares('chCelebSquares', ch.wins, ch.losses, 7, 3);
+                document.getElementById('chCelebRecord').textContent = `${ch.wins}W - ${ch.losses}L`;
+                const shareText = encodeURIComponent(`I beat the Mandala AI 7 times in The Mandala Challenge! ${ch.wins}W-${ch.losses}L. Can you?`);
+                const shareUrl = encodeURIComponent(window.location.origin + '/mandala/challenge');
+                document.getElementById('chShareBtn').href = `https://x.com/intent/tweet?text=${shareText}&url=${shareUrl}`;
+                document.getElementById('challengeCelebration').classList.add('show');
+            } else if (ch.status === 'lost') {
+                // Failure
+                renderTrackerSquares('chFailSquares', ch.wins, ch.losses, 7, 3);
+                document.getElementById('chFailRecord').textContent = `${ch.wins}W - ${ch.losses}L`;
+                document.getElementById('chFailSubtitle').textContent = `Final: ${ch.wins}W - ${ch.losses}L. ${scoreText}`;
+                document.getElementById('challengeFailure').classList.add('show');
+            } else {
+                // Active — interstitial
+                const title = document.getElementById('chInterTitle');
+                const subtitle = document.getElementById('chInterSubtitle');
+                if (gameResult === 'win') {
+                    title.textContent = 'Win!';
+                    title.className = 'ch-title win';
+                    subtitle.textContent = `${scoreText}. Keep it up!`;
+                } else {
+                    title.textContent = 'Loss';
+                    title.className = 'ch-title loss';
+                    subtitle.textContent = `${scoreText}. Stay focused.`;
+                }
+                renderTrackerSquares('chInterSquares', ch.wins, ch.losses, 7, 3);
+                document.getElementById('chInterRecord').textContent = `${ch.wins}W - ${ch.losses}L`;
+                document.getElementById('challengeInterstitial').classList.add('show');
+            }
+        }
+
+        function closeChallengeOverlays() {
+            document.getElementById('challengeInterstitial').classList.remove('show');
+            document.getElementById('challengeCelebration').classList.remove('show');
+            document.getElementById('challengeFailure').classList.remove('show');
+            document.getElementById('challengeRegOverlay').classList.remove('show');
+        }
+
+        function challengeNextGame() {
+            closeChallengeOverlays();
+            newGame(0);
+        }
+
+        async function registerChallenge() {
+            const email = document.getElementById('regEmail').value.trim();
+            const payment = document.getElementById('regPayment').value.trim();
+            const errEl = document.getElementById('regError');
+            errEl.style.display = 'none';
+            if (!email || !email.includes('@')) {
+                errEl.textContent = 'Please enter a valid email.';
+                errEl.style.display = 'block';
+                return;
+            }
+            if (!payment) {
+                errEl.textContent = 'Please enter your Venmo handle.';
+                errEl.style.display = 'block';
+                return;
+            }
+            try {
+                const resp = await fetch(`${BASE_URL}/api/challenge/register`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email, payment_handle: payment})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    errEl.textContent = data.error;
+                    errEl.style.display = 'block';
+                    return;
+                }
+                window.location.href = `${BASE_URL}/challenge?id=${data.challenge_id}`;
+            } catch (e) {
+                errEl.textContent = 'Registration failed. Please try again.';
+                errEl.style.display = 'block';
+            }
+        }
+
+        function showResumeLookup() {
+            document.getElementById('resumeSection').style.display = 'block';
+        }
+
+        async function lookupChallenge() {
+            const email = document.getElementById('resumeEmail').value.trim();
+            const resultsEl = document.getElementById('resumeResults');
+            if (!email) return;
+            try {
+                const resp = await fetch(`${BASE_URL}/api/challenge/lookup`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email})
+                });
+                const challenges = await resp.json();
+                if (!challenges.length) {
+                    resultsEl.innerHTML = '<span style="color:#e94560;font-size:0.85em">No challenges found for this email.</span>';
+                    return;
+                }
+                resultsEl.innerHTML = challenges.map(c => {
+                    const label = c.status === 'active' ? `${c.wins}W-${c.losses}L (active)` :
+                                  c.status === 'won' ? `${c.wins}W-${c.losses}L (won!)` :
+                                  `${c.wins}W-${c.losses}L (lost)`;
+                    return c.status === 'active'
+                        ? `<a href="${BASE_URL}/challenge?id=${c.challenge_id}" style="color:#48bb78;display:block;padding:6px 0;font-size:0.9em;">${label} → Resume</a>`
+                        : `<span style="color:#666;display:block;padding:4px 0;font-size:0.85em;">${label}</span>`;
+                }).join('');
+            } catch (e) {
+                resultsEl.innerHTML = '<span style="color:#e94560;font-size:0.85em">Lookup failed.</span>';
+            }
+        }
+
+        async function retryChallenge() {
+            closeChallengeOverlays();
+            // Create a new challenge with same email
+            if (_challengeState && _challengeState.email) {
+                try {
+                    const resp = await fetch(`${BASE_URL}/api/challenge/register`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({email: _challengeState.email, payment_handle: _challengeState.payment_handle})
+                    });
+                    const data = await resp.json();
+                    if (!data.error) {
+                        window.location.href = `${BASE_URL}/challenge?id=${data.challenge_id}`;
+                        return;
+                    }
+                } catch (e) {}
+            }
+            window.location.href = `${BASE_URL}/challenge`;
+        }
+
+        function copyChallengeLink() {
+            navigator.clipboard.writeText(window.location.origin + '/mandala/challenge').then(() => {
+                const btn = event.target;
+                btn.textContent = 'Copied!';
+                setTimeout(() => { btn.textContent = 'Copy Link'; }, 1500);
+            });
         }
 
         // ===== MOBILE RENDERING =====
@@ -1448,6 +1775,27 @@
                 drawer.classList.remove('show');
             }
         });
+
+        // ===== CHALLENGE INIT =====
+        (function initChallenge() {
+            if (!challengeId && window.location.pathname.includes('/challenge')) {
+                // Show registration overlay, hide new-game popup
+                document.getElementById('newGameOverlay').classList.remove('show');
+                document.getElementById('challengeRegOverlay').classList.add('show');
+            } else if (challengeId && challengeData) {
+                // Active challenge — show tracker, hide new-game popup, auto-start
+                document.getElementById('newGameOverlay').classList.remove('show');
+                updateChallengeTracker(challengeData);
+                _challengeState = challengeData;
+                if (challengeData.status === 'active') {
+                    newGame(0);
+                } else if (challengeData.status === 'won') {
+                    showChallengeResult(challengeData);
+                } else if (challengeData.status === 'lost') {
+                    showChallengeResult(challengeData);
+                }
+            }
+        })();
     </script>
 </body>
 </html>

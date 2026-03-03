@@ -81,14 +81,17 @@
                 <tr>
                     <th>Iter</th>
                     <th>Policy</th>
-                    <th>Value</th>
-                    <th>Total</th>
-                    <th>Avg Score</th>
-                    <th>Provinces</th>
-                    <th>Treasures</th>
+                    <th>Total Loss</th>
+                    <th>Score</th>
+                    <th>Prov</th>
+                    <th>Duchy</th>
+                    <th>Estate</th>
+                    <th>Copper</th>
+                    <th>Ag/Au</th>
+                    <th>Action</th>
+                    <th>Curse</th>
                     <th>Buys</th>
-                    <th>Actions</th>
-                    <th>Game Len</th>
+                    <th>Len</th>
                     <th>Turns</th>
                     <th>Draw%</th>
                 </tr>
@@ -101,12 +104,55 @@
 const API = '{{ api_base }}';
 let lossChart, qualityChart, buysChart, lengthChart;
 
+let iterData = []; // store for tooltip lookups
+
 const chartOpts = (yLabel) => ({
     responsive: true,
+    interaction: { mode: 'index', intersect: false },
     plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
     scales: {
         x: { title: { display: true, text: 'Iteration', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } },
         y: { title: { display: true, text: yLabel, color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
+    }
+});
+
+const buysChartOpts = () => ({
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+        legend: { labels: { color: '#888', font: { size: 11 } } },
+        tooltip: {
+            callbacks: {
+                title: (items) => items.length ? `Iteration ${items[0].label}` : '',
+                afterBody: (items) => {
+                    if (!items.length) return '';
+                    const idx = items[0].dataIndex;
+                    const d = iterData[idx];
+                    if (!d) return '';
+                    const lines = [
+                        '',
+                        '── Buy Breakdown ──',
+                        `Provinces:    ${d.avg_provinces.toFixed(2)}`,
+                        `Duchies:      ${(d.avg_duchies || 0).toFixed(2)}`,
+                        `Estates:      ${(d.avg_estates || 0).toFixed(2)}`,
+                        `Copper:       ${(d.avg_copper || 0).toFixed(2)}`,
+                        `Silver/Gold:  ${d.avg_treasures.toFixed(2)}`,
+                        `Action Cards: ${(d.avg_action_buys || 0).toFixed(2)}`,
+                        `Curses:       ${(d.avg_curses || 0).toFixed(2)}`,
+                        `────────────`,
+                        `Total Buys:   ${d.avg_buys.toFixed(2)}`,
+                    ];
+                    return lines.join('\n');
+                },
+                label: () => null,  // hide per-dataset lines, afterBody has everything
+            },
+            bodyFont: { family: 'monospace', size: 12 },
+            footerFont: { family: 'monospace', size: 12 },
+        }
+    },
+    scales: {
+        x: { title: { display: true, text: 'Iteration', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } },
+        y: { title: { display: true, text: 'Count', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
     }
 });
 
@@ -122,7 +168,7 @@ function initCharts() {
         type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Value')
     });
     buysChart = new Chart(document.getElementById('chart-buys'), {
-        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Count')
+        type: 'line', data: { labels: [], datasets: [] }, options: buysChartOpts()
     });
     lengthChart = new Chart(document.getElementById('chart-length'), {
         type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Moves / Turns')
@@ -137,6 +183,7 @@ async function refresh() {
 
     const labels = iters.map(d => d.iteration);
     const latest = iters[iters.length - 1];
+    iterData = iters;
 
     // Stats bar
     document.getElementById('s-iter').textContent = latest.iteration;
@@ -173,7 +220,12 @@ async function refresh() {
     buysChart.data.datasets = [
         makeDataset('Total Buys', '#9b59b6', iters.map(d => d.avg_buys)),
         makeDataset('Provinces', '#e74c3c', iters.map(d => d.avg_provinces)),
-        makeDataset('Treasures', '#f1c40f', iters.map(d => d.avg_treasures)),
+        makeDataset('Duchies', '#e67e22', iters.map(d => d.avg_duchies || 0)),
+        makeDataset('Estates', '#95a5a6', iters.map(d => d.avg_estates || 0)),
+        makeDataset('Copper', '#cd7f32', iters.map(d => d.avg_copper || 0)),
+        makeDataset('Silver/Gold', '#f1c40f', iters.map(d => d.avg_treasures)),
+        makeDataset('Action Cards', '#3498db', iters.map(d => d.avg_action_buys || 0)),
+        makeDataset('Curses', '#8e44ad', iters.map(d => d.avg_curses || 0)),
     ];
     buysChart.update();
 
@@ -190,13 +242,16 @@ async function refresh() {
     tbody.innerHTML = iters.slice().reverse().map(d => `<tr>
         <td>${d.iteration}</td>
         <td>${d.policy.toFixed(4)}</td>
-        <td>${d.value.toFixed(4)}</td>
         <td>${d.total.toFixed(4)}</td>
         <td>${d.avg_score.toFixed(1)}</td>
         <td>${d.avg_provinces.toFixed(2)}</td>
+        <td>${(d.avg_duchies || 0).toFixed(2)}</td>
+        <td>${(d.avg_estates || 0).toFixed(2)}</td>
+        <td>${(d.avg_copper || 0).toFixed(2)}</td>
         <td>${d.avg_treasures.toFixed(2)}</td>
+        <td>${(d.avg_action_buys || 0).toFixed(2)}</td>
+        <td>${(d.avg_curses || 0).toFixed(2)}</td>
         <td>${d.avg_buys.toFixed(1)}</td>
-        <td>${(d.action_rate * 100).toFixed(1)}%</td>
         <td>${d.avg_len.toFixed(0)}</td>
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
