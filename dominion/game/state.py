@@ -203,7 +203,7 @@ class DominionState:
         return s
 
     def to_tensor(self) -> np.ndarray:
-        """Convert state to (151, 8, 8) float32 tensor.
+        """Convert state to (156, 8, 8) float32 tensor.
 
         State is assumed to be in canonical form (current_player = 0).
 
@@ -235,8 +235,13 @@ class DominionState:
           148:     Expected hand value (coins per 5-card hand / 12)
           149:     Opponent expected hand value
           150:     Attack pressure (my attack cards / 3)
+          151:     Treasure coins in hand / 12
+          152:     Best +cards from playable action in hand / 5
+          153:     Best +actions from playable action in hand / 5
+          154:     Best +coins from playable action in hand / 5
+          155:     Number of action cards in hand / 5
         """
-        tensor = np.zeros((151, 8, 8), dtype=np.float32)
+        tensor = np.zeros((156, 8, 8), dtype=np.float32)
         me = self.players[0]
         opp = self.players[1]
 
@@ -366,6 +371,32 @@ class DominionState:
             opp_treasure_coins = sum(CARD_BY_ID[c].coins for c in all_opp if 'Treasure' in CARD_BY_ID[c].types)
             opp_expected = opp_treasure_coins * 5.0 / opp_total
             tensor[149] = min(1.0, opp_expected / 12.0)
+
+        # Ch 151-155: Action card awareness channels
+        # Ch 151: Treasure coins in hand
+        hand_treasure_coins = sum(CARD_BY_ID[c].coins for c in me.hand if 'Treasure' in CARD_BY_ID[c].types)
+        tensor[151] = min(1.0, hand_treasure_coins / 12.0)
+
+        # Ch 152-154: Best action bonuses (conditional on actions_remaining > 0)
+        best_cards = 0
+        best_actions = 0
+        best_coins = 0
+        action_count_in_hand = 0
+        for cid in me.hand:
+            card = CARD_BY_ID[cid]
+            if 'Action' in card.types:
+                action_count_in_hand += 1
+                if self.actions_remaining > 0:
+                    best_cards = max(best_cards, card.plus_cards)
+                    best_actions = max(best_actions, card.plus_actions)
+                    best_coins = max(best_coins, card.plus_coins)
+
+        tensor[152] = min(1.0, best_cards / 5.0)
+        tensor[153] = min(1.0, best_actions / 5.0)
+        tensor[154] = min(1.0, best_coins / 5.0)
+
+        # Ch 155: Number of action cards in hand
+        tensor[155] = min(1.0, action_count_in_hand / 5.0)
 
         return tensor
 

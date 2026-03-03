@@ -125,9 +125,16 @@ std::unique_ptr<GameState> DominionState::copy() const {
     s->save_phase = save_phase;
     std::memcpy(s->total_buys, total_buys, sizeof(total_buys));
     std::memcpy(s->province_buys, province_buys, sizeof(province_buys));
+    std::memcpy(s->duchy_buys, duchy_buys, sizeof(duchy_buys));
+    std::memcpy(s->estate_buys, estate_buys, sizeof(estate_buys));
+    std::memcpy(s->copper_buys, copper_buys, sizeof(copper_buys));
     std::memcpy(s->treasure_buys, treasure_buys, sizeof(treasure_buys));
+    std::memcpy(s->action_buys, action_buys, sizeof(action_buys));
+    std::memcpy(s->curse_buys, curse_buys, sizeof(curse_buys));
     std::memcpy(s->action_plays, action_plays, sizeof(action_plays));
     std::memcpy(s->total_moves, total_moves, sizeof(total_moves));
+    std::memcpy(s->total_coins_at_buy, total_coins_at_buy, sizeof(total_coins_at_buy));
+    std::memcpy(s->buy_phase_entries, buy_phase_entries, sizeof(buy_phase_entries));
     return s;
 }
 
@@ -374,6 +381,50 @@ void DominionState::to_tensor(std::vector<float>& out) const {
             set_channel(150, std::min(1.0f, my_attacks / 3.0f));
         }
     }
+
+    // Ch 151-155: Action card awareness channels
+    // These surface action card bonuses so the model can reason about playing them.
+    {
+        // Ch 151: Treasure coins currently in hand / 12
+        // "You'll have at least X coins after auto-play treasures"
+        int hand_treasure_coins = 0;
+        for (auto c : me.hand) {
+            if (CARD_DEFS[c].is_treasure()) hand_treasure_coins += CARD_DEFS[c].coins;
+        }
+        set_channel(151, std::min(1.0f, hand_treasure_coins / 12.0f));
+
+        // Ch 152-154: Best action card bonuses from playable actions in hand
+        // Conditional on actions_remaining > 0 (otherwise you can't play actions)
+        int best_cards = 0, best_actions = 0, best_coins = 0;
+        int action_count_in_hand = 0;
+        if (actions_remaining > 0) {
+            for (auto c : me.hand) {
+                if (CARD_DEFS[c].is_action()) {
+                    action_count_in_hand++;
+                    best_cards = std::max(best_cards, static_cast<int>(CARD_DEFS[c].plus_cards));
+                    best_actions = std::max(best_actions, static_cast<int>(CARD_DEFS[c].plus_actions));
+                    best_coins = std::max(best_coins, static_cast<int>(CARD_DEFS[c].plus_coins));
+                }
+            }
+        } else {
+            // Still count actions in hand for ch 155 even if can't play
+            for (auto c : me.hand) {
+                if (CARD_DEFS[c].is_action()) action_count_in_hand++;
+            }
+        }
+
+        // Ch 152: Best +cards from playable action in hand / 5
+        set_channel(152, std::min(1.0f, best_cards / 5.0f));
+
+        // Ch 153: Best +actions from playable action in hand / 5
+        set_channel(153, std::min(1.0f, best_actions / 5.0f));
+
+        // Ch 154: Best +coins from playable action in hand / 5
+        set_channel(154, std::min(1.0f, best_coins / 5.0f));
+
+        // Ch 155: Number of action cards in hand / 5
+        set_channel(155, std::min(1.0f, action_count_in_hand / 5.0f));
+    }
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {
@@ -518,28 +569,40 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
 
         case DOM_PEND_GAIN: {
             int cost_limit = p.trashed_card_cost;
+            bool any_valid = false;
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
-                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= cost_limit)
+                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= cost_limit) {
                     out[DOM_GAIN_OFFSET + i] = 1.0f;
+                    any_valid = true;
+                }
             }
+            if (!any_valid) out[DOM_DONE_SELECTING] = 1.0f;
             break;
         }
 
         case DOM_PEND_REMODEL_GAIN: {
             int cost_limit = p.trashed_card_cost + 2;
+            bool any_valid = false;
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
-                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= cost_limit)
+                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= cost_limit) {
                     out[DOM_GAIN_OFFSET + i] = 1.0f;
+                    any_valid = true;
+                }
             }
+            if (!any_valid) out[DOM_DONE_SELECTING] = 1.0f;
             break;
         }
 
         case DOM_PEND_MINE_GAIN: {
             int cost_limit = p.trashed_card_cost + 3;
+            bool any_valid = false;
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
-                if (s.supply[i] > 0 && CARD_DEFS[i].is_treasure() && CARD_DEFS[i].cost <= cost_limit)
+                if (s.supply[i] > 0 && CARD_DEFS[i].is_treasure() && CARD_DEFS[i].cost <= cost_limit) {
                     out[DOM_GAIN_OFFSET + i] = 1.0f;
+                    any_valid = true;
+                }
             }
+            if (!any_valid) out[DOM_DONE_SELECTING] = 1.0f;
             break;
         }
 
@@ -627,10 +690,14 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
         }
 
         case DOM_PEND_ARTISAN_GAIN: {
+            bool any_valid = false;
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
-                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= 5)
+                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= 5) {
                     out[DOM_GAIN_OFFSET + i] = 1.0f;
+                    any_valid = true;
+                }
             }
+            if (!any_valid) out[DOM_DONE_SELECTING] = 1.0f;
             break;
         }
 
@@ -665,12 +732,7 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
         }
     } else if (s.phase == DOM_PHASE_BUY) {
         out[DOM_END_BUYS] = 1.0f;
-        // Can play Treasure cards from hand (free)
-        std::set<int8_t> unique_hand(player.hand.begin(), player.hand.end());
-        for (auto cid : unique_hand) {
-            if (CARD_DEFS[cid].is_treasure())
-                out[DOM_PLAY_OFFSET + cid] = 1.0f;
-        }
+        // Treasures auto-played on phase transition — buy phase is purely "what to buy?"
         // Can buy cards if buys remaining
         if (s.buys_remaining > 0) {
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
@@ -690,6 +752,23 @@ std::unique_ptr<GameState> DominionGame::get_next_state(const GameState& state_b
         resolve_pending(s, action);
     } else if (action == DOM_END_ACTIONS) {
         s.phase = DOM_PHASE_BUY;
+        // Auto-play all treasures from hand
+        auto& ap = s.players[s.current_player_];
+        for (int i = (int)ap.hand.size() - 1; i >= 0; i--) {
+            int8_t cid = ap.hand[i];
+            if (CARD_DEFS[cid].is_treasure()) {
+                ap.hand.erase(ap.hand.begin() + i);
+                ap.in_play.push_back(cid);
+                s.coins += CARD_DEFS[cid].coins;
+                if (cid == CARD_SILVER && !s.merchant_silver_triggered) {
+                    s.coins += s.merchant_silver_bonus;
+                    s.merchant_silver_triggered = true;
+                }
+            }
+        }
+        // Track purchasing power at buy phase entry
+        s.total_coins_at_buy[s.current_player_] += s.coins;
+        s.buy_phase_entries[s.current_player_]++;
     } else if (action == DOM_END_BUYS) {
         do_cleanup(s);
     } else if (action >= DOM_PLAY_OFFSET && action < DOM_BUY_OFFSET) {
@@ -1028,6 +1107,7 @@ void DominionGame::resolve_attack(DominionState& s, int8_t card_id, int opp_idx,
         if (s.supply[CARD_CURSE] > 0) {
             s.supply[CARD_CURSE]--;
             opp.discard.push_back(CARD_CURSE);
+            s.curse_buys[opp_idx]++;  // Track curses gained (from Witch)
         }
         break;
 
@@ -1120,7 +1200,11 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
 
     case DOM_PEND_GAIN:
     case DOM_PEND_REMODEL_GAIN:
-        if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
+        if (action == DOM_DONE_SELECTING) {
+            // No qualifying cards in supply — gain fizzles
+            s.pending = DomPending{};
+            s.phase = DOM_PHASE_ACTION;
+        } else if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
             int8_t card_id = static_cast<int8_t>(action - DOM_GAIN_OFFSET);
             s.supply[card_id]--;
             player.discard.push_back(card_id);
@@ -1131,7 +1215,10 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
         break;
 
     case DOM_PEND_MINE_GAIN:
-        if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
+        if (action == DOM_DONE_SELECTING) {
+            s.pending = DomPending{};
+            s.phase = DOM_PHASE_ACTION;
+        } else if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
             int8_t card_id = static_cast<int8_t>(action - DOM_GAIN_OFFSET);
             s.supply[card_id]--;
             player.hand.push_back(card_id);  // Mine gains to hand
@@ -1142,7 +1229,11 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
         break;
 
     case DOM_PEND_ARTISAN_GAIN:
-        if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
+        if (action == DOM_DONE_SELECTING) {
+            // No qualifying cards — skip gain AND topdeck
+            s.pending = DomPending{};
+            s.phase = DOM_PHASE_ACTION;
+        } else if (action >= DOM_GAIN_OFFSET && action < DOM_REVEAL_MOAT) {
             int8_t card_id = static_cast<int8_t>(action - DOM_GAIN_OFFSET);
             s.supply[card_id]--;
             player.hand.push_back(card_id);  // Artisan gains to hand
@@ -1413,7 +1504,12 @@ void DominionGame::buy_card(DominionState& s, int8_t card_id) const {
     // Track buys
     s.total_buys[p]++;
     if (card_id == CARD_PROVINCE) s.province_buys[p]++;
+    if (card_id == CARD_DUCHY) s.duchy_buys[p]++;
+    if (card_id == CARD_ESTATE) s.estate_buys[p]++;
+    if (card_id == CARD_COPPER) s.copper_buys[p]++;
     if (card_id == CARD_SILVER || card_id == CARD_GOLD) s.treasure_buys[p]++;
+    if (CARD_DEFS[card_id].is_action()) s.action_buys[p]++;
+    if (card_id == CARD_CURSE) s.curse_buys[p]++;
 
     check_game_end(s);
 }
@@ -1487,8 +1583,9 @@ float DominionGame::get_reward(const GameState& state_base, int player) const {
     int vp1 = compute_vp(s, 1);
     int margin = (player == 0) ? (vp0 - vp1) : (vp1 - vp0);
 
-    // Score-margin reward: /30 for good gradient
-    float scaled = margin / 30.0f;
+    // Score-margin reward: /5 for stronger gradient during early training
+    // (typical margins are 1-3 VP at current training stage, /30 was too weak)
+    float scaled = margin / 5.0f;
     return std::max(-1.0f, std::min(1.0f, scaled));
 }
 

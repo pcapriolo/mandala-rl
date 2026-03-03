@@ -9,7 +9,7 @@ PYBIND11_MODULE(mcts_cpp, m) {
     m.doc() = "C++ MCTS engine for Mandala, Lost Cities, and Dominion";
 
     py::class_<BatchedMCTS>(m, "BatchedMCTS")
-        .def(py::init<const std::string&, int, int, double, double, double, double, int, int>(),
+        .def(py::init<const std::string&, int, int, double, double, double, double, int, int, double, double, double>(),
              py::arg("game_type"),
              py::arg("seed"),
              py::arg("num_simulations") = 800,
@@ -18,7 +18,10 @@ PYBIND11_MODULE(mcts_cpp, m) {
              py::arg("dirichlet_epsilon") = 0.25,
              py::arg("temperature") = 1.0,
              py::arg("temperature_threshold") = 30,
-             py::arg("leaves_per_game") = 1)
+             py::arg("leaves_per_game") = 1,
+             py::arg("action_explore_boost") = 0.0,
+             py::arg("action_buy_force_rate") = 0.0,
+             py::arg("action_play_force_rate") = 0.0)
         .def("init_games", &BatchedMCTS::init_games)
         .def("begin_move", &BatchedMCTS::begin_move)
         .def("set_root_policies", &BatchedMCTS::set_root_policies)

@@ -8,7 +8,7 @@
 // --- Constants ---
 static constexpr int DOM_NUM_CARD_TYPES = 31;  // IDs 0-30
 static constexpr int DOM_NUM_ACTIONS = 131;
-static constexpr int DOM_TENSOR_CHANNELS = 151;
+static constexpr int DOM_TENSOR_CHANNELS = 156;
 
 // Action offsets
 static constexpr int DOM_END_ACTIONS = 0;
@@ -232,9 +232,16 @@ public:
     // Behavioral tracking for game quality assessment
     int16_t total_buys[2] = {};           // Total cards bought per player
     int16_t province_buys[2] = {};        // Province buys per player
-    int16_t treasure_buys[2] = {};        // Treasure buys per player (Silver/Gold)
+    int16_t duchy_buys[2] = {};           // Duchy buys per player
+    int16_t estate_buys[2] = {};          // Estate buys per player
+    int16_t copper_buys[2] = {};          // Copper buys per player
+    int16_t treasure_buys[2] = {};        // Silver/Gold buys per player
+    int16_t action_buys[2] = {};          // Action cards bought per player
+    int16_t curse_buys[2] = {};           // Curses gained (from Witch etc.) per player
     int16_t action_plays[2] = {};         // Action cards played per player
     int16_t total_moves[2] = {};          // Total decisions made per player
+    int16_t total_coins_at_buy[2] = {};   // Cumulative coins at buy phase entry
+    int16_t buy_phase_entries[2] = {};    // Count of buy phases (for averaging)
 
     // Override GameState
     int current_player() const override { return current_player_; }

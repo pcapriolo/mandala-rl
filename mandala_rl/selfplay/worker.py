@@ -47,7 +47,10 @@ class SelfPlayWorker:
         dirichlet_alpha: float = 0.3,
         dirichlet_epsilon: float = 0.25,
         device: str = "mps",
-        leaves_per_game: int = 1
+        leaves_per_game: int = 1,
+        action_explore_boost: float = 0.0,
+        action_buy_force_rate: float = 0.0,
+        action_play_force_rate: float = 0.0
     ):
         self.game = game
         self.network = network.to(device)
@@ -60,6 +63,9 @@ class SelfPlayWorker:
         self.dirichlet_epsilon = dirichlet_epsilon
         self.device = device
         self.leaves_per_game = leaves_per_game
+        self.action_explore_boost = action_explore_boost
+        self.action_buy_force_rate = action_buy_force_rate
+        self.action_play_force_rate = action_play_force_rate
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -130,6 +136,9 @@ class SelfPlayWorker:
             temperature=self.temperature,
             temperature_threshold=self.temperature_threshold,
             leaves_per_game=self.leaves_per_game,
+            action_explore_boost=self.action_explore_boost,
+            action_buy_force_rate=self.action_buy_force_rate,
+            action_play_force_rate=self.action_play_force_rate,
         )
         mgr.init_games(num_games)
 
@@ -185,6 +194,150 @@ class SelfPlayWorker:
                     on_game_complete(idx, record)
 
         return completed
+
+    def play_games_vs_opponent(self, num_games: int, opponent_network,
+                                batch_size: int = 8,
+                                save_dir: Optional[Path] = None,
+                                iteration: int = 0,
+                                save_replay_freq: int = 10,
+                                on_game_complete=None) -> List[SelfPlayGame]:
+        """Play games with current network vs an opponent network.
+
+        Game layout: even game_idx → current=P0, odd → current=P1.
+        Both players' positions are recorded for training (value targets are
+        always correct; diverse policy targets aid exploration).
+        """
+        mgr = mcts_cpp.BatchedMCTS(
+            game_type=self._game_type,
+            seed=int(np.random.randint(0, 2**31)),
+            num_simulations=self.mcts_simulations,
+            c_puct=self.c_puct,
+            dirichlet_alpha=self.dirichlet_alpha,
+            dirichlet_epsilon=self.dirichlet_epsilon,
+            temperature=self.temperature,
+            temperature_threshold=self.temperature_threshold,
+            leaves_per_game=self.leaves_per_game,
+            action_explore_boost=self.action_explore_boost,
+            action_buy_force_rate=self.action_buy_force_rate,
+            action_play_force_rate=self.action_play_force_rate,
+        )
+        mgr.init_games(num_games)
+
+        self.network.eval()
+        opponent_network.eval()
+        models = [self.network, opponent_network]
+        completed = []
+
+        while not mgr.all_done():
+            root_tensors = mgr.begin_move()
+            if len(root_tensors) == 0:
+                break
+
+            active_players = mgr.get_active_players()
+            active_indices = mgr.get_active_game_indices()
+            model_map = self._build_two_model_map(active_indices, active_players)
+
+            policies = self._eval_two_models(
+                root_tensors, model_map, models, policy_only=True
+            )
+            mgr.set_root_policies(policies)
+
+            # Build game_idx → model_index lookup for leaf routing
+            game_to_model = {}
+            for batch_pos, game_idx in enumerate(active_indices):
+                game_to_model[game_idx] = model_map[batch_pos]
+
+            sim_steps = max(1, self.mcts_simulations // self.leaves_per_game)
+            for _ in range(sim_steps):
+                leaf_tensors = mgr.simulate_step()
+                if len(leaf_tensors) == 0:
+                    continue
+                pending = mgr.get_pending_game_indices()
+                leaf_model_map = [game_to_model[gi] for gi in pending]
+                pols, vals = self._eval_two_models(
+                    leaf_tensors, leaf_model_map, models, policy_only=False
+                )
+                mgr.apply_nn_results(pols, vals)
+
+            done_indices = mgr.finish_move()
+            for idx in done_indices:
+                game_data = mgr.get_game_data(idx)
+                record = SelfPlayGame()
+                record.states = [np.array(s) for s in game_data[0]]
+                record.policies = [np.array(p) for p in game_data[1]]
+                record.current_players = [int(p) for p in game_data[2]]
+                record.outcome = float(game_data[3])
+                record.score_p0 = int(game_data[4])
+                record.score_p1 = int(game_data[5])
+                if len(game_data) > 6:
+                    record.belief_labels = [np.array(b, dtype=np.float32) for b in game_data[6]]
+                record.summary = dict(mgr.get_game_summary(idx))
+                completed.append(record)
+
+                game_num = len(completed)
+                if save_dir and save_replay_freq > 0 and game_num % save_replay_freq == 0:
+                    self._save_replay(save_dir, record, iteration)
+
+                if on_game_complete:
+                    on_game_complete(idx, record)
+
+        return completed
+
+    @staticmethod
+    def _build_two_model_map(active_indices, active_players):
+        """Map each active game to model index: 0=current, 1=opponent.
+
+        Even game_idx → current is P0, odd → current is P1.
+        """
+        model_map = []
+        for game_idx, player in zip(active_indices, active_players):
+            current_is_p0 = (game_idx % 2 == 0)
+            if current_is_p0:
+                model_map.append(0 if player == 0 else 1)
+            else:
+                model_map.append(1 if player == 0 else 0)
+        return model_map
+
+    def _eval_two_models(self, tensors, model_map, models, policy_only=False):
+        """Group tensors by model, evaluate each batch, recombine in original order."""
+        n = len(tensors)
+        if n == 0:
+            if policy_only:
+                return np.zeros((0, 0), dtype=np.float32)
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0, dtype=np.float32)
+
+        stacked = np.stack(tensors)
+
+        groups = {}
+        for i, m_idx in enumerate(model_map):
+            groups.setdefault(m_idx, []).append(i)
+
+        all_policies = None
+        all_values = np.empty(n, dtype=np.float32) if not policy_only else None
+
+        for m_idx, indices in groups.items():
+            batch = torch.from_numpy(stacked[indices]).to(self.device)
+            with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
+                logits, vals, *_ = models[m_idx](batch)
+                pols = F.softmax(logits, dim=1).cpu().numpy()
+                vals_np = vals.cpu().numpy()[:, 0] if not policy_only else None
+
+            if all_policies is None:
+                all_policies = np.empty((n, pols.shape[1]), dtype=np.float32)
+
+            for out_i, src_i in enumerate(indices):
+                all_policies[src_i] = pols[out_i]
+                if all_values is not None:
+                    all_values[src_i] = vals_np[out_i]
+
+        if all_policies is None:
+            if policy_only:
+                return np.zeros((0, 0), dtype=np.float32)
+            return np.zeros((0, 0), dtype=np.float32), np.zeros(0, dtype=np.float32)
+
+        if policy_only:
+            return all_policies
+        return all_policies, all_values
 
     @staticmethod
     def _save_replay(save_dir: Path, game: 'SelfPlayGame', iteration: int):

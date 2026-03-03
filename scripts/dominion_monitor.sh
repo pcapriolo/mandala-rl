@@ -23,8 +23,8 @@ KEY="$HOME/.ssh/id_ed25519"
 SSH_PORT=26242
 SSH="ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -p $SSH_PORT"
 TRAIN_DIR="/root/mandala-dom"
-DATA_DIR="/workspace/dominion_data"
-CONFIG="/tmp/dominion_runpod.yaml"
+DATA_DIR="/root/mandala-dom/data/dominion"
+CONFIG="/root/mandala-dom/configs/dominion.yaml"
 LOCAL_LOG="$HOME/GG/mandala-rl/data/dominion/monitor.jsonl"
 
 mkdir -p "$(dirname "$LOCAL_LOG")"
@@ -40,12 +40,16 @@ if ! $SSH "$REMOTE" "echo ok" >/dev/null 2>&1; then
     exit 1
 fi
 
-# 2. Check if training process is running
+# 2. Read training plan (shared coordination file — all Monk sessions must respect this)
+training_plan=$($SSH "$REMOTE" "cat $TRAIN_DIR/TRAINING_PLAN.md 2>/dev/null" || echo "")
+if echo "$training_plan" | grep -q "LET IT COOK"; then
+    echo "  Plan: LET IT COOK (no interventions, monitor-only mode)"
+fi
+
+# 3. Check if training process is running
 train_pid=$($SSH "$REMOTE" "pgrep -f 'train.py.*dominion' | head -1" 2>/dev/null)
 if [ -z "$train_pid" ]; then
     echo "WARNING: Training process not running. Attempting restart..."
-    # Ensure config exists
-    $SSH "$REMOTE" "test -f $CONFIG || (cd $TRAIN_DIR && sed 's|data/dominion|/workspace/dominion_data|g' configs/dominion.yaml > $CONFIG)" 2>/dev/null
     $SSH "$REMOTE" "cd $TRAIN_DIR && nohup python3 scripts/train.py --config $CONFIG --game dominion > /tmp/dominion_train.log 2>&1 &" 2>/dev/null
     sleep 5
     train_pid=$($SSH "$REMOTE" "pgrep -f 'train.py.*dominion' | head -1" 2>/dev/null)
@@ -62,10 +66,10 @@ fi
 # 3. Pull all metrics in a single SSH session using unique delimiters
 metrics=$($SSH "$REMOTE" 'bash -s' << 'CMDS'
 echo "<<<HEARTBEAT>>>"
-cat /workspace/dominion_data/heartbeat.json 2>/dev/null || echo "{}"
+cat /root/mandala-dom/data/dominion/heartbeat.json 2>/dev/null || echo "{}"
 echo ""
 echo "<<<LOSSES>>>"
-tail -5 /workspace/dominion_data/losses.jsonl 2>/dev/null || echo ""
+tail -5 /root/mandala-dom/data/dominion/losses.jsonl 2>/dev/null || echo ""
 echo ""
 echo "<<<DISK>>>"
 df -h /workspace | tail -1

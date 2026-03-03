@@ -2,7 +2,7 @@
 
 # Network Architecture
 network:
-  input_channels: 151
+  input_channels: 156
   num_actions: 131  # 3 phase-end + 31*4 card actions + MOAT/DECLINE/ACCEPT/DECLINE
   num_res_blocks: 10
   channels: 128
@@ -13,14 +13,18 @@ mcts:
   c_puct: 1.0
   dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
   dirichlet_epsilon: 0.25
+  action_explore_boost: 1.0  # Disabled — root-only boost wastes simulations without enabling action play
+  action_buy_force_rate: 0.0  # Disabled — crowded out Silver/Gold buys causing province collapse (DEVLOG #64)
+  action_play_force_rate: 0.0  # Disabled — forcing exhausted, no province recovery (DEVLOG #65)
 
 # Self-Play Parameters
 selfplay:
   games_per_iteration: 100
-  parallel_games: 64
-  leaves_per_game: 4
+  parallel_games: 256
+  leaves_per_game: 8
   temperature: 1.0
   temperature_threshold: 40  # Higher — Dominion games are longer than Mandala/LC
+  opponent_diversity_ratio: 0.2  # 20% of full-sim games use older checkpoint as opponent
 
 # Training Parameters
 training:

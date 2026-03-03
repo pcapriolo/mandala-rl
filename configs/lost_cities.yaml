@@ -10,7 +10,7 @@ network:
 # MCTS Parameters
 mcts:
   num_simulations: 400  # 400 sims plenty for 96-action space; CPU MCTS is bottleneck
-  c_puct: 1.25           # Enough exploration to generate expedition plays before policy collapses
+  c_puct: 1.0            # Trust improving policy more, explore less
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25 # Reduced from 0.35 — less noise, more signal
 
@@ -24,12 +24,12 @@ selfplay:
 
 # Training Parameters
 training:
-  num_iterations: 1000
+  num_iterations: 2000
   batch_size: 256
   epochs_per_iteration: 1
   learning_rate: 0.001
   weight_decay: 0.0001
-  lr_milestones: [150, 400, 800]  # Extended from [50, 150, 300] — more budget at high LR
+  lr_milestones: [400, 1500, 2200]  # Warm restart: LR jumps from 0.000027 → 0.0003 at resume
   lr_gamma: 0.3
   replay_buffer_size: 100000  # 100K — buffer no longer saved in checkpoint, rebuilds from self-play
   checkpoint_frequency: 1

@@ -69,6 +69,17 @@ except Exception as e:
     print(f"  Telegram poll error: {e}")
 TGEOF
 
+# --- Sync fresh data from RunPod (non-fatal if unavailable) ---
+echo "  Syncing data from RunPod..."
+mkdir -p "$REPO_DIR/data/dominion"
+scp -q -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 -P 26242 \
+    root@38.147.83.30:/root/mandala-dom/data/dominion/losses.jsonl \
+    "$REPO_DIR/data/dominion/losses.jsonl" 2>/dev/null \
+    && echo "  losses.jsonl synced" || echo "  WARNING: RunPod sync failed (pod may be restarting)"
+scp -q -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 -P 26242 \
+    root@38.147.83.30:/root/mandala-dom/data/dominion/monitor.jsonl \
+    "$REPO_DIR/data/dominion/monitor.jsonl" 2>/dev/null || true
+
 # --- Collect raw data ---
 
 RECENT_LOSSES=""

@@ -11,11 +11,16 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          int num_simulations, double c_puct,
                          double dirichlet_alpha, double dirichlet_epsilon,
                          double temperature, int temperature_threshold,
-                         int leaves_per_game)
-    : num_simulations_(num_simulations), c_puct_(c_puct),
+                         int leaves_per_game,
+                         double action_explore_boost,
+                         double action_buy_force_rate,
+                         double action_play_force_rate)
+    : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
-      leaves_per_game_(leaves_per_game), rng_(seed)
+      leaves_per_game_(leaves_per_game), action_explore_boost_(action_explore_boost),
+      action_buy_force_rate_(action_buy_force_rate),
+      action_play_force_rate_(action_play_force_rate), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -23,7 +28,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         game_ = std::make_unique<LostCitiesGame>();
     } else if (game_type == "dominion") {
         game_ = std::make_unique<DominionGame>();
-        max_moves_ = 500;  // Dominion: ~100-300 moves typical, cap degenerate games
+        max_moves_ = 200;  // With auto-play treasures, turns are ~2-4 moves; 200 >> enough
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
@@ -120,6 +125,28 @@ void BatchedMCTS::set_root_policies(py::array_t<float> policies) {
             policy[a] = pol(j, a);
         }
 
+        // Boost PLAY action priors in Dominion ACTION phase
+        if (action_explore_boost_ > 0.0 && game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_ACTION && ds->actions_remaining > 0) {
+                // Multiply PLAY action priors by boost factor, then renormalize
+                bool any_boosted = false;
+                for (int a = DOM_PLAY_OFFSET; a < DOM_BUY_OFFSET; a++) {
+                    if (policy[a] > 0.0f) {
+                        policy[a] *= static_cast<float>(action_explore_boost_);
+                        any_boosted = true;
+                    }
+                }
+                if (any_boosted) {
+                    float sum = 0.0f;
+                    for (int a = 0; a < num_actions; a++) sum += policy[a];
+                    if (sum > 0.0f) {
+                        for (int a = 0; a < num_actions; a++) policy[a] /= sum;
+                    }
+                }
+            }
+        }
+
         // Add Dirichlet noise for exploration
         add_dirichlet_noise(policy);
 
@@ -148,8 +175,10 @@ py::list BatchedMCTS::simulate_step() {
             MCTSNode* node = g.root.get();
             auto state = g.state->copy();
             game_->randomize_hidden(*state, rng_);
+            int sim_depth = 0;
 
-            while (!node->is_leaf() && !game_->is_terminal(*state)) {
+            while (!node->is_leaf() && !game_->is_terminal(*state) && sim_depth < 100) {
+                sim_depth++;
                 std::vector<float> valid;
                 game_->get_valid_moves(*state, valid);
 
@@ -237,7 +266,24 @@ std::vector<int> BatchedMCTS::finish_move() {
         double temp = (g.move_count < temperature_threshold_) ? temperature_ : 0.0;
         std::vector<float> action_probs(num_actions, 0.0f);
 
-        if (temp == 0.0) {
+        // Check if we have any visits at all
+        float total_visits = 0.0f;
+        for (int a = 0; a < num_actions; a++) total_visits += visit_counts[a];
+
+        if (total_visits == 0.0f) {
+            // No children were expanded (zero valid moves seen by MCTS).
+            // Fall back to uniform over valid moves to avoid hang.
+            std::vector<float> valid;
+            game_->get_valid_moves(*g.state, valid);
+            float vsum = 0.0f;
+            for (int a = 0; a < num_actions; a++) vsum += valid[a];
+            if (vsum > 0.0f) {
+                for (int a = 0; a < num_actions; a++) action_probs[a] = valid[a] / vsum;
+            } else {
+                // Truly no valid moves — force END_ACTIONS to advance game
+                action_probs[0] = 1.0f;
+            }
+        } else if (temp == 0.0) {
             int best = static_cast<int>(std::max_element(visit_counts.begin(),
                                                           visit_counts.end()) - visit_counts.begin());
             action_probs[best] = 1.0f;
@@ -249,6 +295,56 @@ std::vector<int> BatchedMCTS::finish_move() {
             }
             if (sum > 0.0f) {
                 for (int a = 0; a < num_actions; a++) action_probs[a] /= sum;
+            }
+        }
+
+        // Force play action cards in Dominion ACTION phase (epsilon-greedy exploration)
+        if (action_play_force_rate_ > 0.0 && game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_ACTION && ds->actions_remaining > 0) {
+                std::vector<float> valid;
+                game_->get_valid_moves(*g.state, valid);
+                std::vector<int> playable_actions;
+                for (int a = DOM_PLAY_OFFSET; a < DOM_BUY_OFFSET; a++) {
+                    if (a < static_cast<int>(valid.size()) && valid[a] > 0.0f) {
+                        playable_actions.push_back(a);
+                    }
+                }
+                if (!playable_actions.empty()) {
+                    std::uniform_real_distribution<float> coin(0.0f, 1.0f);
+                    if (coin(rng_) < static_cast<float>(action_play_force_rate_)) {
+                        std::fill(action_probs.begin(), action_probs.end(), 0.0f);
+                        for (int a : playable_actions) {
+                            action_probs[a] = 1.0f / playable_actions.size();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Force buy action cards in Dominion BUY phase (epsilon-greedy exploration)
+        if (action_buy_force_rate_ > 0.0 && game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_BUY && !ds->pending.active()) {
+                // Collect affordable kingdom action cards in supply
+                std::vector<int> buyable_actions;
+                for (int k = 0; k < ds->num_kingdom; k++) {
+                    int8_t cid = ds->kingdom_cards[k];
+                    if (CARD_DEFS[cid].is_action() && ds->supply[cid] > 0
+                        && CARD_DEFS[cid].cost <= ds->coins) {
+                        buyable_actions.push_back(DOM_BUY_OFFSET + cid);
+                    }
+                }
+                if (!buyable_actions.empty()) {
+                    std::uniform_real_distribution<float> coin(0.0f, 1.0f);
+                    if (coin(rng_) < static_cast<float>(action_buy_force_rate_)) {
+                        // Override action_probs to uniform over buyable action cards
+                        std::fill(action_probs.begin(), action_probs.end(), 0.0f);
+                        for (int a : buyable_actions) {
+                            action_probs[a] = 1.0f / buyable_actions.size();
+                        }
+                    }
+                }
             }
         }
 
@@ -287,13 +383,21 @@ std::vector<int> BatchedMCTS::finish_move() {
 
         // Check terminal or max moves exceeded (safety cap for long games)
         bool terminal = game_->is_terminal(*g.state);
+        bool move_cap_hit = false;
         if (!terminal && max_moves_ > 0 && g.move_count >= max_moves_) {
-            terminal = true;  // Force end — score by current VP
+            terminal = true;
+            move_cap_hit = true;
         }
         if (terminal) {
-            g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
             g.score_p0 = game_->get_score(*g.state, 0);
             g.score_p1 = game_->get_score(*g.state, 1);
+            if (move_cap_hit) {
+                // get_reward guards on game_over flag; bypass it and score by VP margin
+                float margin = static_cast<float>(g.score_p0 - g.score_p1);
+                g.outcome = std::max(-1.0f, std::min(1.0f, margin / 5.0f));
+            } else {
+                g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
+            }
             g.finished = true;
             completed.push_back(idx);
         }
@@ -422,9 +526,16 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
         summary["turn_number"] = static_cast<int>(ds->turn_number);
         summary["total_buys"] = py::make_tuple(ds->total_buys[0], ds->total_buys[1]);
         summary["province_buys"] = py::make_tuple(ds->province_buys[0], ds->province_buys[1]);
+        summary["duchy_buys"] = py::make_tuple(ds->duchy_buys[0], ds->duchy_buys[1]);
+        summary["estate_buys"] = py::make_tuple(ds->estate_buys[0], ds->estate_buys[1]);
+        summary["copper_buys"] = py::make_tuple(ds->copper_buys[0], ds->copper_buys[1]);
         summary["treasure_buys"] = py::make_tuple(ds->treasure_buys[0], ds->treasure_buys[1]);
+        summary["action_buys"] = py::make_tuple(ds->action_buys[0], ds->action_buys[1]);
+        summary["curse_buys"] = py::make_tuple(ds->curse_buys[0], ds->curse_buys[1]);
         summary["action_plays"] = py::make_tuple(ds->action_plays[0], ds->action_plays[1]);
         summary["total_moves"] = py::make_tuple(ds->total_moves[0], ds->total_moves[1]);
+        summary["total_coins_at_buy"] = py::make_tuple(ds->total_coins_at_buy[0], ds->total_coins_at_buy[1]);
+        summary["buy_phase_entries"] = py::make_tuple(ds->buy_phase_entries[0], ds->buy_phase_entries[1]);
     }
 
     return summary;

@@ -72,6 +72,9 @@ class Trainer:
             dirichlet_epsilon=config.get('dirichlet_epsilon', 0.25),
             device=device,
             leaves_per_game=config.get('leaves_per_game', 1),
+            action_explore_boost=config.get('action_explore_boost', 0.0),
+            action_buy_force_rate=config.get('action_buy_force_rate', 0.0),
+            action_play_force_rate=config.get('action_play_force_rate', 0.0),
         )
 
         # Optimizer
@@ -333,6 +336,31 @@ class Trainer:
             on_game_complete=on_game_complete,
         )
         all_games.extend(full_games)
+
+        # Phase 3: Opponent diversity games (older checkpoint as opponent)
+        n_opponent = 0
+        opp_ratio = self.config.get('opponent_diversity_ratio', 0.0)
+        if opp_ratio > 0 and self.iteration > 20:
+            n_opponent = max(1, int(n_full * opp_ratio))
+            opp_path = self._select_opponent_checkpoint()
+            if opp_path:
+                opp_network = self._load_opponent_network(opp_path)
+                if opp_network is not None:
+                    opp_iter = opp_path.stem.replace('model_iter_', '')
+                    tqdm.write(f"Playing {n_opponent} games vs iter_{opp_iter} opponent")
+                    opp_games = self.selfplay_worker.play_games_vs_opponent(
+                        num_games=n_opponent,
+                        opponent_network=opp_network,
+                        batch_size=parallel_games,
+                        save_dir=replay_dir,
+                        iteration=self.iteration,
+                        save_replay_freq=save_replay_freq,
+                        on_game_complete=on_game_complete,
+                    )
+                    full_games.extend(opp_games)
+                    all_games.extend(opp_games)
+                    del opp_network  # Free GPU memory
+
         progress.close()
 
         # Reset counter at end of iteration
@@ -341,6 +369,7 @@ class Trainer:
         self.writer.add_scalar('Training/TotalGames', self.total_games, self.iteration)
         self.writer.add_scalar('Training/FastGames', n_fast, self.iteration)
         self.writer.add_scalar('Training/FullGames', n_full, self.iteration)
+        self.writer.add_scalar('Training/OpponentGames', n_opponent, self.iteration)
 
         # Log quality from ALL games, but only return full-sim games for training
         self._all_games_for_quality = all_games
@@ -658,34 +687,60 @@ class Trainer:
         assessment = []
         warnings = []
 
-        avg_buys = sum(s['total_buys'][0] + s['total_buys'][1]
+        def avg_field(field):
+            return sum(s.get(field, (0,0))[0] + s.get(field, (0,0))[1]
                        for s in summaries) / (2 * n)
-        avg_provinces = sum(s['province_buys'][0] + s['province_buys'][1]
-                           for s in summaries) / (2 * n)
-        avg_treasures = sum(s['treasure_buys'][0] + s['treasure_buys'][1]
-                           for s in summaries) / (2 * n)
-        avg_actions = sum(s['action_plays'][0] + s['action_plays'][1]
-                         for s in summaries) / (2 * n)
+
+        avg_buys = avg_field('total_buys')
+        avg_provinces = avg_field('province_buys')
+        avg_duchies = avg_field('duchy_buys')
+        avg_estates = avg_field('estate_buys')
+        avg_copper = avg_field('copper_buys')
+        avg_treasures = avg_field('treasure_buys')  # Silver + Gold
+        avg_action_buys = avg_field('action_buys')
+        avg_curses = avg_field('curse_buys')
+        avg_actions = avg_field('action_plays')
         avg_turns = sum(s.get('turn_number', 0) for s in summaries) / n
+
+        # Realized purchasing power: avg coins when entering buy phase
+        total_coins = sum(s.get('total_coins_at_buy', (0,0))[0] + s.get('total_coins_at_buy', (0,0))[1]
+                         for s in summaries)
+        total_entries = sum(s.get('buy_phase_entries', (0,0))[0] + s.get('buy_phase_entries', (0,0))[1]
+                           for s in summaries)
+        avg_coins_at_buy = total_coins / max(1, total_entries)
 
         action_rate = avg_actions / max(1, avg_len) * 2  # per-player fraction
 
         self.writer.add_scalar('GameQuality/DOM_AvgBuys', avg_buys, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgProvinces', avg_provinces, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgDuchies', avg_duchies, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgEstates', avg_estates, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCopper', avg_copper, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgTreasures', avg_treasures, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgActionBuys', avg_action_buys, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCurses', avg_curses, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_ActionRate', action_rate, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgTurns', avg_turns, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCoinsAtBuy', avg_coins_at_buy, self.iteration)
 
         self._game_quality['avg_buys'] = round(avg_buys, 2)
         self._game_quality['avg_provinces'] = round(avg_provinces, 2)
+        self._game_quality['avg_duchies'] = round(avg_duchies, 2)
+        self._game_quality['avg_estates'] = round(avg_estates, 2)
+        self._game_quality['avg_copper'] = round(avg_copper, 2)
         self._game_quality['avg_treasures'] = round(avg_treasures, 2)
+        self._game_quality['avg_action_buys'] = round(avg_action_buys, 2)
+        self._game_quality['avg_curses'] = round(avg_curses, 2)
         self._game_quality['action_rate'] = round(action_rate, 3)
         self._game_quality['avg_turns'] = round(avg_turns, 1)
+        self._game_quality['avg_coins_at_buy'] = round(avg_coins_at_buy, 2)
 
         assessment.append(f"Dominion: {avg_buys:.1f} buys/player, "
-                          f"{avg_provinces:.1f} provinces, {avg_treasures:.1f} treasures, "
-                          f"{avg_actions:.1f} action plays")
-        assessment.append(f"  {avg_turns:.0f} turns, {action_rate:.0%} action play rate")
+                          f"{avg_provinces:.1f} prov, {avg_duchies:.1f} duchy, {avg_estates:.1f} estate, "
+                          f"{avg_copper:.1f} copper, {avg_treasures:.1f} silver/gold, "
+                          f"{avg_action_buys:.1f} action, {avg_curses:.1f} curse")
+        assessment.append(f"  {avg_turns:.0f} turns, {action_rate:.0%} action play rate, "
+                          f"${avg_coins_at_buy:.1f} avg purchasing power")
 
         if avg_provinces < 0.5 and avg_turns > 15:
             warnings.append("LOW PROVINCES: bot rarely buys provinces — no winning strategy")
@@ -699,6 +754,37 @@ class Trainer:
             warnings.append(f"{dominant} wins {max(p0w,p1w)/n:.0%} — severe player imbalance")
 
         return assessment, warnings
+
+    def _select_opponent_checkpoint(self):
+        """Select a random older checkpoint from recent 50% of history."""
+        checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
+        checkpoints = sorted(checkpoint_dir.glob('model_iter_*.pt'))
+        if len(checkpoints) < 2:
+            return None
+        # Recent 50% of history (exclude latest to avoid self-play duplicate)
+        half = max(1, len(checkpoints) // 2)
+        candidates = checkpoints[half:-1] if len(checkpoints) > 2 else checkpoints[:-1]
+        if not candidates:
+            return None
+        return candidates[np.random.randint(len(candidates))]
+
+    def _load_opponent_network(self, path):
+        """Load a checkpoint into a fresh MandalaNet for use as opponent."""
+        try:
+            net_cfg = self.config.get('network', {})
+            opponent = MandalaNet(
+                input_channels=net_cfg.get('input_channels', self.config.get('input_channels', 50)),
+                num_actions=net_cfg.get('num_actions', self.config.get('num_actions', 30)),
+                num_res_blocks=net_cfg.get('num_res_blocks', self.config.get('num_res_blocks', 10)),
+                channels=net_cfg.get('channels', self.config.get('channels', 128)),
+            ).to(self.device)
+            data = torch.load(path, map_location=self.device, weights_only=False)
+            opponent.load_state_dict(data['model_state_dict'])
+            opponent.eval()
+            return opponent
+        except Exception as e:
+            print(f"Warning: Failed to load opponent {path}: {e}")
+            return None
 
     def _save_checkpoint(self, suffix=''):
         """Save network checkpoint and replay buffer.

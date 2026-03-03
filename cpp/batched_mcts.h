@@ -15,7 +15,10 @@ public:
                 int num_simulations = 800, double c_puct = 1.0,
                 double dirichlet_alpha = 0.3, double dirichlet_epsilon = 0.25,
                 double temperature = 1.0, int temperature_threshold = 30,
-                int leaves_per_game = 1);
+                int leaves_per_game = 1,
+                double action_explore_boost = 0.0,
+                double action_buy_force_rate = 0.0,
+                double action_play_force_rate = 0.0);
 
     void init_games(int num_games);
 
@@ -59,6 +62,7 @@ private:
     };
 
     std::unique_ptr<IGame> game_;
+    std::string game_type_;
     int num_simulations_;
     double c_puct_;
     double dirichlet_alpha_;
@@ -66,6 +70,9 @@ private:
     double temperature_;
     int temperature_threshold_;
     int leaves_per_game_;
+    double action_explore_boost_;
+    double action_buy_force_rate_;
+    double action_play_force_rate_;
     std::mt19937 rng_;
 
     int max_moves_ = 0;  // 0 = no limit

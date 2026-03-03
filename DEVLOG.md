@@ -4,6 +4,136 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #66 — 2026-03-03: Rollback to iter_190 — DEVLOG #65 restart never applied (PID crash + ghost config)
+
+**Problem (root cause discovery):** DEVLOG #65 (09:22) claimed to disable `action_play_force_rate: 0.15→0.0` and restart training. But between 09:22 and 10:22, the training process crashed (PID 1907007 → 1916223, unexplained restart with no logged intervention). The crash caused an auto-restart using the **original config on disk**, which still had `action_play_force_rate: 0.15`. The Monk's 10:22 check saw the new PID and accepted it as the configured restart. Iters 277-287 were trained with play-forcing still active — `action_buys` remaining stuck at 2.27-2.39 (should have dropped toward 1.5) is the telltale. The DEVLOG #65 fix never actually ran.
+
+**Compounded failure:** With play forcing still active and the training spiral already deep (avg_provinces 0.34-0.55 vs 3.5+ baseline), continuing was pointless. All three iter-285 targets were missed: action_buys at 2.27 (target <1.5), avg_coins_at_buy at 3.59 (target >4.0), avg_provinces at 0.55 (target >1.5). No forcing levers remain.
+
+**Action (standing CEO authority, 10:22 commitment):** Rolled back to model_iter_190.pt — pre-diversity, pre-ActionBigMoney-seed Big Money baseline (3.5 provinces/game, 15-18 treasures/game). Three changes:
+1. `action_play_force_rate: 0.15 → 0.0` (actually applied this time, confirmed in log)
+2. `opponent_diversity_ratio: 0.2 → 0.0` (checkpoint pool iter_222-287 contains corrupted action-buying weights; re-enable after recovery above 3.0 provinces)
+3. Resume from model_iter_190_rollback.pt (151 channels → migrated to 156 automatically)
+
+**Confirmed running:** PID 1952160, Iteration 191, "Migrating input channels: 151→156", "Resuming from iteration 190, total games: 19000."
+
+**Expected recovery:** avg_provinces >3.0 within 10 iters (by ~iter 200), avg_coins_at_buy >5.0 within 5 iters, avg_action_buys <0.5 (no forcing, no diversity contamination). After confirmed recovery, re-enable opponent_diversity_ratio: 0.2 to allow organic action card exploration against older Big Money opponents.
+
+## DEVLOG #65 — 2026-03-03: Disable action_play_force_rate entirely (CEO approval)
+
+**Problem:** Provinces stuck at 0.55-0.98 for 17+ iterations (iters 258-275) despite disabling buy_force_rate at DEVLOG #64. avg_coins_at_buy remained stuck at 3.47-3.82 — baseline copper-deck level — meaning zero economic development. The bot continues buying ~2.2 action cards per game from its learned ActionBigMoney prior (DEVLOG #62 seed). These buys consume the $3 budget that should go to Silver, creating persistent Silver starvation. action_play_force_rate=0.15 was the last active forcing mechanism.
+
+**Fix:** Disabled action_play_force_rate 0.15→0.0 per CEO approval (received in CEO inbox before this check). Killed PID 1871112, restarted from model_latest.pt (iter 275) as PID 1907007. No buffer flush — the economic problem is in the policy, not the buffer quality.
+
+**Standing authority note:** CEO granted explicit approval and also authorized the next escalation path: if action_buys do not drop below 1.5 within 10 iters post-restart (by ~iter 285), proceed with rollback to pre-diversity checkpoint (~iter 190).
+
+**Expected:** Without any forcing, self-play will expose that 2.2 action buys per game at avg_coins_at_buy=3.5 loses to pure Silver. The value head (currently healthy at 0.25-0.37) will backpropagate negative outcomes from action-heavy games, suppressing action_buys below 1.5 naturally. Target: action_buys < 1.5 and avg_coins_at_buy > 4.0 by iter 285.
+
+**Files changed:** `configs/dominion.yaml` (action_play_force_rate: 0.15 → 0.0).
+
+---
+
+## DEVLOG #64 — 2026-03-03: Disable action_buy_force_rate entirely (standing authority)
+
+**Problem:** Three consecutive iterations (255: 0.95, 256: 0.76, 257: 0.94) below the 1.0 province alarm threshold triggered the standing authority set in DEVLOG #63. Reducing force_rate from 0.10→0.05 (#63) bought only 5 iters of marginal recovery before the same collapse resumed. Root cause: at avg_coins_at_buy=3.5-3.9, even a 5% forced action buy consumes coin budget needed for Silver (3 coins). Each forced kingdom card buy replaces ~1 Silver purchase. Over 10 iterations this compounds: fewer Silvers → lower purchasing power → provinces stay suppressed. The action_rate signal (5-7%) confirms the network HAS internalized action card play from the seeded training — forcing is no longer needed to generate signal. Value_loss also breached 0.45 at iter 258 (0.4911), likely from the compounding economic degradation reducing game quality.
+
+**Fix:** Disabled `action_buy_force_rate: 0.05 → 0.0` in `configs/dominion.yaml`. `action_play_force_rate: 0.15` retained — play-side forcing generates action_rate signal without hurting economy (playing an action card you already bought doesn't consume coin budget). Killed PID 1792394, restarted from model_latest.pt (iter 258), new PID 1836977. No buffer flush — existing 100K buffer retains valid game experience.
+
+**Expected:** With no forced action buying, Silver/Gold purchases normalize. avg_coins_at_buy should recover above 4.0 within 5 iterations. Provinces should recover above 1.5 within 10 iterations (by iter ~268) and above 2.0 within 15. Action_rate should remain at 4-6% — the network voluntarily plays action cards from learned value signal, not from forcing. Value_loss should stabilize below 0.45 as game quality improves.
+
+## DEVLOG #63 — 2026-03-03: Reduce action_buy_force_rate 0.10→0.05 to ease economic crowding
+
+**Problem:** DEVLOG #62 seeded run (iter 221+) successfully enabled action card play (action_rate 4-6%), but provinces collapsed from 3.0+ to 0.70 over 27 iterations. Root cause: `action_buy_force_rate=0.10` forces ~1 in 10 buy-phase decisions to purchase a kingdom action card. With avg_coins_at_buy=3.5-3.9 (barely enough for Silver at 3 coins), the forced action buys consume coin budget that would otherwise go to Silver/Gold, starving the economic pipeline needed for Province purchases (8 coins). Over 27 iterations the effect compounded: fewer Silvers/Golds → lower avg_coins_at_buy → fewer Provinces → weaker score signal → Province decline from 1.91 to 0.70 at iter 248 (first breach below 1.0).
+
+**Fix:** Reduced `action_buy_force_rate: 0.10 → 0.05` in `configs/dominion.yaml`. Restarted from iter_248 checkpoint (model_latest.pt) without buffer flush or seed re-injection — the seeded action-play behavior is already baked into the weights and buffer examples. New training: PID 1792394, iter 249 self-play active.
+
+**Expected:** With half the forced action buying, ~0.5 fewer kingdom card buys/game frees up buy slots for Silver. Avg_coins_at_buy should stabilize above 4.0 within 5 iters. Provinces should recover above 1.5 within 10 iterations (by iter ~258) and above 2.0 within 15 iterations. Action_rate should remain at 4-6% — the seeded behavior is reinforced by network weights, not by the force mechanism alone.
+
+**Standing authority from CEO:** If provinces don't recover above 2.0 within 10 iterations (by iter ~258), reduce force_rate further to 0.02 or disable entirely. Bot has internalized action-card play via seeds — forcing is no longer needed as the primary driver.
+
+## DEVLOG #62 — 2026-03-02: ActionBigMoney seed to break action card deadlock (root cause fix)
+
+**Problem:** Three successive interventions (tensor channels #58, explore boost #59, buy-forcing #60, play-forcing #61) all failed to enable action card play. Training collapsed at iter 234-235: provinces=0.13, treasures=1.22, action_rate=0.047 (finally nonzero but at the cost of all BigMoney quality). Root cause was never addressed.
+
+**Root cause (the disease, not symptoms):** The VALUE HEAD has zero calibration for action card positions. Self-play has never produced a game where buying Smithy → playing Smithy → drawing 3 cards → having more coins → buying Province led to a win. Every MCTS simulation of "play action card" continues into territory the value head rates as bad — correctly, because its entire training history says "action plays lose." Tensor channels tell the network "Smithy draws +3 cards" but the value head can't map that to game outcome without examples. Buy/play forcing injected random action plays; the outcomes were bad (disrupted BigMoney, no learned card-chain optimization), reinforcing the value head's bias. Each intervention treated the symptom (low exploration) not the disease (no gradient signal proving actions win).
+
+**Fix: Demonstration seeding (same approach as DEVLOG #57's BigMoney seed).** The `scripts/seed_dominion_action_bm.py` script was already written and the `action_bm_seed.pkl` (200K examples) already existed on RunPod. ActionBigMoney heuristic: buys 1-2 kingdom action cards (Smithy, Market, etc.) early, plays them in priority order each turn, then falls back to BigMoney. The 200K games include thousands of "played Smithy → drew 3 → bought Province → won" examples. This gives the value head its first gradient signal for "action cards are good when played."
+
+**Deployed:** Killed stalled training (iter 235, PID dead). Rolled back to iter_221 checkpoint (156-channel, earliest pre-collapse weights available). Restarted with `--flush-buffer --seed-buffer /workspace/dominion_data/action_bm_seed.pkl` (PID 1674598). `action_explore_boost: 1.0` (disabled). Buy-forcing (10%) and play-forcing (15%) remain active — with the seed providing correct value calibration, forcing now reinforces the right behavior instead of causing random degradation. The seed is what was missing: forcing without value signal = noise; forcing WITH value signal = structured exploration.
+
+**Expected:** Within 5 iterations, value_loss should reflect the seed's varied action outcomes. Within 10-15 iterations, the policy should voluntarily buy and play Smithy against itself. Province recovery to 2.5+ by iter 230, 3.0+ by iter 235.
+
+## DEVLOG #61 — 2026-03-02: Epsilon-greedy action card playing
+
+**Problem:** Buy forcing (DEVLOG #60) successfully increased action buys from 0.3 to 5.8/player, but action play rate remained flat 0% across 14 iterations (219-232). The forced action buys pollute the deck — action cards are dead draws that dilute treasure density, causing provinces to drop from 2.5 to 1.1 and purchasing power from $5.20 to $4.00. Buy forcing without play forcing is poison.
+
+**Solution:** `action_play_force_rate: 0.15` — during Dominion ACTION phase, 15% of the time, override MCTS and force-play a random playable action card from hand instead of END_ACTIONS. Implementation mirrors buy forcing: check `DOM_PHASE_ACTION` + `actions_remaining > 0`, scan valid moves in `[DOM_PLAY_OFFSET, DOM_BUY_OFFSET)` for playable actions, coin flip, override `action_probs`. Placed before buy forcing in `finish_move()`.
+
+**Why this completes the loop:** Buy forcing seeds action cards into the deck. Play forcing makes the bot actually use them. The bot now experiences the full causal chain: buy Village → draw Village → play Village → get +1 card +2 actions → chain more actions → see game outcome. The value head can finally learn whether action-heavy decks win. 85% of ACTION decisions still use full MCTS.
+
+**Files changed:** `cpp/batched_mcts.h` (+member), `cpp/batched_mcts.cpp` (+constructor, +play forcing in finish_move), `cpp/bindings.cpp` (+param), `mandala_rl/selfplay/worker.py` (+param), `mandala_rl/training/trainer.py` (+config), `scripts/train.py` (+config extraction), `configs/dominion.yaml` (+action_play_force_rate: 0.15).
+
+**Deployed:** Resumed from iter 233 (model_latest.pt, 156-channel, 69K buffer preserved). Used `--game dominion` (fixed prior bug where game flag was missing).
+
+**Expected:** Within 3-5 iterations, `action_play_rate` should become nonzero (5-15%). Action cards actually get played, generating training signal. If Smithy+BigMoney is genuinely strong (it is), the network should learn to buy and play Smithy voluntarily within 20-30 iterations as the value head discovers the payoff.
+
+## DEVLOG #60 — 2026-03-02: Epsilon-greedy action card buying
+
+**Problem:** Action play rate remains 0.0% through 13+ iterations since DEVLOG #58's tensor channels were added. The channels tell the network "you have a Smithy that draws +3 cards" but MCTS never plays it because the policy assigns near-zero probability to PLAY actions. The root-only boost (#58) failed because deeper tree nodes still evaluate actions poorly. The channels are informational dead weight — the network can't learn from what it never tries.
+
+**Root cause:** The bot never *buys* action cards, so it never *has* them in hand, so the new tensor channels 152-155 never activate, so there's no gradient signal. The buy phase is upstream of the play phase. Must force buying action cards to seed the causal chain.
+
+**Solution:** `action_buy_force_rate: 0.10` — during Dominion BUY phase, 10% of the time, override MCTS and force buying a random affordable kingdom action card. Implementation in `finish_move()`: check `DOM_PHASE_BUY`, collect kingdom action cards where `supply > 0 && cost <= coins`, coin flip at `action_buy_force_rate_`, override `action_probs` to uniform over buyable actions. The forced policy is recorded as the training target.
+
+**Why this works where boost failed:** The boost nudged MCTS exploration but MCTS correctly rejected action plays (tree continuation was bad). Forcing bypasses MCTS entirely — the card gets bought, enters the deck, and eventually appears in hand. Then: (a) tensor channels 152-155 light up, (b) MCTS might discover playing is good on its own, (c) game outcome teaches value head whether that deck composition wins. 90% of buy decisions still use full MCTS — BigMoney quality preserved.
+
+**Files changed:** `cpp/batched_mcts.h` (+member), `cpp/batched_mcts.cpp` (+constructor, +forcing logic in finish_move), `cpp/bindings.cpp` (+param), `mandala_rl/selfplay/worker.py` (+param passthrough), `mandala_rl/training/trainer.py` (+config), `scripts/train.py` (+config extraction), `configs/dominion.yaml` (+action_buy_force_rate: 0.10).
+
+**Deployed:** Resumed from iter 237 (model_latest.pt, 156-channel), no buffer flush. Buffer rebuilds from scratch as usual.
+
+**Expected:** Within 5-10 iterations, `action_buys` should rise from 0.3/game to ~2-3/game. Action cards start appearing in hands. Tensor channels activate. Within 15-20 iterations, `action_play_rate` should become nonzero as the network discovers which actions are worth playing. Smithy+BigMoney is a strong strategy — the network just needs to stumble into it.
+
+## DEVLOG #59 — 2026-03-02: Remove action_explore_boost (regression at iter 225-233)
+
+**Problem:** 9 consecutive iterations (225-233) with avg_provinces below 3.0 alarm threshold (prior baseline 3.3-3.7). Policy loss stuck 0.085-0.144 vs prior 0.02-0.05, failing the "must return below 0.06 by iter 230" gate. action_rate=0.0 throughout — the boost wasn't enabling action plays. avg_treasures declining to 12-15 range (prior 15-18).
+
+**Root cause:** DEVLOG #58's `action_explore_boost: 3.0` applies at root only. MCTS explores "play Smithy" at the root, but deeper in the tree the unmodified policy still assigns near-zero probability to action plays — so action card simulations degrade quickly into random/BigMoney continuation. The value estimate for "play Smithy + degraded continuation" is often WORSE than "skip action + play BigMoney." MCTS correctly rejects action plays most of the time, but the wasted simulations reduce BigMoney move quality. Result: worse BigMoney play without enabling action card play.
+
+**Fix:** Set `action_explore_boost: 1.0` (disabled). The new tensor channels (151-156, added in DEVLOG #58) remain — they passively teach the network about action card value. Flushed the replay buffer (`--flush-buffer`) to remove degraded training examples from the boost period. Opponent diversity (DEVLOG #57) continues running at 20%.
+
+**Deployed:** Updated `configs/dominion.yaml`, SCP'd to RunPod, restarted from `model_latest.pt` (iter 233) with `--game dominion --flush-buffer`. Single clean process (PID 1529212).
+
+**Expected:** Policy loss should return below 0.06 within 3-5 iterations. avg_provinces should recover to 3.0+ within 5 iterations as MCTS simulation budget is no longer wasted on action card exploration.
+
+## DEVLOG #58 — 2026-03-02: Deploy Dominion RL model to production (iter 105)
+
+**Context:** Training hit the key milestone: avg_provinces=3.77, avg_treasures=15.4, avg_score=25.4, avg_len=131 (games ending naturally). CEO requested deploying the RL model to replace the Big Money heuristic.
+
+**ONNX export:** Exported `model_latest.pt` (iter 105, 10,500 games) from RunPod using `scripts/export_onnx.py`. Architecture: 151 input channels, 131 actions, 10 ResNet blocks, 128 channels. Output: `data/deploy/dominion/model.onnx` (15MB).
+
+**serve.py changes:**
+- Added `DominionModelServer` class: wraps `OnnxModelServer`, implements `get_action(state)` via `get_canonical_form() → to_tensor() → ONNX predict → masked greedy argmax`.
+- Updated Dominion loading: tries `data/deploy/dominion/model.onnx` first, falls back to `DominionHeuristicServer` if not present.
+- Updated `loaded_games['dominion']` to expose iteration + total_games (was hardcoded `'heuristic'`).
+
+**Landing page:** Updated Dominion card to show "Self-taught AI — trained on X self-play games" instead of checkpoint filename. Matches Mandala/LC style.
+
+**Training state at deploy:** value_loss plateau 0.31-0.41 for 10 iters (not yet converging to ~0.10), p0_wr noisy 0.11-0.25 (high draw rate 65-74% inflates P1 apparent advantage — not a bug, both players have converged to same Big Money strategy). Bot plays recognizable Dominion: buys Silver/Gold/Province, ends games naturally.
+
+## DEVLOG #57 — 2026-03-01: Seed replay buffer with Big Money heuristic games
+
+**Problem:** After 77 iterations with value_loss healthy (~0.05), the bot is still stuck in a copper+estate local optimum. avg_treasures=0.04 (Silver never bought), avg_provinces=0. The value head now has gradient signal (DEVLOG #56 reward amplification worked), but the policy hasn't discovered Silver/Gold/Province buying. Self-play can't escape the equilibrium because both players play the same degenerate strategy — there's no "good example" in the replay buffer showing that Silver leads to better outcomes.
+
+**Root cause:** Bootstrap problem. The policy needs to see Silver/Gold/Province buying to learn it's better. But self-play only generates data from the current (degenerate) policy. Without external signal, the network can't self-improve out of this hole.
+
+**Big Money strategy:** Province($8) > Gold($6) > Silver($3), always. Play all treasures each turn, then buy the best card you can afford. This is a well-known strong baseline for Dominion that wins most games against naive opponents. Games complete naturally in ~220 moves (vs infinite with degenerate policy).
+
+**Fix:** Wrote `scripts/seed_dominion_bigmoney.py` that generates Big Money vs Big Money games and saves (canonical_state_tensor, one_hot_policy, outcome) examples as a replay buffer pkl. Generated 300 games = 69,487 examples in 13 seconds. Restarted training from iter 77 checkpoint with `--seed-buffer /workspace/dominion_data/bm_seed.pkl`. The trainer pre-filled the replay buffer with these demonstrations and cached them for re-injection. Self-play will gradually overwrite them over ~3-4 iterations (23K new examples/iter), by which point the policy should have learned the Silver/Gold/Province buying pattern.
+
+**Expected:** avg_treasures > 0.1 within 2 iterations. avg_provinces > 0 within 5 iterations. avg_len < 200 (games ending naturally) within 3-5 iterations.
+
+---
+
 ## #1 — Project Bootstrap
 **Feb 2, 2026**
 
@@ -658,3 +788,120 @@ Built `scripts/monk_hourly.sh` — an autonomous hourly wake-up that:
 Runs via launchd (`com.gg.monk-hourly.plist`, every 3600s). CEO checks `GG_CEO_Inbox.md` for formatted hourly reports with full metric tables. Complements the existing 10-min `dominion_monitor.sh` which handles restart logic and raw metric collection.
 
 **Files added:** `scripts/monk_hourly.sh`, `~/Library/LaunchAgents/com.gg.monk-hourly.plist`
+
+## DEVLOG #52 — 2026-03-01: Fix Dominion move-cap reward returning 0
+
+**Problem:** Dominion training stuck in total degenerate equilibrium since iter 1. All games hit the 500-move cap. `get_reward()` guards on `s.game_over` (returns 0.0 if not terminal) — but move-cap games set `terminal=true` in MCTS without setting `game_over` in the game state. Result: 100% draw rate, value loss = 0.0, zero gradient to the value head for 46+ iterations.
+
+**Root cause:** `batched_mcts.cpp` line 294 called `game_->get_reward()` for both natural terminals AND move-cap-forced terminals. The former works; the latter silently returns 0.0 because `game_over` was never set.
+
+**Fix:** Track `move_cap_hit` boolean. When move cap fires, bypass `get_reward` and compute score margin directly from `get_score(p0) - get_score(p1)` scaled by /30. This matches the Dominion reward formula exactly, but without the `game_over` guard.
+
+**Deployed:** SCP'd fix to RunPod, rebuilt via `pip install -e .`, restarted training from iter 46 checkpoint. Training restarted (PID 638027).
+
+**Expected outcome:** Next iterations should show nonzero value loss as curse/VP imbalances create small nonzero margins at move cap. This bootstraps value head learning, which should eventually drive province buying.
+
+## DEVLOG #53 — 2026-03-01: Monk incorrectly blocked Curse buying (reverted)
+
+**What happened:** The autonomous Monk agent (hourly cron) diagnosed the copper+curse degenerate loop and added `if (i == CARD_CURSE) continue;` to `get_valid_moves()`, preventing voluntary Curse purchase. It believed Curse buying was a rule violation.
+
+**Why it was wrong:** Buying Curse IS a legal Dominion action. Curse costs 0, so it's always affordable — but it's -1 VP. Additionally, the game ends when 3 supply piles are exhausted, so buying Curses to empty the pile is a legitimate endgame strategy. Removing legal moves changes the game rules.
+
+**Reverted:** Restored Curse as a valid buy option. The move-cap reward fix (#52) already provides the gradient signal the value head needs — buying Curse gives -1 VP, which now shows up as a worse outcome. The network should learn "don't buy curses" through self-play, not by having the option removed.
+
+**Lesson for the Monk:** Don't change game rules to fix degenerate behavior. The fix should always be in the training signal, not in the action space. Trust the learning loop — if the value head has gradient signal, the policy will adjust.
+
+## DEVLOG #54 — 2026-03-01: Auto-play treasures in buy phase
+
+**Problem:** Dominion training stuck in copper+curse degenerate loop. Root cause: buy phase required manually playing each treasure card one at a time before buying. With a random policy, probability of playing all 3 Coppers before accidentally buying Copper/Curse or hitting END_BUYS is ~1.7%. The bot converges on cost-0 buys (Copper, Curse) because they're always 1 action away, while Silver/Estate/action cards require a multi-step treasure-play sequence first.
+
+**Fix:** Auto-play all treasures when transitioning from action phase to buy phase. Two edits to `cpp/dominion_game.cpp`:
+1. **`get_next_state()` — END_ACTIONS handler:** After setting phase to BUY, loop through hand backwards, move all treasures to in_play, add coin values (including Merchant Silver bonus).
+2. **`get_valid_moves()` — buy phase section:** Removed the `unique_hand` / `is_treasure()` / `DOM_PLAY_OFFSET` block. Buy phase valid moves are now just END_BUYS + affordable cards in supply.
+
+Action space stays at 131 — PLAY actions simply won't be valid during buy phase. Tensor encoding unchanged (channel 126 for coins now reflects full treasure value immediately). No changes to action cards, pending states, or scoring.
+
+**Deployed:** SCP'd to RunPod, rebuilt, restarted training from iter 55 checkpoint.
+
+## DEVLOG #55 — 2026-03-01: Fix self-play stall: move cap, sim depth limit, gain-pending fallbacks
+
+**Problem:** Self-play stalled at 75% completion every iteration. First batch of 64 games completed in ~3.5 min, but the remaining 25-36 games hung indefinitely with 99% CPU, 0% GPU. Training couldn't progress past iter 55.
+
+**Root cause (primary):** MCTS simulation tree traversal had no depth limit. For degenerate games where both players cycle without buying (game never terminates naturally), the search tree grew unboundedly deep. Each of the 800 simulations per move traversed from root to the deepest leaf — hundreds of `get_next_state()` calls per simulation, all CPU-bound with zero GPU work. With 25 remaining games in small batches, each game took hours instead of seconds.
+
+**Root cause (secondary):** Move cap was 500, set when each treasure play was a separate action. With DEVLOG #54's auto-play treasures, a Dominion turn is ~2-4 moves instead of ~5-10. The 500 cap was 5-10x too generous, allowing degenerate games to burn through more simulated moves than necessary.
+
+**Root cause (tertiary):** Four gain-pending states (`DOM_PEND_GAIN`, `DOM_PEND_REMODEL_GAIN`, `DOM_PEND_MINE_GAIN`, `DOM_PEND_ARTISAN_GAIN`) in `get_valid_moves()` could return zero valid moves when qualifying supply piles were empty, causing MCTS to waste simulations. Added `DOM_DONE_SELECTING` fallback to each, with corresponding handlers in `resolve_pending()`.
+
+**Three fixes:**
+1. **Simulation depth limit = 100** (`batched_mcts.cpp`): MCTS traversal loop now breaks after 100 nodes, treating the position as a leaf for NN evaluation. Prevents O(N²) tree traversal degradation.
+2. **Move cap 500 → 200** (`batched_mcts.cpp`): With auto-play treasures, 200 moves covers ~50-100 turns — well above any reasonable game length.
+3. **Gain-pending fallbacks** (`dominion_game.cpp`): `DOM_DONE_SELECTING` added when no qualifying cards exist in supply.
+4. **Zero-visit-count fallback** (`batched_mcts.cpp`): When MCTS produces zero visit counts (no children expanded), fall back to uniform random over valid moves instead of UB from `discrete_distribution`.
+
+**Results (first 2 iters post-fix):**
+- Iter 56: draw_rate 82%→61%, avg_estates 0.03→0.31, value_loss 0.0002→0.0013
+- Iter 57: draw_rate→34%, avg_estates→0.60, avg_duchies→0.01, avg_buys→2.15
+- Self-play completes in ~10 min/iter (3.5 min first batch + ~6 min tail batch) vs infinite stall before
+
+**Files changed:** `cpp/batched_mcts.cpp` (sim depth, move cap, zero-visit fallback), `cpp/dominion_game.cpp` (gain-pending fallbacks + resolve_pending handlers).
+
+## DEVLOG #56 — 2026-03-01: Amplify reward signal (margin/30 → margin/5) to break copper+estate equilibrium
+
+**Problem:** Dominion training stuck at iter 66 in a copper+estate local optimum. Metrics flat for 14 iterations: avg_provinces=0, avg_len=200 (100% move-cap), avg_score=3.5, avg_treasures=0.03 (no Silver/Gold buying), draw_rate=34-45%. Value head predicting ±0.000 with target std=0.034.
+
+**Root cause:** Reward denominator `/30` was calibrated for decisive Dominion games (10-20 VP margin), but current self-play produces 0-3 VP margins. A 2-VP edge gives reward 0.067 — indistinguishable from noise. The value head receives near-zero gradient and can't differentiate positions. Without value signal, policy has no reason to prefer Silver over Copper.
+
+**Bootstrap problem:** Need Silver/Gold → to buy Provinces → to create decisive outcomes → to train value head → to prefer Silver/Gold. The reward amplification breaks the loop by making small VP differences (from estate-buying variance) into meaningful signal.
+
+**Fix:** Changed `margin / 30.0f` to `margin / 5.0f` in both `dominion_game.cpp:get_reward()` and `batched_mcts.cpp` move-cap reward. A 2-VP margin now gives 0.4 reward instead of 0.067 — 6x amplification. A 5-VP margin saturates at 1.0, appropriate for current training stage. Can rescale back to /30 once province buying emerges and margins widen.
+
+**Deployed:** SCP'd to RunPod, rebuilt C++, restarted training from iter 66 (PID 912063).
+
+**Expected:** Value head targets should immediately show larger std (0.034 → ~0.20). Value loss should rise. Over 5-10 iters, policy should differentiate: estates→more VP→higher reward→buy more estates→eventually realize Silver→Gold→Province is even better.
+
+## DEVLOG #57 — 2026-03-02: Opponent diversity + realized purchasing power
+
+**Problem:** Dominion bot (iter 190, 19K games) plays solid Big Money but completely ignores action cards (`action_rate=0.0`). Both players use the same network — they converge to identical strategy and neither explores alternatives.
+
+**Root cause:** Symmetric self-play trap (bootstrap deadlock). MCTS can only explore from the current policy. Both players play Big Money → no action card games exist in training data → no gradient to learn action cards → both players keep playing Big Money. Same mechanism as the earlier copper+estate equilibrium, but at a higher skill plateau.
+
+**Solution: Opponent diversity.** Break the symmetry by playing ~20% of full-sim games against older (weaker) checkpoints. Against a weaker opponent, marginal strategies (like Smithy+Big Money) become clearly winning, creating gradient signal that reinforces action card play.
+
+**Technical approach:**
+- Reuse the proven FastArena two-model routing pattern in self-play. `play_games_vs_opponent()` in `worker.py` routes root expansions and leaf evaluations to the correct model based on `get_active_players()` and game index parity (even=current as P0, odd=current as P1).
+- Training data collected from **both** players. Current player's MCTS targets are high-quality; opponent's policy targets reflect older play but value targets (game outcome) are always correct. Diverse policy examples aid exploration.
+- Phase 3 added to `_generate_selfplay_games()` in trainer: after full-sim self-play games, load a random older checkpoint (from recent 50% of history), play `n_opponent` games, append to training set.
+- Config-gated: `opponent_diversity_ratio: 0.2` in `dominion.yaml` (default 0 for other games). Only activates after iteration 20 (need checkpoint history).
+
+**Purchasing power metric:** Added `total_coins_at_buy` and `buy_phase_entries` tracking to C++ DominionState. Records cumulative coins when entering buy phase. Logged to TensorBoard as `GameQuality/DOM_AvgCoinsAtBuy`. Expected ~3.5 for starting deck (7 coppers in 10 cards, draw 5), rising to ~5-6 with Silver/Gold buying.
+
+**Files changed:** `cpp/dominion_game.h` (2 tracking fields), `cpp/dominion_game.cpp` (copy + record at buy entry), `cpp/batched_mcts.cpp` (export in summary), `mandala_rl/selfplay/worker.py` (play_games_vs_opponent + two-model routing), `mandala_rl/training/trainer.py` (Phase 3 + helpers + purchasing power logging), `configs/dominion.yaml` (opponent_diversity_ratio).
+
+**Expected outcome:** Over 20-30 iterations, action card exploration should emerge — `action_buys` and `action_rate` should become nonzero as the current model discovers winning strategies against weaker opponents and incorporates them into self-play.
+
+## DEVLOG #58 — 2026-03-02: Action card tensor channels + exploration boost
+
+**Problem:** Dominion training at iter 220 (22K games). Bot plays solid Big Money (3.5 provinces/game, 15-18 silver/gold) but completely ignores all 24 kingdom action cards: `action_play_rate=0%`, `action_buys=0.3/game` (noise only). Opponent diversity (#57) hasn't broken the equilibrium yet — both sides of self-play ignore actions, creating a stable deadlock the bot can't escape. Two root causes: (1) the network can't see action card bonuses in the tensor, and (2) MCTS never explores playing actions because the policy assigns them near-zero probability.
+
+**Solution A: New tensor channels (151 → 156).** Added 5 channels that surface action card value during the ACTION phase:
+
+| Ch | Feature | Norm | Purpose |
+|----|---------|------|---------|
+| 151 | Treasure coins in hand | /12 | "You'll have at least X coins after auto-play" |
+| 152 | Best +cards from playable action | /5 | "Playing this draws N more cards" |
+| 153 | Best +actions from playable action | /5 | "You can chain more actions" |
+| 154 | Best +coins from playable action | /5 | "Actions generate coins directly" |
+| 155 | Action cards in hand | /5 | "You have N actions to consider" |
+
+Channels 152-154 are conditional on `actions_remaining > 0` — if you can't play actions, they read 0. This lets the network distinguish "I have a Smithy but already used my action" from "I have a Smithy and can play it for +3 cards."
+
+**Solution B: Action-phase exploration boost in MCTS.** In `set_root_policies`, when Dominion is in ACTION phase with `actions_remaining > 0`, multiply `policy[DOM_PLAY_OFFSET..DOM_BUY_OFFSET]` by `action_explore_boost` (default 3.0) before Dirichlet noise and expansion. The valid-move mask ensures only actually-playable action cards get boosted. `END_ACTIONS` retains its base probability but PLAY moves get 3x weight. This makes MCTS actually explore playing action cards instead of always choosing END_ACTIONS.
+
+**Checkpoint migration:** The existing `load_checkpoint` logic (added during the 121→123 channel migration) already handles conv_input channel migration — it zero-inits new channels and copies old weights. No migration script needed; `--resume` from iter 220 just works.
+
+**Files changed:** `cpp/dominion_game.h` (DOM_TENSOR_CHANNELS 151→156), `cpp/dominion_game.cpp` (5 new channels in to_tensor), `dominion/game/state.py` (Python mirror, tensor shape 156×8×8), `cpp/batched_mcts.h` (game_type_ + action_explore_boost_ members), `cpp/batched_mcts.cpp` (boost logic in set_root_policies), `cpp/bindings.cpp` (new parameter), `mandala_rl/selfplay/worker.py` (pass action_explore_boost), `mandala_rl/training/trainer.py` (pass config), `scripts/train.py` (extract from config), `configs/dominion.yaml` (input_channels: 156, action_explore_boost: 3.0).
+
+**Risk:** Boost factor too high → MCTS wastes simulations on bad action plays → training quality drops. Boost too low → no effect. 3.0 is moderate: if network gives END_ACTIONS 90% and PLAY_SMITHY 1%, after boost Smithy gets ~3% — enough for MCTS to explore but not dominate. The boost is only at root (not leaf expansions), so it's pure exploration guidance. Can tune down to 2.0 or up to 5.0 based on initial results.
+
+**Expected outcome:** Within 5-10 iterations of resumed training, `action_plays` should become nonzero as MCTS actually explores action cards. The new tensor channels give the network the information it needs to learn *which* actions are good. Combined with opponent diversity, this should break the Big Money equilibrium.

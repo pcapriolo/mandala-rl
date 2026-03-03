@@ -159,6 +159,18 @@ def main():
 
         # Checkpoint every N games within iteration (for resume)
         'checkpoint_every_n_games': config['training'].get('checkpoint_every_n_games', 10),
+
+        # Opponent diversity (fraction of full-sim games played vs older checkpoint)
+        'opponent_diversity_ratio': config['selfplay'].get('opponent_diversity_ratio', 0.0),
+
+        # Action exploration boost (Dominion: multiply PLAY priors in ACTION phase)
+        'action_explore_boost': config['mcts'].get('action_explore_boost', 0.0),
+
+        # Action buy forcing (Dominion: epsilon-greedy buy of kingdom action cards)
+        'action_buy_force_rate': config['mcts'].get('action_buy_force_rate', 0.0),
+
+        # Action play forcing (Dominion: epsilon-greedy play of action cards in hand)
+        'action_play_force_rate': config['mcts'].get('action_play_force_rate', 0.0),
     }
 
     # Create trainer
