@@ -809,11 +809,17 @@ class Trainer:
             torch.save(checkpoint, checkpoint_dir / f'model_latest{suffix}.pt')
         else:
             # Atomic write (temp file + rename) to prevent 0-byte corruption on crash
-            # NOTE: Replay buffer is NOT saved — it caused 3x memory spikes (15 GB per trainer)
-            # that triggered container OOM. Buffer rebuilds from self-play after restart.
             tmp_path = checkpoint_dir / 'model_latest.pt.tmp'
             torch.save(checkpoint, tmp_path)
             tmp_path.rename(checkpoint_dir / 'model_latest.pt')
+
+            # Save replay buffer separately (not in checkpoint — avoids OOM from 3x memory spike)
+            try:
+                buf_tmp = checkpoint_dir / 'buffer_latest.pkl.tmp'
+                self.replay_buffer.save(buf_tmp)
+                buf_tmp.rename(checkpoint_dir / 'buffer_latest.pkl')
+            except Exception as e:
+                print(f"  Warning: buffer save failed ({e}), training continues")
 
             # Save periodic iteration checkpoint (lightweight, no replay buffer)
             if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
@@ -934,12 +940,17 @@ class Trainer:
         # NEW: Restore game progress within iteration
         self.games_in_current_iteration = checkpoint.get('games_in_current_iteration', 0)
 
-        # Replay buffer is no longer saved in checkpoints (OOM fix).
-        # Buffer rebuilds from self-play — first ~33 iters after restart have smaller buffer.
+        # Try loading buffer from separate file first, then legacy embedded buffer
+        buffer_path = Path(filepath).parent / 'buffer_latest.pkl'
         if 'replay_buffer' in checkpoint:
-            # Legacy checkpoint with embedded buffer — load it but this path will phase out
             self.replay_buffer.load_data(checkpoint['replay_buffer'])
             print(f"Restored replay buffer with {len(self.replay_buffer)} examples (legacy)")
+        elif buffer_path.exists():
+            try:
+                self.replay_buffer.load(buffer_path)
+                print(f"Restored replay buffer with {len(self.replay_buffer)} examples from {buffer_path.name}")
+            except Exception as e:
+                print(f"Buffer load failed ({e}), starting empty")
         else:
             print("Replay buffer starts empty (rebuilds from self-play)")
 
