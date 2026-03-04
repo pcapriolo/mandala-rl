@@ -1630,6 +1630,7 @@ def create_dominion_blueprint(server):
 # Load Dominion (heuristic AI — no trained model needed)
 _dominion_server = DominionHeuristicServer(DominionGame())
 app.register_blueprint(create_dominion_blueprint(_dominion_server), url_prefix='/dominion')
+loaded_games['dominion'] = {'total_games': _dominion_server.total_games}
 print("[serve] Dominion loaded with heuristic AI (Big Money)")
 
 
