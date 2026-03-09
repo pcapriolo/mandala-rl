@@ -19,6 +19,10 @@ REMOTE_BASE="/workspace/mandala-rl/data"
 REMOTE_DOM="/workspace/dominion_data"
 LOCAL_BASE="data"
 INTERVAL="${1:-60}"
+PUSH_INTERVAL=300  # Push to git at most every 5 minutes
+LAST_PUSH=0
+GIT_SSH_COMMAND="ssh -i $KEY -o StrictHostKeyChecking=accept-new"
+export GIT_SSH_COMMAND
 
 mkdir -p "$LOCAL_BASE/checkpoints" "$LOCAL_BASE/lost_cities/checkpoints" "$LOCAL_BASE/dominion/checkpoints"
 
@@ -113,12 +117,22 @@ CMDS
     local dom_lines=$(wc -l < "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | tr -d ' ')
     echo "[$(date +%H:%M:%S)] Synced (M:${m_lines} LC:${lc_lines} DOM:${dom_lines} loss entries, ${new} checkpoints updated)"
 
-    # Auto-push losses.jsonl to git for Railway deployment
-    cd "$HOME/GG/mandala-rl"
-    if ! git diff --quiet data/dominion/losses.jsonl 2>/dev/null; then
-        git add data/dominion/losses.jsonl
-        git commit -m "data: update dominion losses (iter $dom_lines)"
-        git push origin main 2>/dev/null && echo "[$(date +%H:%M:%S)] Pushed losses.jsonl (iter $dom_lines)" || echo "[$(date +%H:%M:%S)] Push failed"
+    # Auto-push data files to git for Railway deployment (throttled)
+    local now
+    now=$(date +%s)
+    if [ $((now - LAST_PUSH)) -ge $PUSH_INTERVAL ]; then
+        cd "$HOME/GG/mandala-rl"
+        local data_files="data/dominion/losses.jsonl data/dominion/heartbeat.json data/dominion/elo_ratings.json"
+        if ! git diff --quiet $data_files 2>/dev/null; then
+            git add $data_files 2>/dev/null
+            git commit -m "data: update dominion training data (iter $dom_lines)" 2>/dev/null
+            if git push origin main 2>&1; then
+                LAST_PUSH=$now
+                echo "[$(date +%H:%M:%S)] Pushed training data to git (iter $dom_lines)"
+            else
+                echo "[$(date +%H:%M:%S)] Git push failed"
+            fi
+        fi
     fi
 }
 
