@@ -16,6 +16,7 @@ SSH_PORT=26242
 SSH="ssh -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -p $SSH_PORT"
 SCP="scp -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=10 -i $KEY -P $SSH_PORT"
 REMOTE_BASE="/workspace/mandala-rl/data"
+REMOTE_DOM="/workspace/dominion_data"
 LOCAL_BASE="data"
 INTERVAL="${1:-60}"
 
@@ -111,6 +112,14 @@ CMDS
     local lc_lines=$(wc -l < "$LOCAL_BASE/lost_cities/losses.jsonl" 2>/dev/null | tr -d ' ')
     local dom_lines=$(wc -l < "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | tr -d ' ')
     echo "[$(date +%H:%M:%S)] Synced (M:${m_lines} LC:${lc_lines} DOM:${dom_lines} loss entries, ${new} checkpoints updated)"
+
+    # Auto-push losses.jsonl to git for Railway deployment
+    cd "$HOME/GG/mandala-rl"
+    if ! git diff --quiet data/dominion/losses.jsonl 2>/dev/null; then
+        git add data/dominion/losses.jsonl
+        git commit -m "data: update dominion losses (iter $dom_lines)"
+        git push origin main 2>/dev/null && echo "[$(date +%H:%M:%S)] Pushed losses.jsonl (iter $dom_lines)" || echo "[$(date +%H:%M:%S)] Push failed"
+    fi
 }
 
 echo "Syncing from RunPod ($REMOTE:$SSH_PORT) every ${INTERVAL}s..."

@@ -1655,6 +1655,26 @@ def verify_challenge(challenge_id):
         return jsonify({'error': 'Challenge not found'}), 404
     return jsonify(challenge)
 
+@app.route('/training/dominion')
+def training_dominion():
+    return render_template('dashboard_dominion.html', api_base='/training/dominion')
+
+@app.route('/training/dominion/api/training')
+def training_dominion_api():
+    losses_file = project_root / 'data' / 'dominion' / 'losses.jsonl'
+    if not losses_file.exists():
+        return jsonify({'iterations': []})
+    iterations = []
+    for line in losses_file.read_text().strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            iterations.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return jsonify({'iterations': iterations})
+
 @app.route('/stats')
 def stats_page():
     return render_template('stats.html')
