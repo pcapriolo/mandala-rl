@@ -73,15 +73,30 @@ CMDS
         echo "$output" | sed -n "/^===$1===/,/^===/p" | grep -v '^==='
     }
 
+    # Guard append-only files against truncation from SSH drops
+    safe_write() {
+        local content="$1"
+        local dest="$2"
+        local new_lines
+        new_lines=$(echo "$content" | grep -c .)
+        local old_lines=0
+        [ -f "$dest" ] && old_lines=$(wc -l < "$dest" | tr -d ' ')
+        if [ "$new_lines" -lt "$old_lines" ]; then
+            echo "[$(date +%H:%M:%S)] WARN: skipping $dest write ($new_lines < $old_lines lines, likely truncated)"
+            return
+        fi
+        echo "$content" > "$dest"
+    }
+
     extract_section "HEARTBEAT_M" > "$LOCAL_BASE/heartbeat.json"
     extract_section "EVAL_HB_M" > "$LOCAL_BASE/eval_heartbeat.json"
-    extract_section "LOSSES_M" > "$LOCAL_BASE/losses.jsonl"
+    safe_write "$(extract_section "LOSSES_M")" "$LOCAL_BASE/losses.jsonl"
     extract_section "HEARTBEAT_LC" > "$LOCAL_BASE/lost_cities/heartbeat.json"
     extract_section "EVAL_HB_LC" > "$LOCAL_BASE/lost_cities/eval_heartbeat.json"
-    extract_section "LOSSES_LC" > "$LOCAL_BASE/lost_cities/losses.jsonl"
+    safe_write "$(extract_section "LOSSES_LC")" "$LOCAL_BASE/lost_cities/losses.jsonl"
     extract_section "HEARTBEAT_DOM" > "$LOCAL_BASE/dominion/heartbeat.json"
     extract_section "EVAL_HB_DOM" > "$LOCAL_BASE/dominion/eval_heartbeat.json"
-    extract_section "LOSSES_DOM" > "$LOCAL_BASE/dominion/losses.jsonl"
+    safe_write "$(extract_section "LOSSES_DOM")" "$LOCAL_BASE/dominion/losses.jsonl"
     extract_section "ELO_DOM" > "$LOCAL_BASE/dominion/elo_ratings.json"
 
     # 2. Sync latest checkpoints via SCP
