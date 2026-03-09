@@ -42,6 +42,7 @@
 <body>
     <div class="header">
         <h1>Dominion Training</h1>
+        <span id="last-updated" style="color: #666; font-size: 0.85em;"></span>
         <a href="/">All Games</a>
     </div>
 
@@ -217,6 +218,15 @@ async function refresh() {
     const labels = iters.map(d => d.iteration);
     const latest = iters[iters.length - 1];
     iterData = iters;
+
+    // Last updated
+    if (data.last_updated) {
+        const ago = Math.floor(Date.now() / 1000 - data.last_updated);
+        const mins = Math.floor(ago / 60);
+        const hrs = Math.floor(mins / 60);
+        const label = hrs > 0 ? `${hrs}h ${mins % 60}m ago` : mins > 0 ? `${mins}m ago` : 'just now';
+        document.getElementById('last-updated').textContent = `updated ${label}`;
+    }
 
     // Stats bar
     document.getElementById('s-iter').textContent = latest.iteration;

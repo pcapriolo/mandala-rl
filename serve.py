@@ -1673,7 +1673,16 @@ def training_dominion_api():
             iterations.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    return jsonify({'iterations': iterations})
+    # Include heartbeat timestamp for "last updated" display
+    heartbeat_file = project_root / 'data' / 'dominion' / 'heartbeat.json'
+    last_updated = None
+    if heartbeat_file.exists():
+        try:
+            hb = json.loads(heartbeat_file.read_text())
+            last_updated = hb.get('timestamp')
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return jsonify({'iterations': iterations, 'last_updated': last_updated})
 
 @app.route('/stats')
 def stats_page():
