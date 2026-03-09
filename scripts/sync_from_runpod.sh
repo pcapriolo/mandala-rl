@@ -124,11 +124,13 @@ CMDS
         cd "$HOME/GG/mandala-rl"
         local data_files="data/dominion/losses.jsonl data/dominion/heartbeat.json data/dominion/elo_ratings.json"
         if ! git diff --quiet $data_files 2>/dev/null; then
+            local dom_iter
+            dom_iter=$(tail -1 "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('iteration','?'))" 2>/dev/null || echo "$dom_lines")
             git add $data_files 2>/dev/null
-            git commit -m "data: update dominion training data (iter $dom_lines)" 2>/dev/null
+            git commit -m "data: update dominion training data (iter $dom_iter)" 2>/dev/null
             if git push origin main 2>&1; then
                 LAST_PUSH=$now
-                echo "[$(date +%H:%M:%S)] Pushed training data to git (iter $dom_lines)"
+                echo "[$(date +%H:%M:%S)] Pushed training data to git (iter $dom_iter)"
             else
                 echo "[$(date +%H:%M:%S)] Git push failed"
             fi
