@@ -52,6 +52,7 @@
         <div class="stat"><div class="label">Avg Provinces</div><div class="value" id="s-provinces">--</div></div>
         <div class="stat"><div class="label">Avg Game Len</div><div class="value" id="s-len">--</div></div>
         <div class="stat"><div class="label">Draw Rate</div><div class="value" id="s-draws">--</div></div>
+        <div class="stat"><div class="label">$/Buy Wasted</div><div class="value" id="s-waste">--</div></div>
         <div class="stat"><div class="label">Health</div><div class="value ok" id="s-health">--</div></div>
     </div>
 
@@ -72,6 +73,14 @@
             <h2>Game Length & Turns</h2>
             <canvas id="chart-length"></canvas>
         </div>
+        <div class="chart-card">
+            <h2>Buy Curve (Latest Iteration)</h2>
+            <canvas id="chart-buycurve"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Buy Timing Over Training</h2>
+            <canvas id="chart-buytiming"></canvas>
+        </div>
     </div>
 
     <div class="table-card">
@@ -87,10 +96,14 @@
                     <th>Duchy</th>
                     <th>Estate</th>
                     <th>Copper</th>
-                    <th>Ag/Au</th>
-                    <th>Action</th>
+                    <th>Silver</th>
+                    <th>Gold</th>
+                    <th>Smithy</th>
+                    <th>Gardens</th>
+                    <th>Market</th>
                     <th>Curse</th>
-                    <th>Buys</th>
+                    <th>Total</th>
+                    <th>Waste</th>
                     <th>Len</th>
                     <th>Turns</th>
                     <th>Draw%</th>
@@ -102,7 +115,7 @@
 
 <script>
 const API = '{{ api_base }}';
-let lossChart, qualityChart, buysChart, lengthChart;
+let lossChart, qualityChart, buysChart, lengthChart, buyCurveChart, buyTimingChart;
 
 let iterData = []; // store for tooltip lookups
 
@@ -129,18 +142,25 @@ const buysChartOpts = () => ({
                     const idx = items[0].dataIndex;
                     const d = iterData[idx];
                     if (!d) return '';
+                    const tb = d.top_buys || {};
+                    const silver = d.avg_silver ?? d.avg_treasures ?? 0;
+                    const gold = d.avg_gold ?? 0;
                     const lines = [
                         '',
                         '── Buy Breakdown ──',
-                        `Provinces:    ${d.avg_provinces.toFixed(2)}`,
-                        `Duchies:      ${(d.avg_duchies || 0).toFixed(2)}`,
-                        `Estates:      ${(d.avg_estates || 0).toFixed(2)}`,
-                        `Copper:       ${(d.avg_copper || 0).toFixed(2)}`,
-                        `Silver/Gold:  ${d.avg_treasures.toFixed(2)}`,
-                        `Action Cards: ${(d.avg_action_buys || 0).toFixed(2)}`,
-                        `Curses:       ${(d.avg_curses || 0).toFixed(2)}`,
+                        `Provinces:    ${(d.avg_provinces||0).toFixed(2)}`,
+                        `Duchies:      ${(d.avg_duchies||0).toFixed(2)}`,
+                        `Estates:      ${(d.avg_estates||0).toFixed(2)}`,
+                        `Copper:       ${(d.avg_copper||0).toFixed(2)}`,
+                        `Silver:       ${silver.toFixed(2)}${d.avg_silver == null ? ' *' : ''}`,
+                        `Gold:         ${gold.toFixed(2)}`,
+                        `Smithy:       ${(tb.Smithy||0).toFixed(2)}`,
+                        `Gardens:      ${(tb.Gardens||0).toFixed(2)}`,
+                        `Market:       ${(tb.Market||0).toFixed(2)}`,
+                        `Curses:       ${(d.avg_curses||0).toFixed(2)}`,
                         `────────────`,
                         `Total Buys:   ${d.avg_buys.toFixed(2)}`,
+                        ...(d.avg_silver == null ? ['', '* Silver = Ag+Au combined (old data)'] : []),
                     ];
                     return lines.join('\n');
                 },
@@ -173,6 +193,19 @@ function initCharts() {
     lengthChart = new Chart(document.getElementById('chart-length'), {
         type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Moves / Turns')
     });
+    buyCurveChart = new Chart(document.getElementById('chart-buycurve'), {
+        type: 'bar', data: { labels: [], datasets: [] }, options: {
+            responsive: true,
+            plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+            scales: {
+                x: { stacked: true, ticks: { color: '#666' }, grid: { color: '#222' } },
+                y: { stacked: true, title: { display: true, text: 'Avg Buys', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
+            }
+        }
+    });
+    buyTimingChart = new Chart(document.getElementById('chart-buytiming'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Avg Turn Bought')
+    });
 }
 
 async function refresh() {
@@ -192,6 +225,7 @@ async function refresh() {
     document.getElementById('s-provinces').textContent = latest.avg_provinces.toFixed(2);
     document.getElementById('s-len').textContent = latest.avg_len.toFixed(0);
     document.getElementById('s-draws').textContent = (latest.draw_rate * 100).toFixed(0) + '%';
+    document.getElementById('s-waste').textContent = (latest.avg_coins_wasted != null) ? latest.avg_coins_wasted.toFixed(2) : '--';
 
     const health = latest.avg_len >= 500 ? (latest.iteration < 30 ? 'EARLY' : 'STALLED') : 'LEARNING';
     const el = document.getElementById('s-health');
@@ -223,9 +257,13 @@ async function refresh() {
         makeDataset('Duchies', '#e67e22', iters.map(d => d.avg_duchies || 0)),
         makeDataset('Estates', '#95a5a6', iters.map(d => d.avg_estates || 0)),
         makeDataset('Copper', '#cd7f32', iters.map(d => d.avg_copper || 0)),
-        makeDataset('Silver/Gold', '#f1c40f', iters.map(d => d.avg_treasures)),
-        makeDataset('Action Cards', '#3498db', iters.map(d => d.avg_action_buys || 0)),
+        makeDataset('Silver', '#c0c0c0', iters.map(d => d.avg_silver ?? d.avg_treasures ?? 0)),
+        makeDataset('Gold', '#ffd700', iters.map(d => d.avg_gold ?? 0)),
+        makeDataset('Smithy', '#2ecc71', iters.map(d => (d.top_buys || {}).Smithy || 0)),
+        makeDataset('Gardens', '#27ae60', iters.map(d => (d.top_buys || {}).Gardens || 0)),
+        makeDataset('Market', '#1abc9c', iters.map(d => (d.top_buys || {}).Market || 0)),
         makeDataset('Curses', '#8e44ad', iters.map(d => d.avg_curses || 0)),
+        makeDataset('$/Wasted', '#e74c3c', iters.map(d => d.avg_coins_wasted || 0)),
     ];
     buysChart.update();
 
@@ -237,25 +275,69 @@ async function refresh() {
     ];
     lengthChart.update();
 
+    // Buy Curve (stacked bar for latest iteration)
+    const CURVE_CARDS = ['Copper','Silver','Gold','Estate','Duchy','Province','Curse','Smithy','Gardens','Market'];
+    const CURVE_COLORS = ['#cd7f32','#c0c0c0','#ffd700','#95a5a6','#e67e22','#e74c3c','#8e44ad','#2ecc71','#27ae60','#1abc9c'];
+    const curve = latest.buy_curve;
+    if (curve && curve.length >= 5) {
+        const bucketLabels = curve.map((_, i) => `T${i*5+1}-${(i+1)*5}`);
+        buyCurveChart.data.labels = bucketLabels;
+        buyCurveChart.data.datasets = CURVE_CARDS.map((card, i) => ({
+            label: card,
+            data: curve.map(bucket => bucket[card] || 0),
+            backgroundColor: CURVE_COLORS[i],
+        }));
+        buyCurveChart.update();
+    }
+
+    // Buy Timing over training (line chart)
+    const timingCards = ['Province','Gold','Silver','Smithy','Gardens','Market'];
+    const timingColors = ['#e74c3c','#ffd700','#c0c0c0','#2ecc71','#27ae60','#1abc9c'];
+    const timingIters = iters.filter(d => d.buy_timing);
+    if (timingIters.length) {
+        const timingLabels = timingIters.map(d => d.iteration);
+        buyTimingChart.data.labels = timingLabels;
+        buyTimingChart.data.datasets = timingCards.map((card, i) => makeDataset(
+            card, timingColors[i], timingIters.map(d => d.buy_timing[card] || null)
+        ));
+        buyTimingChart.update();
+    }
+
     // Table
     const tbody = document.getElementById('iter-table');
-    tbody.innerHTML = iters.slice().reverse().map(d => `<tr>
+    tbody.innerHTML = iters.slice().reverse().map(d => {
+        const tb = d.top_buys || {};
+        const prov = d.avg_provinces || 0;
+        const duchy = d.avg_duchies || 0;
+        const estate = d.avg_estates || 0;
+        const copper = d.avg_copper || 0;
+        const silver = d.avg_silver ?? d.avg_treasures ?? 0;
+        const gold = d.avg_gold ?? 0;
+        const smithy = tb.Smithy || 0;
+        const gardens = tb.Gardens || 0;
+        const market = tb.Market || 0;
+        const curse = d.avg_curses || 0;
+        return `<tr>
         <td>${d.iteration}</td>
         <td>${d.policy.toFixed(4)}</td>
         <td>${d.total.toFixed(4)}</td>
         <td>${d.avg_score.toFixed(1)}</td>
-        <td>${d.avg_provinces.toFixed(2)}</td>
-        <td>${(d.avg_duchies || 0).toFixed(2)}</td>
-        <td>${(d.avg_estates || 0).toFixed(2)}</td>
-        <td>${(d.avg_copper || 0).toFixed(2)}</td>
-        <td>${d.avg_treasures.toFixed(2)}</td>
-        <td>${(d.avg_action_buys || 0).toFixed(2)}</td>
-        <td>${(d.avg_curses || 0).toFixed(2)}</td>
+        <td>${prov.toFixed(2)}</td>
+        <td>${duchy.toFixed(2)}</td>
+        <td>${estate.toFixed(2)}</td>
+        <td>${copper.toFixed(2)}</td>
+        <td>${silver.toFixed(2)}</td>
+        <td>${gold.toFixed(2)}</td>
+        <td>${smithy.toFixed(2)}</td>
+        <td>${gardens.toFixed(2)}</td>
+        <td>${market.toFixed(2)}</td>
+        <td>${curse.toFixed(2)}</td>
         <td>${d.avg_buys.toFixed(1)}</td>
+        <td>${(d.avg_coins_wasted || 0).toFixed(2)}</td>
         <td>${d.avg_len.toFixed(0)}</td>
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
-    </tr>`).join('');
+    </tr>`}).join('');
 }
 
 initCharts();
