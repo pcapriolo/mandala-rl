@@ -8,7 +8,7 @@
 // --- Constants ---
 static constexpr int DOM_NUM_CARD_TYPES = 31;  // IDs 0-30
 static constexpr int DOM_NUM_ACTIONS = 131;
-static constexpr int DOM_TENSOR_CHANNELS = 156;
+static constexpr int DOM_TENSOR_CHANNELS = 218;
 
 // Action offsets
 static constexpr int DOM_END_ACTIONS = 0;
@@ -213,6 +213,7 @@ public:
     int8_t active_player_ = 0;    // Whose turn it is
     DomPlayerState players[2];
     int8_t supply[DOM_NUM_CARD_TYPES] = {};
+    bool supply_disabled[DOM_NUM_CARD_TYPES] = {};  // cards disabled by curriculum
     std::vector<int8_t> trash;
     DomPhase phase = DOM_PHASE_ACTION;
     int8_t actions_remaining = 1;
@@ -242,10 +243,27 @@ public:
     int16_t total_moves[2] = {};          // Total decisions made per player
     int16_t total_coins_at_buy[2] = {};   // Cumulative coins at buy phase entry
     int16_t buy_phase_entries[2] = {};    // Count of buy phases (for averaging)
+    int16_t turns_with_action_in_hand[2] = {};  // Turns where hand had action card(s)
+    int16_t turns_action_played[2] = {};        // Turns where player played >= 1 action
+    bool action_played_this_turn = false;       // Per-turn flag, reset at turn start
+    int16_t card_buys[DOM_NUM_CARD_TYPES][2] = {};  // Per-card buy counts per player
+    // Turn-bucketed buy tracking: 10 buckets of 5 turns each (T1-5 through T46-50)
+    static constexpr int DOM_BUY_BUCKETS = 10;
+    int16_t bucketed_buys[10][DOM_NUM_CARD_TYPES][2] = {};
+    int16_t buy_turn_sum[DOM_NUM_CARD_TYPES][2] = {};  // Sum of turn numbers when each card bought
+    int buy_bucket() const {
+        int idx = (turn_number - 1) / 5;  // 0-based: turns 1-5→0, 6-10→1, ...
+        return std::min(idx, DOM_BUY_BUCKETS - 1);
+    }
+    int16_t coins_wasted[2] = {};               // Coins left unspent at end of buy phase
+    int16_t cards_trashed[2] = {};              // Cards trashed (Chapel, Remodel, Mine, Moneylender)
+    int16_t cards_discarded_cellar[2] = {};     // Cards discarded via Cellar
+    int16_t done_selecting_empty[2] = {};       // Times DONE_SELECTING with 0 cards selected
 
     // Override GameState
     int current_player() const override { return current_player_; }
     int tensor_channels() const override { return DOM_TENSOR_CHANNELS; }
+    int get_turn_number() const override { return turn_number; }
     std::unique_ptr<GameState> copy() const override;
     void to_tensor(std::vector<float>& out) const override;
     std::unique_ptr<GameState> get_canonical() const override;
@@ -258,6 +276,16 @@ public:
     int num_actions() const override { return DOM_NUM_ACTIONS; }
     int tensor_channels() const override { return DOM_TENSOR_CHANNELS; }
 
+    void set_max_action_cards(int n) { max_action_cards_ = n; }
+    void set_forced_kingdom_cards(const std::vector<int>& cards) {
+        forced_kingdom_cards_.clear();
+        for (int c : cards) forced_kingdom_cards_.push_back(static_cast<int8_t>(c));
+    }
+    void set_disabled_basic_supply(const std::vector<int>& cards) {
+        disabled_basic_supply_.clear();
+        for (int c : cards) disabled_basic_supply_.push_back(static_cast<int8_t>(c));
+    }
+
     std::unique_ptr<GameState> create_initial_state(std::mt19937& rng) override;
     void get_valid_moves(const GameState& state, std::vector<float>& out) const override;
     std::unique_ptr<GameState> get_next_state(const GameState& state, int action) const override;
@@ -267,6 +295,10 @@ public:
     void randomize_hidden(GameState& state, std::mt19937& rng) const override;
 
 private:
+    int max_action_cards_ = 10;
+    std::vector<int8_t> forced_kingdom_cards_;  // if non-empty, use exactly these cards every game
+    std::vector<int8_t> disabled_basic_supply_;  // basic supply cards to zero out (curriculum)
+
     void play_card(DominionState& s, int8_t card_id) const;
     void handle_effect(DominionState& s, int8_t card_id) const;
     void start_attack(DominionState& s, int8_t card_id, DomPendingType dtype,

@@ -2,10 +2,11 @@
 
 # Network Architecture
 network:
-  input_channels: 156
+  input_channels: 218
   num_actions: 131  # 3 phase-end + 31*4 card actions + MOAT/DECLINE/ACCEPT/DECLINE
   num_res_blocks: 10
   channels: 128
+  belief_size: 31
 
 # MCTS Parameters
 mcts:
@@ -13,9 +14,9 @@ mcts:
   c_puct: 1.0
   dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
   dirichlet_epsilon: 0.25
-  action_explore_boost: 1.0  # Disabled — root-only boost wastes simulations without enabling action play
-  action_buy_force_rate: 0.0  # Disabled — crowded out Silver/Gold buys causing province collapse (DEVLOG #64)
-  action_play_force_rate: 0.0  # Disabled — forcing exhausted, no province recovery (DEVLOG #65)
+  action_explore_boost: 0.0
+  action_buy_force_rate: 0.0
+  action_play_force_rate: 0.0
 
 # Self-Play Parameters
 selfplay:
@@ -24,7 +25,7 @@ selfplay:
   leaves_per_game: 8
   temperature: 1.0
   temperature_threshold: 40  # Higher — Dominion games are longer than Mandala/LC
-  opponent_diversity_ratio: 0.2  # 20% of full-sim games use older checkpoint as opponent
+  opponent_diversity_ratio: 0.0  # Phase 0: pure self-play, no opponent diversity
 
 # Training Parameters
 training:
@@ -35,10 +36,11 @@ training:
   weight_decay: 0.0001
   lr_milestones: [500, 1500, 2500]
   lr_gamma: 0.3
-  replay_buffer_size: 200000  # Larger — Dominion games produce ~200-600 states each
+  replay_buffer_size: 100000  # 218-ch tensors are large; saved to /workspace (100GB) which has plenty of room
+  min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
   checkpoint_frequency: 1
   checkpoint_every_n_games: 10
-  entropy_weight: 0.15        # Encourage exploration in large action space
+  entropy_weight: 0.15        # Higher for fresh training — encourages exploration of buy space
   policy_weight: 3.0          # Start 3x, decays to 1.0 over 256 iters
 
 # Evaluation Parameters
@@ -52,10 +54,10 @@ evaluation:
 
 # Paths
 paths:
-  checkpoint_dir: data/dominion/checkpoints
-  replay_dir: data/dominion/replays
-  log_dir: data/dominion/logs
-  elo_file: data/dominion/elo_ratings.json
+  checkpoint_dir: /workspace/dominion_data/checkpoints
+  replay_dir: /workspace/dominion_data/replays
+  log_dir: /workspace/dominion_data/logs
+  elo_file: /workspace/dominion_data/elo_ratings.json
 
 # Deploy
 deploy_frequency: 25
@@ -65,6 +67,12 @@ device: auto
 
 # Replay saving
 save_replay_frequency: 1
+
+# Curriculum Learning — Phase 0: Silver/Gold/Province only
+disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper, Estate, Duchy, Curse, Gardens — cannot be bought
+max_action_cards: 0                   # No action cards in kingdom
+forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
+big_money_force_rate: 0.0
 
 # Reproducibility
 seed: 42

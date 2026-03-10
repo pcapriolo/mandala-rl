@@ -18,7 +18,11 @@ public:
                 int leaves_per_game = 1,
                 double action_explore_boost = 0.0,
                 double action_buy_force_rate = 0.0,
-                double action_play_force_rate = 0.0);
+                double action_play_force_rate = 0.0,
+                int max_action_cards = 10,
+                double big_money_force_rate = 0.0,
+                std::vector<int> forced_kingdom_cards = {},
+                std::vector<int> disabled_basic_supply = {});
 
     void init_games(int num_games);
 
@@ -73,9 +77,12 @@ private:
     double action_explore_boost_;
     double action_buy_force_rate_;
     double action_play_force_rate_;
+    double big_money_force_rate_;
+    std::vector<int> forced_kingdom_cards_;
+    std::vector<int> disabled_basic_supply_;
     std::mt19937 rng_;
 
-    int max_moves_ = 0;  // 0 = no limit
+    int max_turns_ = 0;  // 0 = no limit; when set, caps on get_turn_number() not sub-actions
     std::vector<PerGame> games_;
     std::vector<int> active_indices_;  // indices of non-finished games
     std::vector<PendingLeaf> pending_leaves_;

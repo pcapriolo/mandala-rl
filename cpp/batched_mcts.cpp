@@ -14,21 +14,32 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          int leaves_per_game,
                          double action_explore_boost,
                          double action_buy_force_rate,
-                         double action_play_force_rate)
+                         double action_play_force_rate,
+                         int max_action_cards,
+                         double big_money_force_rate,
+                         std::vector<int> forced_kingdom_cards,
+                         std::vector<int> disabled_basic_supply)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
       leaves_per_game_(leaves_per_game), action_explore_boost_(action_explore_boost),
       action_buy_force_rate_(action_buy_force_rate),
-      action_play_force_rate_(action_play_force_rate), rng_(seed)
+      action_play_force_rate_(action_play_force_rate),
+      big_money_force_rate_(big_money_force_rate),
+      forced_kingdom_cards_(forced_kingdom_cards),
+      disabled_basic_supply_(disabled_basic_supply), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
     } else if (game_type == "lost_cities") {
         game_ = std::make_unique<LostCitiesGame>();
     } else if (game_type == "dominion") {
-        game_ = std::make_unique<DominionGame>();
-        max_moves_ = 200;  // With auto-play treasures, turns are ~2-4 moves; 200 >> enough
+        auto dom = std::make_unique<DominionGame>();
+        dom->set_max_action_cards(max_action_cards);
+        if (!forced_kingdom_cards.empty()) dom->set_forced_kingdom_cards(forced_kingdom_cards);
+        if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
+        game_ = std::move(dom);
+        max_turns_ = 0;  // No cap — bot now buys ~4.65 provinces/game, games terminate naturally
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
@@ -299,23 +310,41 @@ std::vector<int> BatchedMCTS::finish_move() {
         }
 
         // Force play action cards in Dominion ACTION phase (epsilon-greedy exploration)
+        // Prioritize +action cards (Village, etc.) before terminals (Chapel, Smithy, etc.)
         if (action_play_force_rate_ > 0.0 && game_type_ == "dominion") {
             auto* ds = dynamic_cast<DominionState*>(g.state.get());
             if (ds && ds->phase == DOM_PHASE_ACTION && ds->actions_remaining > 0) {
                 std::vector<float> valid;
                 game_->get_valid_moves(*g.state, valid);
-                std::vector<int> playable_actions;
+                std::vector<int> plus_action_plays;   // +action cards (Village, Market, etc.)
+                std::vector<int> terminal_plays;      // terminals (Chapel, Smithy, etc.)
                 for (int a = DOM_PLAY_OFFSET; a < DOM_BUY_OFFSET; a++) {
                     if (a < static_cast<int>(valid.size()) && valid[a] > 0.0f) {
-                        playable_actions.push_back(a);
+                        int8_t cid = static_cast<int8_t>(a - DOM_PLAY_OFFSET);
+                        if (CARD_DEFS[cid].plus_actions > 0) {
+                            plus_action_plays.push_back(a);
+                        } else {
+                            terminal_plays.push_back(a);
+                        }
                     }
                 }
-                if (!playable_actions.empty()) {
+                // Pick which set to force from: +action first if available AND terminals exist
+                // (if only +action cards, or actions_remaining > 1, terminals are safe too)
+                std::vector<int>* force_set = nullptr;
+                if (!plus_action_plays.empty() && !terminal_plays.empty() && ds->actions_remaining == 1) {
+                    force_set = &plus_action_plays;  // Play village before chapel
+                } else if (!plus_action_plays.empty() || !terminal_plays.empty()) {
+                    // Combine both — either no conflict, or only one type present
+                    plus_action_plays.insert(plus_action_plays.end(),
+                                            terminal_plays.begin(), terminal_plays.end());
+                    force_set = &plus_action_plays;
+                }
+                if (force_set && !force_set->empty()) {
                     std::uniform_real_distribution<float> coin(0.0f, 1.0f);
                     if (coin(rng_) < static_cast<float>(action_play_force_rate_)) {
                         std::fill(action_probs.begin(), action_probs.end(), 0.0f);
-                        for (int a : playable_actions) {
-                            action_probs[a] = 1.0f / playable_actions.size();
+                        for (int a : *force_set) {
+                            action_probs[a] = 1.0f / force_set->size();
                         }
                     }
                 }
@@ -348,6 +377,28 @@ std::vector<int> BatchedMCTS::finish_move() {
             }
         }
 
+        if (big_money_force_rate_ > 0.0 && game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_BUY && !ds->pending.active()) {
+                // Big money priority: Province > Gold > Duchy > Silver
+                static const int BM_PRIORITY[] = {CARD_PROVINCE, CARD_GOLD, CARD_DUCHY, CARD_SILVER};
+                int forced_action = -1;
+                for (int cid : BM_PRIORITY) {
+                    if (ds->supply[cid] > 0 && CARD_DEFS[cid].cost <= ds->coins) {
+                        forced_action = DOM_BUY_OFFSET + cid;
+                        break;
+                    }
+                }
+                if (forced_action >= 0) {
+                    std::uniform_real_distribution<float> coin(0.0f, 1.0f);
+                    if (coin(rng_) < static_cast<float>(big_money_force_rate_)) {
+                        std::fill(action_probs.begin(), action_probs.end(), 0.0f);
+                        action_probs[forced_action] = 1.0f;
+                    }
+                }
+            }
+        }
+
         // Record training data: canonical state tensor, policy, player, belief labels
         auto canonical = g.state->get_canonical();
         std::vector<float> tensor_data;
@@ -357,18 +408,30 @@ std::vector<int> BatchedMCTS::finish_move() {
         g.recorded_players.push_back(g.state->current_player());
 
         // Extract belief labels: ground-truth opponent hand + cup/expedition colors
-        // 12 floats: Mandala [0-5] hand, [6-11] cup; LC [0-4] hand, [5-9] expedition
-        std::vector<float> belief_labels(12, 0.0f);
+        // Mandala: 12 floats [0-5] hand, [6-11] cup
+        // LC: 12 floats [0-4] hand, [5-9] expedition
+        // Dominion: 31 floats — binary presence of each card type in opponent hand
+        std::vector<float> belief_labels;
         if (auto* ms = dynamic_cast<MandalaState*>(g.state.get())) {
+            belief_labels.assign(12, 0.0f);
             int opp = 1 - ms->current_player_;
             for (int c : ms->hands[opp]) belief_labels[c] = 1.0f;
             for (int c : ms->cups[opp]) belief_labels[6 + c] = 1.0f;
         } else if (auto* ls = dynamic_cast<LostCitiesState*>(g.state.get())) {
+            belief_labels.assign(12, 0.0f);
             int opp = 1 - ls->current_player_;
             for (auto& card : ls->hands[opp]) belief_labels[card.color] = 1.0f;
             for (int c = 0; c < LC_NUM_COLORS; c++) {
                 if (!ls->expeditions[opp][c].empty()) belief_labels[5 + c] = 1.0f;
             }
+        } else if (auto* ds = dynamic_cast<DominionState*>(g.state.get())) {
+            belief_labels.assign(DOM_NUM_CARD_TYPES, 0.0f);
+            int opp = 1 - ds->current_player_;
+            for (auto c : ds->players[opp].hand) {
+                belief_labels[static_cast<int>(c)] = 1.0f;
+            }
+        } else {
+            belief_labels.assign(12, 0.0f);
         }
         g.recorded_belief_labels.push_back(belief_labels);
 
@@ -381,10 +444,10 @@ std::vector<int> BatchedMCTS::finish_move() {
         g.move_count++;
         g.root.reset();
 
-        // Check terminal or max moves exceeded (safety cap for long games)
+        // Check terminal or turn cap exceeded
         bool terminal = game_->is_terminal(*g.state);
         bool move_cap_hit = false;
-        if (!terminal && max_moves_ > 0 && g.move_count >= max_moves_) {
+        if (!terminal && max_turns_ > 0 && g.state->get_turn_number() >= max_turns_) {
             terminal = true;
             move_cap_hit = true;
         }
@@ -394,6 +457,8 @@ std::vector<int> BatchedMCTS::finish_move() {
             if (move_cap_hit) {
                 // get_reward guards on game_over flag; bypass it and score by VP margin
                 float margin = static_cast<float>(g.score_p0 - g.score_p1);
+                // Apply same province-buy bonus as get_reward (from P0 perspective)
+                margin += game_->score_bonus_p0(*g.state);
                 g.outcome = std::max(-1.0f, std::min(1.0f, margin / 5.0f));
             } else {
                 g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
@@ -437,11 +502,12 @@ py::tuple BatchedMCTS::get_game_data(int game_idx) {
 
         players.append(py::int_(g.recorded_players[i]));
 
-        // Belief labels: 12 floats (opp hand colors + opp cup colors)
+        // Belief labels: variable size (12 for Mandala/LC, 31 for Dominion)
         if (i < static_cast<int>(g.recorded_belief_labels.size())) {
-            py::array_t<float> bl(12);
+            int bl_size = static_cast<int>(g.recorded_belief_labels[i].size());
+            py::array_t<float> bl(bl_size);
             auto bl_buf = bl.mutable_unchecked<1>();
-            for (int j = 0; j < 12; j++) {
+            for (int j = 0; j < bl_size; j++) {
                 bl_buf(j) = g.recorded_belief_labels[i][j];
             }
             belief_labels.append(bl);
@@ -536,6 +602,46 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
         summary["total_moves"] = py::make_tuple(ds->total_moves[0], ds->total_moves[1]);
         summary["total_coins_at_buy"] = py::make_tuple(ds->total_coins_at_buy[0], ds->total_coins_at_buy[1]);
         summary["buy_phase_entries"] = py::make_tuple(ds->buy_phase_entries[0], ds->buy_phase_entries[1]);
+        summary["turns_with_action_in_hand"] = py::make_tuple(ds->turns_with_action_in_hand[0], ds->turns_with_action_in_hand[1]);
+        summary["turns_action_played"] = py::make_tuple(ds->turns_action_played[0], ds->turns_action_played[1]);
+        summary["coins_wasted"] = py::make_tuple(ds->coins_wasted[0], ds->coins_wasted[1]);
+        summary["cards_trashed"] = py::make_tuple(ds->cards_trashed[0], ds->cards_trashed[1]);
+        summary["cards_discarded_cellar"] = py::make_tuple(ds->cards_discarded_cellar[0], ds->cards_discarded_cellar[1]);
+        summary["done_selecting_empty"] = py::make_tuple(ds->done_selecting_empty[0], ds->done_selecting_empty[1]);
+
+        // Per-card buy counts (only include cards with >0 buys)
+        py::dict card_buys;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            int total = ds->card_buys[i][0] + ds->card_buys[i][1];
+            if (total > 0) {
+                card_buys[py::int_(i)] = py::make_tuple(ds->card_buys[i][0], ds->card_buys[i][1]);
+            }
+        }
+        summary["card_buys"] = card_buys;
+
+        // Turn-bucketed buy counts
+        py::list bucketed;
+        for (int b = 0; b < DominionState::DOM_BUY_BUCKETS; b++) {
+            py::dict bucket;
+            for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+                int total = ds->bucketed_buys[b][i][0] + ds->bucketed_buys[b][i][1];
+                if (total > 0) {
+                    bucket[py::int_(i)] = py::make_tuple(ds->bucketed_buys[b][i][0], ds->bucketed_buys[b][i][1]);
+                }
+            }
+            bucketed.append(bucket);
+        }
+        summary["bucketed_buys"] = bucketed;
+
+        // Buy turn sums (for computing avg turn per card)
+        py::dict turn_sums;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            int total = ds->buy_turn_sum[i][0] + ds->buy_turn_sum[i][1];
+            if (total > 0) {
+                turn_sums[py::int_(i)] = py::make_tuple(ds->buy_turn_sum[i][0], ds->buy_turn_sum[i][1]);
+            }
+        }
+        summary["buy_turn_sum"] = turn_sums;
     }
 
     return summary;

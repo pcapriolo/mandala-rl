@@ -92,7 +92,8 @@ def main():
         input_channels=network_config['input_channels'],
         num_actions=network_config['num_actions'],
         num_res_blocks=network_config['num_res_blocks'],
-        channels=network_config['channels']
+        channels=network_config['channels'],
+        belief_size=network_config.get('belief_size', 12)
     )
     print(f"Created network with {sum(p.numel() for p in network.parameters())} parameters")
 
@@ -129,6 +130,7 @@ def main():
         'num_actions': network_config['num_actions'],
         'num_res_blocks': network_config['num_res_blocks'],
         'channels': network_config['channels'],
+        'belief_size': network_config.get('belief_size', 12),
 
         # Paths
         'checkpoint_dir': config['paths']['checkpoint_dir'],
@@ -162,6 +164,8 @@ def main():
 
         # Opponent diversity (fraction of full-sim games played vs older checkpoint)
         'opponent_diversity_ratio': config['selfplay'].get('opponent_diversity_ratio', 0.0),
+        'opponent_iter_min': config['selfplay'].get('opponent_iter_min', None),
+        'opponent_iter_max': config['selfplay'].get('opponent_iter_max', None),
 
         # Action exploration boost (Dominion: multiply PLAY priors in ACTION phase)
         'action_explore_boost': config['mcts'].get('action_explore_boost', 0.0),
@@ -171,6 +175,12 @@ def main():
 
         # Action play forcing (Dominion: epsilon-greedy play of action cards in hand)
         'action_play_force_rate': config['mcts'].get('action_play_force_rate', 0.0),
+
+        # Curriculum: max action cards in kingdom (0 = Phase 0, no action cards)
+        'max_action_cards': config.get('max_action_cards', 10),
+        'big_money_force_rate': config.get('big_money_force_rate', 0.0),
+        'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
+        'disabled_basic_supply': config.get('disabled_basic_supply', []),
     }
 
     # Create trainer

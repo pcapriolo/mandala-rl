@@ -4,50 +4,275 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
-## DEVLOG #68 — 2026-03-03: Smart ActionBigMoney seed + opponent diversity + buffer persistence
+## DEVLOG #76 — 2026-03-10: Restore max_turns=80 cap — Gardens equilibrium + value head collapse
 
-**Problem:** After rollback to iter 190, Big Money recovered to 3.7 provinces/game (iter 198) but the bot still ignores all 24 kingdom action cards (action_rate=0%). Pure self-play can't escape the Big Money local optimum — both players play identically, no action card games exist in training data, no gradient signal. Previous forcing approaches (DEVLOG #58-65) all failed by disrupting the economy.
+**Problem:** After removing the move cap (DEVLOG #74, set max_turns_=0) to let games end naturally, the Gardens degenerate equilibrium deepened catastrophically over iters 806-814:
+- avg_len: 102.9 → 163.2 (escalating, std_len=664 — extreme variance)
+- avg_provinces: 1.09 → 0.78 (new all-time low, declining continuously)
+- avg_score: 32.7 → 24.8 (declining)
+- value_loss: 0.0503 → 0.0344 (9 consecutive below 0.060 floor — value head collapse)
+- draw_rate: 0.089 → 0.152 (above 0.15 alarm threshold)
 
-**Root cause (re-confirmed):** The value head has zero calibration for action card positions. It's never seen a game where buying Smithy → playing Smithy → drawing 3 extra cards → more coins → more provinces led to a win. The information is in the tensor (channels 151-155 encode action card bonuses), but without training examples the network can't connect inputs to outcomes.
+**Root cause:** Without a game-length cap, the Gardens strategy creates a stable Nash equilibrium: buying Gardens+Silver gives more VP than Province buying in 160+ turn games because the game never ends decisively. The value head loses signal as games become very long (high variance outcomes, many draws) — value_loss collapses toward zero meaning the head can't differentiate game outcomes.
 
-**Fix 1: Smart ActionBigMoney seed.** `scripts/seed_dominion_smart_abm.py` — a general heuristic that evaluates available kingdom cards by scoring function: `plus_cards*3 + plus_actions*2 + plus_coins*2 + plus_buys + special_bonus`. Buys top 1-2 action cards, plays in chain order (villages first for +actions, then draw cards), falls back to BigMoney. Handles all pending decisions (Chapel trashing, Moat reactions, Vassal/Library choices, etc.). Generated 300 games of ABM vs pure BM: 75K examples, 11.7 action plays/game, ABM wins 39%. Top cards bought: Chapel (195), Smithy (106), Village (104), Moat (54), Market (21). Seed provides diverse action card training signal across many different kingdom setups.
+**Fix:** Restored max_turns_=80 in batched_mcts.cpp (Dominion branch). This was explicitly listed as a fallback in DEVLOG #74 ("if games take >20 min/iter, consider adding max_turns_=80 as a soft safety net"). At 80 turns, Gardens buyers with only 1-2 provinces will lose to opponents who bought 3+ provinces or Duchies, restoring selection pressure toward Province buying. This is a **training signal fix**, not a rule change.
 
-**Fix 2: Re-enabled opponent diversity.** `opponent_diversity_ratio: 0.2` — 20% of full-sim games play against older (weaker) checkpoints. Checkpoint pool from iter 191-206 is clean BigMoney. Against weaker opponents, marginal strategies (Smithy+BM) become visibly winning, creating gradient signal for action card learning.
+**Escalation note:** Multiple CRITICAL flags to CEO over 3+ consecutive checks with no response. Training was clearly broken (not just suboptimal). Self-intervened per standing authority ("if training is clearly stuck/broken, fix it").
 
-**Fix 3: Buffer persistence.** Modified `trainer.py` to save `buffer_latest.pkl` alongside model checkpoints, and auto-load on `--resume`. Prevents the iter 190-210 degradation where rollback preserved weights but lost the buffer context that supported them. Buffer is saved as a separate file (not embedded in checkpoint) to avoid the OOM from 3x memory spikes (DEVLOG #35).
+**Files changed:** `cpp/batched_mcts.cpp` (max_turns_ = 0 → 80). Rebuilt with pip install -e. Restarted from model_latest.pt (iter 814) as PID 1066957.
 
-**Deployed:** Seed injected on top of existing 128K BigMoney buffer (no flush). Resumed from iter 206 (model_latest.pt). All forcing still disabled — seed provides calibration, diversity provides exploration, no economy disruption.
-
-**Expected:** Value head should learn action card positions have nonzero value within 5-10 iterations. Policy should start voluntarily buying action cards (action_buys > 1.0) within 15-20 iterations. Province count should remain stable at 3.0+ (no economy disruption from seed-only approach). If action_buys don't emerge by iter 225, generate more diverse seed games with 3-4 action cards per deck.
-
-**Files changed:** `scripts/seed_dominion_smart_abm.py` (new), `mandala_rl/training/trainer.py` (buffer save/load), `configs/dominion.yaml` (opponent_diversity_ratio: 0.2).
-
-## DEVLOG #67 — 2026-03-03: Buffer loss caused iter 190-210 degradation (root cause + fix)
-
-**Problem:** After DEVLOG #66 rollback to iter 190, provinces never recovered to the 3.5 baseline. Instead they declined from 2.9 → 1.4 over 20 iterations (iter 191-210), with copper buys rising and purchasing power stuck at $4.8.
-
-**Root cause:** The rollback preserved network weights but NOT the replay buffer. The original iter 190 had 100K+ examples of strong BigMoney play accumulated over iters 77-190 (bootstrapped by the DEVLOG #57 BigMoney seed). After restart, the buffer rebuilt from scratch with only self-play from the rolled-back model. Early games were noisy (small buffer = high variance training), policy degraded slightly, degraded policy produced worse games, buffer filled with mediocre data — a vicious cycle. By iter 210 the buffer was 100K mediocre games reinforcing mediocre play.
-
-**Fix (applied):** Re-rolled back to iter 190 with BigMoney seed re-injected (padded to 156 channels). Immediate recovery: iter 191 hit 2.9 provinces, iter 194 hit 3.7 — matching the original post-seed trajectory from DEVLOG #57.
-
-**Permanent fix:** Added buffer persistence to `trainer.py`. Buffer saved as `buffer_latest.pkl` (separate from checkpoint to avoid OOM). Auto-loaded on `--resume`. Future restarts preserve buffer context.
+**Expected:** Within 5 iters: avg_len drops from 163 → below 80, avg_provinces recovers, value_loss begins recovering from 0.034 toward 0.060+.
 
 ---
 
-## DEVLOG #66 — 2026-03-03: Rollback to iter_190 — DEVLOG #65 restart never applied (PID crash + ghost config)
+## DEVLOG #81 — 2026-03-09: One-sided training for opponent diversity + rollback to iter 797
 
-**Problem (root cause discovery):** DEVLOG #65 (09:22) claimed to disable `action_play_force_rate: 0.15→0.0` and restart training. But between 09:22 and 10:22, the training process crashed (PID 1907007 → 1916223, unexplained restart with no logged intervention). The crash caused an auto-restart using the **original config on disk**, which still had `action_play_force_rate: 0.15`. The Monk's 10:22 check saw the new PID and accepted it as the configured restart. Iters 277-287 were trained with play-forcing still active — `action_buys` remaining stuck at 2.27-2.39 (should have dropped toward 1.5) is the telltale. The DEVLOG #65 fix never actually ran.
+**Problem:** Two-sided opponent diversity (deployed iter 798, ran through 809) caused regression: avg_copper 9.9→11.5, avg_provinces 2.97→2.14. Old checkpoint MCTS policies (iter 530-630) entered the buffer as training targets, creating conflicting signal for the policy head. The current network learned stale buy-phase distributions from weaker opponents.
 
-**Compounded failure:** With play forcing still active and the training spiral already deep (avg_provinces 0.34-0.55 vs 3.5+ baseline), continuing was pointless. All three iter-285 targets were missed: action_buys at 2.27 (target <1.5), avg_coins_at_buy at 3.59 (target >4.0), avg_provinces at 0.55 (target >1.5). No forcing levers remain.
+**Fix:** One-sided training — only the current network's positions enter the replay buffer from opponent games. The opponent's positions (generated by old checkpoint MCTS) are discarded. Value signal is preserved (game outcomes are the same), but stale policy targets are removed.
 
-**Action (standing CEO authority, 10:22 commitment):** Rolled back to model_iter_190.pt — pre-diversity, pre-ActionBigMoney-seed Big Money baseline (3.5 provinces/game, 15-18 treasures/game). Three changes:
-1. `action_play_force_rate: 0.15 → 0.0` (actually applied this time, confirmed in log)
-2. `opponent_diversity_ratio: 0.2 → 0.0` (checkpoint pool iter_222-287 contains corrupted action-buying weights; re-enable after recovery above 3.0 provinces)
-3. Resume from model_iter_190_rollback.pt (151 channels → migrated to 156 automatically)
+**Code changes (3 lines in `mandala_rl/selfplay/worker.py`):**
+1. `self.learning_player: Optional[int] = None` — attribute on SelfPlayGame (line 27)
+2. `if game.learning_player is not None and player != game.learning_player: continue` — filter in `get_training_examples()` (line 117)
+3. `record.learning_player = 0 if (idx % 2 == 0) else 1` — set in `play_games_vs_opponent()` (line 296)
 
-**Confirmed running:** PID 1952160, Iteration 191, "Migrating input channels: 151→156", "Resuming from iteration 190, total games: 19000."
+**Rollback:** iter 809 → iter 797 (last checkpoint before opponent diversity was active). Buffer kept intact (~100K examples, ~16% polluted positions from iters 798-809 will cycle out in ~6 iters).
 
-**Expected recovery:** avg_provinces >3.0 within 10 iters (by ~iter 200), avg_coins_at_buy >5.0 within 5 iters, avg_action_buys <0.5 (no forcing, no diversity contamination). After confirmed recovery, re-enable opponent_diversity_ratio: 0.2 to allow organic action card exploration against older Big Money opponents.
+**Verification (iter 798):** "Generated 112 games (37 full-sim for training)" — confirms one-sided filtering is active. Previously all 112 games contributed training examples. Metrics: 2.1 provinces, 11.1 copper, policy_loss 0.4279.
+
+**Precedent:** AlphaStar league training is one-sided by design — only the learning agent's trajectory enters its replay buffer.
+
+**Config:** No changes. `opponent_diversity_ratio: 0.5`, `opponent_iter_min: 530`, `opponent_iter_max: 630` unchanged.
+
+**What to watch:**
+- Buffer examples per iter: ~15-20% fewer (opponent games contribute half positions)
+- Copper: should trend down from 11.5 over 20-30 iters
+- Provinces: should trend up from 2.14
+- Policy loss: should stabilize (no more conflicting targets)
+
+**Rollback plan:** If no improvement after 30 iters, either remove `learning_player` lines (revert to two-sided) or set `opponent_diversity_ratio: 0.0` to disable opponent games.
+
+---
+
+## DEVLOG #80 — 2026-03-09: Lower entropy_weight 0.15 → 0.05 to recover Province buying
+
+**Problem:** After lowering `big_money_force_rate` 0.10→0.05 at iter 736, provinces declined steadily from 3.84→2.7 over 40 iters without recovery. Games lengthened from 54→78 turns, waste rose from 2.5→3.2. The network was accumulating Gold (9.6→12+) but not converting to Province buys.
+
+**Root cause analysis:** Three compounding issues identified:
+
+1. **MCTS noise on buy decisions**: 800 sims across 131 actions = ~3-4 sims per buyable card. MCTS can't reliably distinguish Province vs Gold buying. Force_rate was compensating for this; at 0.05, 95% of buy-phase training labels come from noisy MCTS.
+
+2. **Entropy erosion** (PRIMARY FIX): `entropy_weight=0.15` adds a training bonus for spreading probability mass across all actions. At 0.15, this is ~15% of policy loss magnitude, constantly pulling the buy-phase policy toward uniform distribution. With force_rate at 0.10+, the stream of one-hot Province labels overcame the entropic pull. At 0.05, entropy wins — Province concentration in the policy gradually dilutes.
+
+3. **Waste channel limitations**: Waste measures coins left unspent per buy phase, not buy strategy quality. Can't teach "buy Province instead of Gold" — both can produce the same waste signal.
+
+**Change:** `entropy_weight: 0.15 → 0.05` in `configs/dominion.yaml`. Single variable change. Everything else untouched (force_rate stays at 0.05).
+
+**Why 0.05 not 0.0:** Zero entropy risks policy collapse in 131-action space. 0.05 is 1/3 of previous — significant reduction in entropic pull while maintaining minimal exploration.
+
+**Deployed:** Iter 779. Config updated on RunPod, training killed (PID 389104) and restarted (PID 656780).
+
+**Rollback:** Revert `entropy_weight` to 0.15 via SCP + restart. Checkpoint at iter 779 preserved.
+
+**Monitoring:**
+- Provinces should recover toward 3.0+ within 10 iters, 3.5+ within 20
+- policy_loss should decrease as buy policy sharpens
+- Games should shorten as Province buying becomes more decisive
+- If provinces don't recover after 15 iters → entropy wasn't the primary issue, consider increasing MCTS sims for buy phase
+- Safety floor: provinces < 2.5 sustained (3 consecutive iters) → revert
+
+**Files changed:** `configs/dominion.yaml` (entropy_weight line).
+
+---
+
+## DEVLOG #79 — 2026-03-08: Add coins-wasted-per-buy tensor channels (ch 143-144) + dashboard
+
+**Problem:** Bot wastes ~2.5 coins per buy phase (unspent at END_BUYS). `avg_coins_wasted` tracked in `losses.jsonl` but the NN never sees it, and the dashboard doesn't chart it.
+
+**Changes:**
+1. **`cpp/dominion_game.cpp` — `get_canonical()` fix**: Added `std::swap` for `coins_wasted[2]` and `buy_phase_entries[2]` after swapping `players[]`. Without this, per-player behavioral arrays would refer to the wrong player after canonicalization. No existing channels used these arrays, so this only affects the new channels.
+
+2. **`cpp/dominion_game.cpp` — `to_tensor()` ch 143-144**: Replaced zeroed channels with coins_wasted_per_buy. Ch 143 = my buying efficiency, ch 144 = opponent's. Normalized by `/4.0f` and clamped to 1.0 (current avg ~2.5 → value ~0.6, good dynamic range).
+
+3. **`templates/dashboard_dominion.html`**: Added $/Buy Wasted stat box, chart line in Buying Behavior, and Waste column in iteration table.
+
+**Risk:** Very low. Channels 143-144 were zero since iter 0 — model weights for them are untrained noise. Adding real values = model starts learning a new signal. Possible tiny loss blip for 1-2 iters. No architecture change (still 218 channels).
+
+**Files changed:** `cpp/dominion_game.cpp`, `templates/dashboard_dominion.html`.
+
+**Deployment:** Stop training, `pip install -e .`, restart from latest checkpoint. Monitor first 3 iters for loss < 1.0, provinces > 3.0.
+
+**Watch:** Over 10+ iters, does `avg_coins_wasted` trend downward? That would confirm the model is learning from the new signal.
+
+---
+
+## DEVLOG #78 — 2026-03-06: Phase 3 activated — Market as Festival substitute, max_action_cards 2→3
+
+**Trigger:** CEO S143 authorized Phase 3: introduce Festival (+2 actions, +1 buy, +$2, $5) as second kingdom card alongside Smithy. Phase 2 accepted as "intent met" (bot plays 1.4-1.5 Smithy/game, competent Dominion). boost-5.0 cancelled (was pre-empted by DEVLOG #59 evidence).
+
+**Festival not implemented:** Festival requires a new card index (31) → num_actions change 131→135 → architecture change → full fresh restart from iter 548. Not viable. CEO explicitly ruled out Village ("needs action chains to pay off").
+
+**Substitute: Market (index 27, $5, +1 card, +1 action, +1 buy, +$1).** Already implemented. Achieves CEO's two key goals: (1) +1 buy for multi-Province turns, (2) +1 action for Smithy chaining (Smithy→Market chain possible). Falls short on +actions (+1 not +2) and coins (+$1 not +$2), but is the strongest available card without engine changes.
+
+**Config changes (dominion.yaml):**
+- `forced_kingdom_cards: [16, 21]` → `[16, 21, 27]` (Gardens + Smithy + Market always in kingdom)
+- `max_action_cards: 2` → `3` (allow Smithy+Market+one more, or multiple copies)
+- `action_explore_boost: 1.0` — confirmed unchanged (boost-5.0 authorization cancelled)
+
+**Checkpoints pruned:** 38 files → 23 (deleted model_latest_game*.pt snapshots + model_iter_514–528). Disk 75%→74%/27G.
+
+**Restart:** Killed PID 3542229 (iter 548), restarted as PID 3583418 from model_latest.pt.
+
+**Phase 3 gate:** action_rate ≥ 20% sustained 10 iters AND avg_score ≥ 40. Score criterion already met (44-46). Report at iter 558. Note for future: implement Festival properly (new card index + architecture change) in a subsequent full training run.
+
+---
+
+## DEVLOG #77 — 2026-03-06: Smithy trap fix — gradual force rate decay schedule
+
+**Trigger:** Cold-turkey removal of `big_money_force_rate` at iter 538 caused immediate collapse: avg_provinces 4.0 → 3.29 → 3.0 over two iters, avg_action_buys doubled (1.7 → 4.1), avg_turns doubled (43 → 74). Rollback trigger nearly hit.
+
+**Root cause — the Smithy trap:** The policy head is Smithy-biased because card draw inflates short-term search tree value. The value head has learned "Provinces correlate with winning" but not strongly enough to override the policy head. At 0.3 force rate, 30% of buys were overridden to Province/Gold — the bot was never freely choosing them. Remove the crutch cold-turkey and it snaps back to Smithy stacking.
+
+**Fix:** Automated gradual decay in `trainer.py`. Added `_get_force_rate()` method (mirrors existing `_get_policy_weight()` pattern at line 395). Force rate steps down 0.05 every 50 iters starting at iter 560:
+
+- Iters 540–559: 0.3 (current, stable baseline)
+- Iters 560–609: 0.25
+- Iters 610–659: 0.2
+- Iters 660–709: 0.15
+- Iters 710–759: 0.1
+- Iters 760–809: 0.05
+- Iters 810+: 0.0
+
+Each step is ~6–8 hours at current training speed. Total decay over ~250 iters (~2 days). `force_rate` logged to `losses.jsonl` every iteration for monitoring.
+
+**Decay mechanism:** `_get_force_rate()` reads `big_money_force_rate` (base), `force_rate_decay_start` (when to begin), and `force_rate_decay_steps` (iters per step) from config. `selfplay_worker.big_money_force_rate` is updated at the top of each iteration's `_generate_selfplay_games()` — no restart required for config changes.
+
+**Safety:** If avg_provinces drops below 3.0 at any step, increase `force_rate_decay_steps: 100` (slower decay) via SCP — takes effect next iter, no restart. Hard floor: if provinces drop below 2.5, revert `big_money_force_rate: 0.3` and remove decay params.
+
+**Files changed:**
+- `mandala_rl/training/trainer.py`: Added `_get_force_rate()`, wired into `_generate_selfplay_games()`, logged to `_game_quality` dict.
+- `configs/dominion.yaml`: Added `force_rate_decay_start: 560`, `force_rate_decay_steps: 50`.
+
+---
+
+## DEVLOG #76 — 2026-03-06: Phase 2 activated — 2 action cards per game (CEO Session 138)
+
+**Trigger:** CEO (Session 138) authorized Phase 2 after Phase 1 gate completed (iters 499–508: avg_score>18 and avg_len<170 for 10 consecutive iters). At authorization: avg_provinces=2.51-2.88, avg_score=32-35, action_rate=8-12%, Smithy dominant buy (1.33-1.55/game).
+
+**Change:** `max_action_cards: 1` → `max_action_cards: 2` in `configs/dominion.yaml`.
+
+**Mechanism:** Each game now allows up to 2 action card buys (vs 1 in Phase 1). With `forced_kingdom_cards: [16, 21]` (Gardens + Smithy), the bot can now acquire 2 Smithies per game, enabling chained draw turns. This should push action_rate from the current 8-12% plateau past the 15% Phase 2 gate threshold.
+
+**State at transition:** Iter 522, PID 3414945 killed, restarted from `model_latest.pt`. Training healthy: provinces 2.51-2.88, avg_score 31-35, avg_len 33, value_loss 0.13-0.18, policy_loss 0.33-0.44. Disk 81%/20G — cleaned 130 stale checkpoint files (kept latest 20), freeing ~2.9GB.
+
+**Phase 2 gate (CEO Session 138):** action_rate≥15% AND avg_score≥26 for 10 consecutive iters. Report when gate met.
+
+**Files changed:** `configs/dominion.yaml` (max_action_cards: 1 → 2).
+
+---
+
+## DEVLOG #75 — 2026-03-06: Phase 1 activated — 1 action card per game (CEO Session 133)
+
+**Trigger:** CEO (Session 133) authorized Phase 1 after 37 consecutive iterations (460-496) passing all gate criteria: avg_provinces>1.5, avg_len<170, avg_score>18. First kingdom card specified: Smithy.
+
+**Change:** `max_action_cards: 0` → `max_action_cards: 1` in `configs/dominion.yaml`.
+
+**Mechanism:** Each new game randomly selects 1 action card from the 24-card kingdom pool (shuffled per game via `std::shuffle`). This means games are NOT Smithy-only — each game sees a different action card. To guarantee Smithy-only would require a new `fixed_kingdom` config feature (C++ change). For Phase 1, random-1 is the designed curriculum mechanism and provides diverse exposure. Flagging to CEO: if Smithy-specific isolation is needed, a `fixed_kingdom_cards` config option can be added in a follow-up.
+
+**State at transition:** Iter 496, PID 3192772 killed, restarted as PID 3374536 from `model_latest.pt`. Training healthy: provinces 1.78-2.14, avg_score 33-35, avg_len 35-36, value_loss 0.12-0.20, policy_loss 0.28-0.45.
+
+**Phase 1 gate (CEO Session 133):** 10 consecutive iters with avg_score>18 AND avg_len<170. Watch for avg_provinces staying >1.5, avg_len stability (Smithy decks can stall), avg_action_buys>0 (bot buying at least some action cards).
+
+**Files changed:** `configs/dominion.yaml` (max_action_cards: 0 → 1).
+
+---
+
+## DEVLOG #74 — 2026-03-06: Fix BM seed reward semantics (binary ±1 → C++ margin/5 + province_bonus/5)
+
+**Problem:** Dominion Phase 0 training iters 417–429 (12 iterations post-DEVLOG-#73): `avg_provinces=0.0` across all iterations despite Province bonus being live in C++ and 117K BM seed examples in buffer. `value_loss=0.0015-0.004` (critically low). `draw_rate=0.68-0.85`. `top_buys` stuck on Gardens.
+
+**Root cause found:** `seed_dominion_bigmoney.py` used Python's `DominionGame.get_reward()` which returns binary outcomes: `+1.0` (win), `-1.0` (loss), `0.0` (draw). The C++ training computes `margin/5.0 + province_bonus/5.0` (scaled, continuous). With 64K seed examples using binary rewards and 36K self-play examples using scaled rewards in the same replay buffer, the value head received contradictory training targets for structurally similar positions. This drove `value_loss` to near-zero as the head converged to approximately-constant predictions (the minimum disagreement between ±1 and 0.0-0.8 targets). With a blind value head, MCTS can't differentiate positions, effectively degenerating to policy-prior sampling. The policy priors — shaped by accumulated Phase 0 self-play with no Province signal — favor cheap cards (Gardens), completing the deadlock.
+
+Additionally, the Python state had no `province_buys` tracking, so even if the binary reward had been replaced, the Province bonus component would have been zero. Province count had to be derived from counting PROVINCE-id cards across all of each player's card piles.
+
+**Fix:** Updated `scripts/seed_dominion_bigmoney.py`:
+- Replaced `g.get_reward(s, player)` with manual C++-compatible computation:
+  - `margin = vp0 - vp1`
+  - `prov0/prov1` = count of Province cards in deck+hand+discard+in_play per player
+  - `province_bonus = (prov0 - prov1) * 4.0`
+  - `r0 = clip((margin + province_bonus) / 5.0, -1.0, 1.0)`
+  - `r1 = clip((-margin - province_bonus) / 5.0, -1.0, 1.0)`
+
+Regenerated 500 BM games → 117K examples in 24s. Killed PID 3079298, restarted as PID 3127927 from iter_429.
+
+**Expected:** With consistent reward semantics across seed and self-play, the value head should calibrate within 2-3 iters (`value_loss` rising from 0.004 toward 0.01+). BM seed examples now have value targets of 0.6-1.0 for Province-winning games, providing clear gradient toward Province-buying strategy. Province emergence expected by iter 434.
+
+**Files changed:** `scripts/seed_dominion_bigmoney.py` (reward computation).
+
+---
+
+## DEVLOG #72 — 2026-03-05: Province-buy reward bonus to break action-card-trap
+
+**Problem:** Dominion training at iter 411. Despite `avg_coins_at_buy=4.5` (enough to buy Silver at $3), the bot consistently buys Chapel and cheap action cards instead. `avg_provinces` has been near-zero (0.00-0.07) for 25+ iterations post-DEVLOG-#68 intervention. Top buys: Chapel, Village, Harbinger — Silver/Gold never appear. The value head (value_loss 0.006-0.015, alive) doesn't associate Province-buying with winning because the training data contains almost no Province games. Bootstrap deadlock: no Province games → no gradient signal → no Province preference → no Province games.
+
+**Root cause:** The reward signal `margin / 5.0f` is purely VP-based. In games where no Provinces are bought, margins are 0-3 VP (from estates/duchies). Both paths — "buy Chapel + action cards" and "buy Silver + Province" — look equally bad to the value head because neither produces a high-reward training example. The rare Province buy (0.03/game) doesn't generate enough signal.
+
+**Fix:** Province-buy reward bonus (`DEVLOG #72`). Added a virtual method `score_bonus_p0(const GameState&)` to `IGame` (default: 0 for all games). DominionGame overrides to return `5.0f × (province_buys[0] - province_buys[1])`. This bonus is added to the VP margin in `get_reward()` and in the move-cap path in `batched_mcts.cpp`.
+
+Effect: A player who buys 1 Province that the opponent doesn't gets +5 bonus (equivalent to buying 5 extra Estates). A 2-Province lead gives +10 (reward saturates at 1.0 after /5). The rare Province games now produce strong positive reward, teaching the value head that Province positions are decisive wins.
+
+**Calibration:** 5 bonus pts is "meaningful but not dominant" — it's 83% of a Province's VP value (6 VP), so buying 1 Province is about 1.8x as rewarding as before. The bot can still lose if it buys Province while far behind on VP. Can tune to 3.0 if too aggressive or 7.0 if still insufficient.
+
+**Files changed:** `cpp/game_interface.h` (new virtual method), `cpp/dominion_game.h` (declaration), `cpp/dominion_game.cpp` (score_bonus_p0 + updated get_reward), `cpp/batched_mcts.cpp` (move-cap path). Rebuilt on RunPod, restarted from model_latest.pt as PID 3052553 at iter 412.
+
+**Expected:** Within 5-10 iters, value_loss should rise as Province games produce high-magnitude rewards. `avg_provinces` should emerge (>0.10) as MCTS explores Province-buying. Top buys should shift away from Chapel toward Silver (proxy: `avg_treasures` rising toward 5-7). If provinces not recovering by iter 430, escalate to Option 4 (fresh restart).
+
+## DEVLOG #66 — 2026-03-04: Fix dead value head (ReLU collapse) + LeakyReLU migration
+
+**Problem:** The value head is outputting a constant ~-0.009 for all game states. Direct investigation revealed:
+
+- `fc_value1` outputs are overwhelmingly negative (mean=-8.5, max=0.73)
+- ReLU zeros out virtually all activations
+- `fc_value2` receives all-zeros, outputs only its bias term (-0.0088)
+- 8/10 random test states produce the identical output
+- Value loss stuck at ~0.49 (random chance for binary outcome prediction)
+
+This is a **dead ReLU problem**: once pre-activation values drift sufficiently negative, gradients through ReLU are zero, so the weights can never self-recover. The value head has been permanently stuck.
+
+**Timeline of collapse** (from losses.jsonl):
+- Iter 222: value_loss = 0.001 (sharp, healthy predictions)
+- Iter 230: value_loss = 0.12 (degrading during action_explore_boost era)
+- Iter 240: value_loss = 0.29 (continued decline through forcing experiments)
+- Iter 253: value_loss = 0.44 (approaching random)
+- Iter 270+: value_loss = 0.48-0.51 (fully dead, outputting constants)
+
+The collapse was gradual over 50 iterations, not sudden. The action card forcing experiments (DEVLOG #59-#65) destabilized training, driving fc_value1 weights negative. Once past the tipping point, ReLU made recovery impossible.
+
+**Downstream impact:** With a dead value head, MCTS gets zero signal. Every game path evaluates to ~0.00 regardless of quality. The bot cannot distinguish "buy Silver" from "buy nothing" from "play Village." All behavioral problems (not playing action cards, buying junk, wasting coins) stem from this single root cause.
+
+**Fix (two parts):**
+
+1. **Architecture: ReLU to LeakyReLU (negative_slope=0.01)** in value head and score head FC layers. LeakyReLU passes a small gradient (1% of input) for negative values, preventing permanent neuron death. Applied to bn_value/conv_value, fc_value1, bn_score/conv_score, and fc_score1. Policy head and residual trunk keep ReLU (no collapse observed there).
+
+2. **Weight reinitialization:** Reinitialize fc_value1 and fc_value2 with Kaiming uniform (matched to leaky_relu). All other weights preserved — the trunk learned features, policy head, score head, and belief head are intact. Script: `scripts/fix_value_head.py`.
+
+**Seed fix:** Original bm_seed_218ch.pkl had 156-channel states and 12-element beliefs from pre-expansion era. Padded to 218ch/31-belief to match current architecture. Old intermediate copies removed to free disk.
+
+**First results (iter 285):**
+- value_loss: 0.497 to 0.285 (value head alive)
+- policy_loss: 0.171 to 0.042 (sharp)
+- action_utilization: 6.5% to 52.8% (bot playing action cards)
+- action_rate: 1.2% to 8.7%
+
+**Files changed:**
+- `mandala_rl/network/model.py` — ReLU to LeakyReLU in value and score heads
+- `scripts/fix_value_head.py` — new script to reinitialize dead FC layers
+
+**Risk:** Low. Only value head FC layers reinitialized. Trunk features preserved.
+
+
+---
+
 
 ## DEVLOG #65 — 2026-03-03: Disable action_play_force_rate entirely (CEO approval)
 
@@ -935,3 +1160,92 @@ Channels 152-154 are conditional on `actions_remaining > 0` — if you can't pla
 **Risk:** Boost factor too high → MCTS wastes simulations on bad action plays → training quality drops. Boost too low → no effect. 3.0 is moderate: if network gives END_ACTIONS 90% and PLAY_SMITHY 1%, after boost Smithy gets ~3% — enough for MCTS to explore but not dominate. The boost is only at root (not leaf expansions), so it's pure exploration guidance. Can tune down to 2.0 or up to 5.0 based on initial results.
 
 **Expected outcome:** Within 5-10 iterations of resumed training, `action_plays` should become nonzero as MCTS actually explores action cards. The new tensor channels give the network the information it needs to learn *which* actions are good. Combined with opponent diversity, this should break the Big Money equilibrium.
+
+## DEVLOG #74 — 2026-03-06: Remove move cap + turn-based cap infrastructure
+
+**Finding:** A diagnostic script (scripts/coin_curve.py) playing 200 games and reading tensor channels at buy phase (ch126=coins, ch129=phase, ch130=turn) revealed that 92% of games were hitting the 200 sub-action move cap. Games were ending at ~34 turns not from Province pile depletion (4.65 provinces bought combined out of 8 needed) but from the safety cap. `avg_turns = 33.9` was effectively a cap artifact, not a training signal.
+
+**Economy picture (iter 528, 200 games, buy phase with ≥1 buy remaining):**
+- Mean coins reaches $6.4 by turn 28–35
+- 16.3% of buy decisions reach $8+ (Province threshold)
+- With ~17 buy turns/player, that's ~2.8 Province-affordable turns/player/game → consistent with observed 2.5 provinces
+- Economy was real and growing; the cap was masking it
+
+**Cap removal:** Set `max_turns_ = 0` in `batched_mcts.cpp` constructor (dominion branch). The `max_turns_ > 0` guard disables the cap cleanly.
+
+**Turn-based cap infrastructure:** Refactored cap from sub-actions (`move_count`) to actual game turns (`get_turn_number()`):
+- `game_interface.h`: added `virtual int get_turn_number() const { return 0; }` to `GameState` base
+- `dominion_game.h`: `DominionState` overrides with `return turn_number;`
+- `batched_mcts.h/.cpp`: `max_moves_` → `max_turns_`, cap condition now reads `g.state->get_turn_number() >= max_turns_`
+
+**Why turns not sub-actions:** A Dominion "turn" is one player's action+buy phase. Sub-actions vary per turn depending on action cards played, SELECT/REACT sub-phases, etc. A cap of 200 sub-actions ≈ 34 turns but with high variance. A turn-based cap (e.g., `max_turns_ = 80`) means exactly 80 player turns regardless of kingdom complexity.
+
+**Files changed:** `cpp/game_interface.h`, `cpp/dominion_game.h`, `cpp/batched_mcts.h`, `cpp/batched_mcts.cpp`.
+
+**Watch:** `avg_turns` in losses.jsonl should rise above 34 as games now run to natural conclusion. If games take >20 min/iter, consider adding `max_turns_ = 80` as a soft safety net.
+
+---
+
+## DEVLOG #73 — 2026-03-05: Fix incomplete DEVLOG #72 province bonus + BM reseed for Phase 0
+
+**Problem:** Training iters 412-417 show `avg_provinces=0`, `action_rate=0`, `action_utilization=0`, only Gardens in top_buys. This is Phase 0 behavior (previous session set `max_action_cards: 0` — intentional curriculum design). But Phase 0 failing to bootstrap province buying: 6 consecutive iters with no Province purchases.
+
+**Root cause discovered:** DEVLOG #72 province-buy reward bonus was **never actually implemented**. `DominionGame::score_bonus_p0()` was never overridden — the `game_interface.h` virtual method has a default returning `0.0f`. DEVLOG #72 wrote the batched_mcts.cpp call site and game_interface.h base, but forgot to write the DominionGame override. The Province bonus has been zero for all 6 Phase 0 iters.
+
+Additionally: Phase 0 buffer is full of Gardens games (no province signal). Without BM seed, the network has no examples showing Province buying wins.
+
+**Fix:**
+1. Added `DominionGame::score_bonus_p0()` override: returns `(province_buys[0] - province_buys[1]) * 4.0f`. Bonus = +4 VP per province advantage → at move-cap, buying 1 Province your opponent doesn't gets +0.8 reward (huge signal).
+2. Updated `get_reward()` to also apply province bonus for naturally-ended games: province advantage factored into reward before `/5.0f` scaling.
+3. Generated 500 fresh BM seed games (117K examples) → `/workspace/dominion_data/bm_seed.pkl`. BM games have Province buys and decisive outcomes to bootstrap the phase transition.
+4. Killed PID 3052553, restarted as PID 3079298 from model_latest.pt (iter 417). Phase 0 config unchanged (`max_action_cards: 0`).
+
+**Files changed:** `cpp/dominion_game.h` (score_bonus_p0 declaration), `cpp/dominion_game.cpp` (score_bonus_p0 implementation + get_reward province bonus).
+
+**Expected:** With BM seed examples in buffer + working province bonus, MCTS will now get high reward signal when exploring Province buys. Within 5-10 iters: avg_provinces > 0.10, value_loss rising from 0.003 baseline. Gate: provinces must emerge by iter 427.
+
+## DEVLOG #75 — 2026-03-10: Kill duplicate train.py process (PID 951309)
+
+**Discovery:** During Monk wake-up at iter 808, `ps aux` revealed TWO simultaneous `train.py` processes:
+- PID 950419: started 04:28, ~958 CPU-minutes (original)
+- PID 951309: started 04:30, ~892 CPU-minutes (duplicate)
+
+Both ran for ~15 hours concurrently, writing to the same `/workspace/dominion_data/checkpoints/model_latest.pt`, `/workspace/dominion_data/losses.jsonl`, and `train.log`. Evidence of corruption: iterations 806 and 807 appear twice in losses.jsonl (each process completed the same iteration independently and appended results). The race condition on `model_latest.pt` means each process alternately overwrote the checkpoint — both then resumed from a checkpoint that didn't match their own optimizer state, creating mismatched gradient trajectories.
+
+**Root cause:** Likely a cron job or restart script launched a second training invocation 2 minutes after the first without checking for running processes.
+
+**Fix:** Killed PID 951307 (bash wrapper) and 951309 (duplicate python trainer). Original process 950419 continues uninterrupted.
+
+**Impact assessment:** The declining value_loss trend (0.0503→0.0482→0.0437 over iters 806-808) may be partly attributable to this interference. Expect stabilization or recovery in iter 809+. Duplicate losses.jsonl entries (iter 806 ×2, iter 807 ×2) are cosmetic only.
+
+## DEVLOG #82 — 2026-03-10: Card Curriculum — Train from Silver/Gold/Province Up
+
+**Context:** Training collapsed at iter 832 (provinces 0.51, score 14.4) after stacking failed experiments (one-sided training, opponent diversity, entropy tweaks). Root cause: 800 MCTS sims across 131 actions = ~6 sims per buyable card. Not enough for MCTS to discover Province buying.
+
+**Fix:** New `disabled_basic_supply` mechanism restricts what's BUYABLE without changing starting decks (still 7 Copper + 3 Estate). Phase 0 disables Copper/Estate/Duchy/Curse from the supply — only Silver, Gold, Province (+ Gardens as sole kingdom card) remain buyable. With ~4 buy-phase actions, 800 sims = ~200 per action. MCTS trivially finds optimal buys.
+
+**Changes (8 files):**
+- `cpp/dominion_game.h`: Added `supply_disabled[]` to DominionState, `disabled_basic_supply_` + setter to DominionGame
+- `cpp/dominion_game.cpp`: `copy()` copies disabled flags; `create_initial_state()` zeros disabled supply; `check_game_end()` ignores disabled piles for 3-empty rule
+- `cpp/batched_mcts.{h,cpp}`: Thread `disabled_basic_supply` param through constructor to DominionGame
+- `cpp/bindings.cpp`: Added pybind11 arg + template type
+- `mandala_rl/selfplay/worker.py`: Added param, passed to both BatchedMCTS calls; removed one-sided training (`learning_player`)
+- `mandala_rl/training/trainer.py`: Passes config to worker
+- `scripts/train.py`: Added `disabled_basic_supply` to flat config dict (missed on first deploy — caused initial run to not disable anything)
+- `configs/dominion.yaml`: Phase 0 config — `disabled_basic_supply: [0,3,4,6]`, `max_action_cards: 0`, `entropy_weight: 0.15`, `opponent_diversity_ratio: 0.0`
+
+**First deploy bug:** `train.py` didn't copy `disabled_basic_supply` from YAML to the flat config dict. Iter 1 showed copper=17.2, estate=4.0 — cards not disabled. Fixed, restarted.
+
+**Iter 1 results (after fix):**
+- 0.0 copper, 0.0 estate, 0.0 duchy, 0.0 curse — disabled cards confirmed
+- 3.8 provinces, 32.0 silver/gold, 4.0 Gardens — correct buy profile
+- 64 avg turns, score 44.0
+- Random network already finding Provinces on iter 1 (the whole point of curriculum)
+
+**Gardens fix:** Iter 1 showed 4.0 Gardens buys/player. With `max_action_cards: 0`, Gardens (card 16, the only non-action kingdom card) was always selected. Added Gardens to disabled list: `disabled_basic_supply: [0, 3, 4, 6, 16]`. Restarted fresh.
+
+**Config:** `disabled_basic_supply: [0, 3, 4, 6, 16]`, `max_action_cards: 0`, `forced_kingdom_cards: []`, `opponent_diversity_ratio: 0.0`, `entropy_weight: 0.15`, `big_money_force_rate: 0.0`
+
+**Rollback:** Pre-curriculum checkpoint saved as `model_latest_pre_curriculum.pt`. All iter 797-833 checkpoints still on RunPod. To revert: `disabled_basic_supply: []` in config, resume from any prior checkpoint.
+
+**Expected:** Bot should learn Big Money (Silver→Gold→Province) within ~50 iters (provinces > 3.0, score > 40). Policy loss should converge fast. Once stable, Phase 1 adds Duchy+Estate back. Phase 2 adds action cards one at a time.

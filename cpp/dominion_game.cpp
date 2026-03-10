@@ -108,6 +108,7 @@ std::unique_ptr<GameState> DominionState::copy() const {
     s->players[1].discard = players[1].discard;
     s->players[1].in_play = players[1].in_play;
     std::memcpy(s->supply, supply, sizeof(supply));
+    std::memcpy(s->supply_disabled, supply_disabled, sizeof(supply_disabled));
     s->trash = trash;
     s->phase = phase;
     s->actions_remaining = actions_remaining;
@@ -135,6 +136,16 @@ std::unique_ptr<GameState> DominionState::copy() const {
     std::memcpy(s->total_moves, total_moves, sizeof(total_moves));
     std::memcpy(s->total_coins_at_buy, total_coins_at_buy, sizeof(total_coins_at_buy));
     std::memcpy(s->buy_phase_entries, buy_phase_entries, sizeof(buy_phase_entries));
+    std::memcpy(s->turns_with_action_in_hand, turns_with_action_in_hand, sizeof(turns_with_action_in_hand));
+    std::memcpy(s->turns_action_played, turns_action_played, sizeof(turns_action_played));
+    s->action_played_this_turn = action_played_this_turn;
+    std::memcpy(s->card_buys, card_buys, sizeof(card_buys));
+    std::memcpy(s->bucketed_buys, bucketed_buys, sizeof(bucketed_buys));
+    std::memcpy(s->buy_turn_sum, buy_turn_sum, sizeof(buy_turn_sum));
+    std::memcpy(s->coins_wasted, coins_wasted, sizeof(coins_wasted));
+    std::memcpy(s->cards_trashed, cards_trashed, sizeof(cards_trashed));
+    std::memcpy(s->cards_discarded_cellar, cards_discarded_cellar, sizeof(cards_discarded_cellar));
+    std::memcpy(s->done_selecting_empty, done_selecting_empty, sizeof(done_selecting_empty));
     return s;
 }
 
@@ -215,8 +226,8 @@ void DominionState::to_tensor(std::vector<float>& out) const {
     // Ch 130: Turn number / 40
     set_channel(130, std::min(turn_number / 40.0f, 1.0f));
 
-    // Ch 131: Provinces remaining / 8
-    set_channel(131, supply[CARD_PROVINCE] / 8.0f);
+    // Ch 131: ZEROED (duplicate of Ch 93+5 supply[Province])
+    // set_channel(131, supply[CARD_PROVINCE] / 8.0f);
 
     // Ch 132: Empty supply piles / 3
     {
@@ -265,99 +276,86 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         set_channel(137, pending.target_player >= 0 ? 1.0f : 0.0f);
     }
 
-    // Ch 138: My VP / 40
+    // Ch 138: My VP / 20 (realistic game range 0-20 VP, amplifies signal)
     {
         int my_vp = me.count_vp(kingdom_cards, num_kingdom);
-        set_channel(138, std::max(-0.5f, std::min(1.0f, my_vp / 40.0f)));
+        set_channel(138, std::max(-0.5f, std::min(1.0f, my_vp / 20.0f)));
     }
 
-    // Ch 139: Opponent VP / 40
+    // Ch 139: Opponent VP / 20
     {
         int opp_vp = opp.count_vp(kingdom_cards, num_kingdom);
-        set_channel(139, std::max(-0.5f, std::min(1.0f, opp_vp / 40.0f)));
+        set_channel(139, std::max(-0.5f, std::min(1.0f, opp_vp / 20.0f)));
     }
 
-    // Ch 140: Game progress (Provinces gone / 8)
-    {
-        int prov_gone = 8 - supply[CARD_PROVINCE];
-        set_channel(140, prov_gone / 8.0f);
-    }
+    // Ch 140: ZEROED (inverse of Ch 131, both duplicate of supply[Province])
+    // {
+    //     int prov_gone = 8 - supply[CARD_PROVINCE];
+    //     set_channel(140, prov_gone / 8.0f);
+    // }
 
     // Ch 141: My total cards / 50
     set_channel(141, me.total_cards() / 50.0f);
 
-    // Ch 142: Pending selected count / max
-    if (pending.active() && pending.max_select > 0) {
-        set_channel(142, static_cast<float>(pending.selected_count) / pending.max_select);
-    }
+    // Ch 142: ZEROED (derivable from Ch 135 + 136)
+    // if (pending.active() && pending.max_select > 0) {
+    //     set_channel(142, static_cast<float>(pending.selected_count) / pending.max_select);
+    // }
 
     // Ch 143-150: Derived synergy features
     // These pre-compute relationships the network would otherwise need many
     // layers to discover from raw card counts.
     {
-        // Count cards in my full deck by functional category
-        int my_action_givers = 0;   // Cards that give +actions (enable chaining)
-        int my_terminals = 0;       // Action cards that don't give +actions
-        int my_draw = 0;            // Cards that draw (plus_cards > 0)
+        // Count cards in my full deck
         int my_treasure_coins = 0;  // Total static coin value of all treasures
-        int my_victory_cards = 0;   // Green cards (deck dilution)
         int my_total = 0;
 
         auto scan = [&](int8_t cid) {
             my_total++;
-            const auto& cd = CARD_DEFS[cid];
-            if (cd.is_victory() || cd.is_curse()) my_victory_cards++;
-            if (cd.is_treasure()) my_treasure_coins += cd.coins;
-            if (cd.is_action()) {
-                if (cd.plus_actions > 0) my_action_givers++;
-                else my_terminals++;
-                if (cd.plus_cards > 0) my_draw++;
-            }
+            if (CARD_DEFS[cid].is_treasure()) my_treasure_coins += CARD_DEFS[cid].coins;
         };
         for (auto c : me.deck) scan(c);
         for (auto c : me.hand) scan(c);
         for (auto c : me.discard) scan(c);
         for (auto c : me.in_play) scan(c);
 
-        // Ch 143: Action density — ratio of +action cards to terminals
-        // High = can chain actions safely. Low = terminals will collide.
-        int total_actions = my_action_givers + my_terminals;
-        if (total_actions > 0) {
-            set_channel(143, static_cast<float>(my_action_givers) / total_actions);
+        // Ch 143: My coins wasted per buy phase (buying efficiency)
+        if (buy_phase_entries[0] > 0) {
+            float wasted_per_buy = static_cast<float>(coins_wasted[0]) / buy_phase_entries[0];
+            set_channel(143, std::min(wasted_per_buy / 4.0f, 1.0f));
         }
 
-        // Ch 144: Draw density — fraction of deck that draws cards
-        // High = deck cycles fast, sees key cards more often
+        // Ch 144: Opponent coins wasted per buy phase
+        if (buy_phase_entries[1] > 0) {
+            float opp_wasted = static_cast<float>(coins_wasted[1]) / buy_phase_entries[1];
+            set_channel(144, std::min(opp_wasted / 4.0f, 1.0f));
+        }
+
+        // Ch 145: Payload — treasure-only coins per card, tightened /2
         if (my_total > 0) {
-            set_channel(144, static_cast<float>(my_draw) / my_total);
+            set_channel(145, static_cast<float>(my_treasure_coins) / my_total / 2.0f);
         }
 
-        // Ch 145: Payload — average coins per card in deck
-        // Measures economy quality independent of deck size
+        // Ch 146: Curse ratio — curse count / total deck size
+        // Only curses are unambiguously bad junk (Provinces are good, Estates neutral early)
         if (my_total > 0) {
-            set_channel(145, static_cast<float>(my_treasure_coins) / my_total / 3.0f);
+            int my_curses = 0;
+            for (auto c : me.deck) if (c == CARD_CURSE) my_curses++;
+            for (auto c : me.hand) if (c == CARD_CURSE) my_curses++;
+            for (auto c : me.discard) if (c == CARD_CURSE) my_curses++;
+            for (auto c : me.in_play) if (c == CARD_CURSE) my_curses++;
+            set_channel(146, static_cast<float>(my_curses) / my_total);
         }
 
-        // Ch 146: Green bloat — fraction of deck that's victory/curse cards
-        // High = bad draws, deck is diluted. Chapel trashing lowers this.
-        if (my_total > 0) {
-            set_channel(146, static_cast<float>(my_victory_cards) / my_total);
-        }
+        // Ch 147: ZEROED (terminal collision risk — over-engineered, raw counts suffice)
 
-        // Ch 147: Terminal collision risk — terminals that exceed action budget
-        // terminal_surplus = max(0, terminals - action_givers - 1) / 5
-        // 0 = safe, high = buying more terminals won't help
-        int surplus = std::max(0, my_terminals - my_action_givers - 1);
-        set_channel(147, std::min(1.0f, surplus / 5.0f));
-
-        // Ch 148: Expected hand value — rough coins per 5-card hand
-        // treasure_coins * 5 / total_cards / 12 (normalized)
+        // Ch 148: Expected hand value — rough coins per 5-card hand / 8 (tightened)
         if (my_total > 0) {
             float expected = static_cast<float>(my_treasure_coins) * 5.0f / my_total;
-            set_channel(148, std::min(1.0f, expected / 12.0f));
+            set_channel(148, std::min(1.0f, expected / 8.0f));
         }
 
-        // Ch 149: Opponent deck composition — their treasure density
+        // Ch 149: Opponent deck composition — their expected hand value / 8 (tightened)
         {
             int opp_treasure_coins = 0;
             int opp_total = opp.total_cards();
@@ -367,7 +365,7 @@ void DominionState::to_tensor(std::vector<float>& out) const {
             for (auto c : opp.in_play) opp_treasure_coins += CARD_DEFS[c].coins;
             if (opp_total > 0) {
                 float opp_expected = static_cast<float>(opp_treasure_coins) * 5.0f / opp_total;
-                set_channel(149, std::min(1.0f, opp_expected / 12.0f));
+                set_channel(149, std::min(1.0f, opp_expected / 8.0f));
             }
         }
 
@@ -385,13 +383,12 @@ void DominionState::to_tensor(std::vector<float>& out) const {
     // Ch 151-155: Action card awareness channels
     // These surface action card bonuses so the model can reason about playing them.
     {
-        // Ch 151: Treasure coins currently in hand / 12
-        // "You'll have at least X coins after auto-play treasures"
+        // Ch 151: Treasure coins currently in hand / 8 (tightened, realistic range 3-8)
         int hand_treasure_coins = 0;
         for (auto c : me.hand) {
             if (CARD_DEFS[c].is_treasure()) hand_treasure_coins += CARD_DEFS[c].coins;
         }
-        set_channel(151, std::min(1.0f, hand_treasure_coins / 12.0f));
+        set_channel(151, std::min(1.0f, hand_treasure_coins / 8.0f));
 
         // Ch 152-154: Best action card bonuses from playable actions in hand
         // Conditional on actions_remaining > 0 (otherwise you can't play actions)
@@ -425,6 +422,30 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         // Ch 155: Number of action cards in hand / 5
         set_channel(155, std::min(1.0f, action_count_in_hand / 5.0f));
     }
+
+    // Ch 156-186: Opponent full deck composition (count per card type / 12)
+    // All buys/gains/trashing are public info in Dominion
+    {
+        int counts[DOM_NUM_CARD_TYPES] = {};
+        for (auto c : opp.deck) counts[c]++;
+        for (auto c : opp.hand) counts[c]++;
+        for (auto c : opp.discard) counts[c]++;
+        for (auto c : opp.in_play) counts[c]++;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            if (counts[i] > 0) set_channel(156 + i, counts[i] / 12.0f);
+        }
+    }
+
+    // Ch 187-217: Opponent discard pile (count per card type / 12)
+    // Discard is public. Combined with total composition, network can compute
+    // unknown pool (hand + draw_pile = total - discard - in_play).
+    {
+        int counts[DOM_NUM_CARD_TYPES] = {};
+        for (auto c : opp.discard) counts[c]++;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            if (counts[i] > 0) set_channel(187 + i, counts[i] / 12.0f);
+        }
+    }
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {
@@ -446,6 +467,8 @@ std::unique_ptr<GameState> DominionState::get_canonical() const {
 
     // Swap players
     std::swap(s->players[0], s->players[1]);
+    std::swap(s->coins_wasted[0], s->coins_wasted[1]);
+    std::swap(s->buy_phase_entries[0], s->buy_phase_entries[1]);
     s->active_player_ = 1 - s->active_player_;
     s->current_player_ = 0;
     if (s->pending.target_player >= 0) {
@@ -501,13 +524,31 @@ int DominionGame::initial_supply_count(int8_t card_id, bool is_kingdom) {
 std::unique_ptr<GameState> DominionGame::create_initial_state(std::mt19937& rng) {
     auto s = std::make_unique<DominionState>();
 
-    // Select 10 random kingdom cards from IDs 7-30
-    std::vector<int8_t> all_kingdom;
-    for (int i = 7; i <= 30; i++) all_kingdom.push_back(static_cast<int8_t>(i));
-    std::shuffle(all_kingdom.begin(), all_kingdom.end(), rng);
-    s->num_kingdom = 10;
-    for (int i = 0; i < 10; i++) s->kingdom_cards[i] = all_kingdom[i];
-    std::sort(s->kingdom_cards, s->kingdom_cards + 10);
+    // Select kingdom cards
+    if (!forced_kingdom_cards_.empty()) {
+        // Fixed curriculum kingdom — same cards every game
+        s->num_kingdom = std::min((int)forced_kingdom_cards_.size(), 10);
+        for (int i = 0; i < s->num_kingdom; i++) s->kingdom_cards[i] = forced_kingdom_cards_[i];
+        std::sort(s->kingdom_cards, s->kingdom_cards + s->num_kingdom);
+    } else {
+        // Random selection respecting max_action_cards_ curriculum limit
+        std::vector<int8_t> action_pool, non_action_pool;
+        for (int i = 7; i <= 30; i++) {
+            if (CARD_DEFS[i].is_action() || CARD_DEFS[i].is_reaction())
+                action_pool.push_back(static_cast<int8_t>(i));
+            else
+                non_action_pool.push_back(static_cast<int8_t>(i));
+        }
+        std::shuffle(action_pool.begin(), action_pool.end(), rng);
+        std::shuffle(non_action_pool.begin(), non_action_pool.end(), rng);
+        int n_action = std::min(max_action_cards_, static_cast<int>(action_pool.size()));
+        int n_fill = std::min(10 - n_action, static_cast<int>(non_action_pool.size()));
+        s->num_kingdom = n_action + n_fill;
+        int idx = 0;
+        for (int i = 0; i < n_action; i++) s->kingdom_cards[idx++] = action_pool[i];
+        for (int i = 0; i < n_fill; i++) s->kingdom_cards[idx++] = non_action_pool[i];
+        std::sort(s->kingdom_cards, s->kingdom_cards + s->num_kingdom);
+    }
 
     // Setup supply
     for (int i = 0; i < 7; i++) {
@@ -516,6 +557,12 @@ std::unique_ptr<GameState> DominionGame::create_initial_state(std::mt19937& rng)
     for (int i = 0; i < 10; i++) {
         int8_t cid = s->kingdom_cards[i];
         s->supply[cid] = initial_supply_count(cid, true);
+    }
+
+    // Disable basic supply cards for curriculum
+    for (auto cid : disabled_basic_supply_) {
+        s->supply[cid] = 0;
+        s->supply_disabled[cid] = true;
     }
 
     // Setup players: 7 Copper + 3 Estate, shuffled
@@ -736,6 +783,7 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
         // Can buy cards if buys remaining
         if (s.buys_remaining > 0) {
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+                if (i == CARD_CURSE) continue;  // Never allow voluntary Curse purchase
                 if (s.supply[i] > 0 && CARD_DEFS[i].cost <= s.coins)
                     out[DOM_BUY_OFFSET + i] = 1.0f;
             }
@@ -770,6 +818,7 @@ std::unique_ptr<GameState> DominionGame::get_next_state(const GameState& state_b
         s.total_coins_at_buy[s.current_player_] += s.coins;
         s.buy_phase_entries[s.current_player_]++;
     } else if (action == DOM_END_BUYS) {
+        s.coins_wasted[s.current_player_] += s.coins;
         do_cleanup(s);
     } else if (action >= DOM_PLAY_OFFSET && action < DOM_BUY_OFFSET) {
         int8_t card_id = static_cast<int8_t>(action - DOM_PLAY_OFFSET);
@@ -807,6 +856,10 @@ void DominionGame::play_card(DominionState& s, int8_t card_id) const {
 
     // Action card
     s.action_plays[s.current_player_]++;
+    if (!s.action_played_this_turn) {
+        s.turns_action_played[s.current_player_]++;
+        s.action_played_this_turn = true;
+    }
     if (s.phase == DOM_PHASE_ACTION) {
         s.actions_remaining -= 1;
     }
@@ -1139,6 +1192,7 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
 
     case DOM_PEND_SELECT_HAND:
         if (action == DOM_DONE_SELECTING) {
+            if (p.selected_count == 0) s.done_selecting_empty[s.current_player_]++;
             finish_select_hand(s);
         } else if (action >= DOM_SELECT_OFFSET && action < DOM_GAIN_OFFSET) {
             int8_t card_id = static_cast<int8_t>(action - DOM_SELECT_OFFSET);
@@ -1146,12 +1200,14 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
                 player.remove_from_hand(card_id);
                 player.discard.push_back(card_id);
                 p.selected_count++;
+                s.cards_discarded_cellar[s.current_player_]++;
                 if (p.selected_count >= p.max_select)
                     finish_select_hand(s);
             } else if (p.card_id == CARD_CHAPEL) {
                 player.remove_from_hand(card_id);
                 s.trash.push_back(card_id);
                 p.selected_count++;
+                s.cards_trashed[s.current_player_]++;
                 if (p.selected_count >= p.max_select)
                     finish_select_hand(s);
             } else if (p.card_id == CARD_MILITIA) {
@@ -1172,12 +1228,14 @@ void DominionGame::resolve_pending(DominionState& s, int action) const {
 
     case DOM_PEND_SELECT_TRASH_HAND:
         if (action == DOM_DONE_SELECTING) {
+            if (p.selected_count == 0) s.done_selecting_empty[s.current_player_]++;
             s.pending = DomPending{};
             s.phase = DOM_PHASE_ACTION;
         } else if (action >= DOM_SELECT_OFFSET && action < DOM_GAIN_OFFSET) {
             int8_t card_id = static_cast<int8_t>(action - DOM_SELECT_OFFSET);
             player.remove_from_hand(card_id);
             s.trash.push_back(card_id);
+            s.cards_trashed[s.current_player_]++;
             int8_t trashed_cost = CARD_DEFS[card_id].cost;
 
             if (p.card_id == CARD_MONEYLENDER) {
@@ -1503,6 +1561,9 @@ void DominionGame::buy_card(DominionState& s, int8_t card_id) const {
 
     // Track buys
     s.total_buys[p]++;
+    s.card_buys[card_id][p]++;
+    s.bucketed_buys[s.buy_bucket()][card_id][p]++;
+    s.buy_turn_sum[card_id][p] += s.turn_number;
     if (card_id == CARD_PROVINCE) s.province_buys[p]++;
     if (card_id == CARD_DUCHY) s.duchy_buys[p]++;
     if (card_id == CARD_ESTATE) s.estate_buys[p]++;
@@ -1537,6 +1598,15 @@ void DominionGame::do_cleanup(DominionState& s) const {
     s.throne_card = -1;
     s.throne_remaining = 0;
     s.pending = DomPending{};
+    s.action_played_this_turn = false;
+
+    // Track if next player's hand has any action cards
+    for (int8_t card_id : s.players[next].hand) {
+        if (CARD_DEFS[card_id].is_action()) {
+            s.turns_with_action_in_hand[next]++;
+            break;
+        }
+    }
 
     if (s.active_player_ == 0) {
         s.turn_number++;
@@ -1552,7 +1622,7 @@ void DominionGame::check_game_end(DominionState& s) const {
     }
     int empty = 0;
     for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
-        if (s.supply[i] == 0) {
+        if (s.supply[i] == 0 && !s.supply_disabled[i]) {
             bool in_game = (i < 7);
             if (!in_game) {
                 for (int k = 0; k < s.num_kingdom; k++) {
@@ -1586,7 +1656,14 @@ float DominionGame::get_reward(const GameState& state_base, int player) const {
     // Score-margin reward: /5 for stronger gradient during early training
     // (typical margins are 1-3 VP at current training stage, /30 was too weak)
     float scaled = margin / 5.0f;
-    return std::max(-1.0f, std::min(1.0f, scaled));
+    float reward = std::max(-1.0f, std::min(1.0f, scaled));
+
+    // Per-turn discount: penalizes slow Gardens accumulation vs fast Province wins.
+    // At turn 40 (typical Province game): 0.82x. At turn 120 (Gardens equilibrium): 0.55x.
+    // A +4VP Province win in 40 turns (0.80 * 0.82 = 0.66) beats a +6VP Gardens win
+    // in 120 turns (1.00 * 0.55 = 0.55), incentivizing the bot to end games sooner.
+    float discount = std::pow(0.995f, static_cast<float>(s.turn_number));
+    return reward * discount;
 }
 
 int DominionGame::get_score(const GameState& state_base, int player) const {

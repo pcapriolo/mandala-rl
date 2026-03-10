@@ -50,7 +50,11 @@ class SelfPlayWorker:
         leaves_per_game: int = 1,
         action_explore_boost: float = 0.0,
         action_buy_force_rate: float = 0.0,
-        action_play_force_rate: float = 0.0
+        action_play_force_rate: float = 0.0,
+        max_action_cards: int = 10,
+        big_money_force_rate: float = 0.0,
+        forced_kingdom_cards: list = None,
+        disabled_basic_supply: list = None
     ):
         self.game = game
         self.network = network.to(device)
@@ -66,6 +70,10 @@ class SelfPlayWorker:
         self.action_explore_boost = action_explore_boost
         self.action_buy_force_rate = action_buy_force_rate
         self.action_play_force_rate = action_play_force_rate
+        self.max_action_cards = max_action_cards
+        self.big_money_force_rate = big_money_force_rate
+        self.forced_kingdom_cards = forced_kingdom_cards or []
+        self.disabled_basic_supply = disabled_basic_supply or []
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -116,7 +124,11 @@ class SelfPlayWorker:
             if policy_sum > 0:
                 policy /= policy_sum
 
-            belief = game.belief_labels[i] if has_beliefs else np.zeros(12, dtype=np.float32)
+            if has_beliefs:
+                belief = game.belief_labels[i]
+            else:
+                bl_size = len(game.belief_labels[0]) if game.belief_labels else 12
+                belief = np.zeros(bl_size, dtype=np.float32)
             examples.append((state, policy, value, score, belief))
 
         return examples
@@ -139,6 +151,10 @@ class SelfPlayWorker:
             action_explore_boost=self.action_explore_boost,
             action_buy_force_rate=self.action_buy_force_rate,
             action_play_force_rate=self.action_play_force_rate,
+            max_action_cards=self.max_action_cards,
+            big_money_force_rate=self.big_money_force_rate,
+            forced_kingdom_cards=self.forced_kingdom_cards,
+            disabled_basic_supply=self.disabled_basic_supply,
         )
         mgr.init_games(num_games)
 
@@ -220,6 +236,10 @@ class SelfPlayWorker:
             action_explore_boost=self.action_explore_boost,
             action_buy_force_rate=self.action_buy_force_rate,
             action_play_force_rate=self.action_play_force_rate,
+            max_action_cards=self.max_action_cards,
+            big_money_force_rate=self.big_money_force_rate,
+            forced_kingdom_cards=self.forced_kingdom_cards,
+            disabled_basic_supply=self.disabled_basic_supply,
         )
         mgr.init_games(num_games)
 

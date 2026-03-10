@@ -56,6 +56,10 @@ class Trainer:
         self.replay_buffer = ReplayBuffer(
             max_size=config.get('replay_buffer_size', 500000)
         )
+        self.replay_buffer.set_target_sizes(
+            input_channels=config.get('input_channels', 50),
+            belief_size=config.get('belief_size', 12)
+        )
 
         # Seed buffer for periodic re-injection
         self._seed_buffer_data = None
@@ -75,6 +79,10 @@ class Trainer:
             action_explore_boost=config.get('action_explore_boost', 0.0),
             action_buy_force_rate=config.get('action_buy_force_rate', 0.0),
             action_play_force_rate=config.get('action_play_force_rate', 0.0),
+            max_action_cards=config.get('max_action_cards', 10),
+            big_money_force_rate=config.get('big_money_force_rate', 0.0),
+            forced_kingdom_cards=config.get('forced_kingdom_cards', []),
+            disabled_basic_supply=config.get('disabled_basic_supply', []),
         )
 
         # Optimizer
@@ -291,6 +299,7 @@ class Trainer:
 
         # Update worker's network to latest
         self.selfplay_worker.network.load_state_dict(self._unwrapped_network.state_dict())
+        self.selfplay_worker.big_money_force_rate = self._get_force_rate()
 
         # Resume from where we left off if mid-iteration
         start_game = self.games_in_current_iteration
@@ -392,13 +401,27 @@ class Trainer:
             return base
         return max(1.0, base - (base - 1.0) * self.iteration / 256)
 
+    def _get_force_rate(self) -> float:
+        """Decay big_money_force_rate linearly from config value to 0.
+        Starts at force_rate_decay_start, steps down 0.05 every force_rate_decay_steps iters."""
+        base = self.config.get('big_money_force_rate', 0.0)
+        if base <= 0.0:
+            return 0.0
+        decay_start = self.config.get('force_rate_decay_start', 999999)  # default: never
+        decay_steps = self.config.get('force_rate_decay_steps', 50)
+        if self.iteration < decay_start:
+            return base
+        steps_elapsed = (self.iteration - decay_start) // decay_steps
+        return max(0.0, round(base - steps_elapsed * 0.05, 2))
+
     def _train_network(self):
         """Train network on replay buffer."""
         from .replay_buffer import augment_color_permutation_batch
 
         batch_size = self.config.get('batch_size', 256)
-        if len(self.replay_buffer) < batch_size:
-            print("Not enough examples in buffer yet")
+        min_buffer = self.config.get('min_buffer_for_training', 10000)
+        if len(self.replay_buffer) < min_buffer:
+            print(f"Buffer too small for training ({len(self.replay_buffer)}/{min_buffer}), skipping")
             return
 
         num_epochs = self.config.get('epochs_per_iteration', 10)
@@ -542,6 +565,7 @@ class Trainer:
 
         avg_len = sum(lengths) / n
         std_len = (sum((l - avg_len)**2 for l in lengths) / n) ** 0.5
+        avg_turns = sum(s.get('turn_number', 0) for s in summaries) / n
         p0_wins = sum(1 for o in outcomes if o > 0)
         p1_wins = sum(1 for o in outcomes if o < 0)
         draws = sum(1 for o in outcomes if o == 0)
@@ -554,13 +578,18 @@ class Trainer:
         self.writer.add_scalar('GameQuality/DrawRate', draws / n, self.iteration)
         self.writer.add_scalar('GameQuality/AvgScore', avg_score, self.iteration)
 
+        # For Dominion: turns are the meaningful length unit
+        primary_len = avg_turns if game_type == 'dominion' else avg_len
+        primary_len_label = 'turns' if game_type == 'dominion' else 'moves'
+
         # Store for losses.jsonl
         self._game_quality = {
-            'avg_len': round(avg_len, 1),
+            'avg_len': round(primary_len, 1),
             'std_len': round(std_len, 1),
             'p0_wr': round(p0_wins / n, 3),
             'draw_rate': round(draws / n, 3),
             'avg_score': round(avg_score, 1),
+            'force_rate': round(self._get_force_rate(), 2),
         }
 
         # Game-specific assessment
@@ -572,10 +601,10 @@ class Trainer:
         elif game_type == 'mandala':
             assessment, warnings = self._assess_mandala(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
         elif game_type == 'dominion':
-            assessment, warnings = self._assess_dominion(summaries, n, avg_len, std_len, p0_wins, p1_wins, draws)
+            assessment, warnings = self._assess_dominion(summaries, n, avg_turns, p0_wins, p1_wins, draws)
 
         # Print summary
-        print(f"  Game quality: {avg_len:.0f} avg moves (±{std_len:.1f}), "
+        print(f"  Game quality: {primary_len:.0f} avg {primary_len_label} (±{std_len:.1f}), "
               f"P0 {p0_wins}/{n} P1 {p1_wins}/{n} Draw {draws}/{n}, "
               f"Avg score: {avg_score:.1f}")
         for line in assessment:
@@ -682,7 +711,7 @@ class Trainer:
 
         return assessment, warnings
 
-    def _assess_dominion(self, summaries, n, avg_len, std_len, p0w, p1w, draws):
+    def _assess_dominion(self, summaries, n, avg_turns, p0w, p1w, draws):
         """Qualitative assessment of Dominion gameplay."""
         assessment = []
         warnings = []
@@ -700,7 +729,6 @@ class Trainer:
         avg_action_buys = avg_field('action_buys')
         avg_curses = avg_field('curse_buys')
         avg_actions = avg_field('action_plays')
-        avg_turns = sum(s.get('turn_number', 0) for s in summaries) / n
 
         # Realized purchasing power: avg coins when entering buy phase
         total_coins = sum(s.get('total_coins_at_buy', (0,0))[0] + s.get('total_coins_at_buy', (0,0))[1]
@@ -709,7 +737,53 @@ class Trainer:
                            for s in summaries)
         avg_coins_at_buy = total_coins / max(1, total_entries)
 
-        action_rate = avg_actions / max(1, avg_len) * 2  # per-player fraction
+        action_rate = avg_actions / max(1, avg_turns)  # avg action plays per turn (both players)
+
+        # Action utilization: % of turns with action in hand where player played one
+        total_turns_with_action = sum(
+            s.get('turns_with_action_in_hand', (0,0))[0] + s.get('turns_with_action_in_hand', (0,0))[1]
+            for s in summaries)
+        total_turns_action_played = sum(
+            s.get('turns_action_played', (0,0))[0] + s.get('turns_action_played', (0,0))[1]
+            for s in summaries)
+        action_utilization = total_turns_action_played / max(1, total_turns_with_action)
+
+        # Wasted coins: avg unspent coins per buy phase
+        total_wasted = sum(
+            s.get('coins_wasted', (0,0))[0] + s.get('coins_wasted', (0,0))[1]
+            for s in summaries)
+        avg_coins_wasted = total_wasted / max(1, total_entries)
+
+        # Select-phase behavioral tracking
+        avg_cards_trashed = sum(
+            s.get('cards_trashed', (0,0))[0] + s.get('cards_trashed', (0,0))[1]
+            for s in summaries) / (2 * n)
+        avg_cellar_discards = sum(
+            s.get('cards_discarded_cellar', (0,0))[0] + s.get('cards_discarded_cellar', (0,0))[1]
+            for s in summaries) / (2 * n)
+        avg_empty_selects = sum(
+            s.get('done_selecting_empty', (0,0))[0] + s.get('done_selecting_empty', (0,0))[1]
+            for s in summaries) / (2 * n)
+
+        # Per-card buy breakdown
+        CARD_NAMES = [
+            'Copper', 'Silver', 'Gold', 'Estate', 'Duchy', 'Province', 'Curse',
+            'Cellar', 'Moat', 'Chapel', 'Harbinger', 'Merchant', 'Vassal',
+            'Village', 'Workshop', 'Bureaucrat', 'Gardens', 'Militia',
+            'Moneylender', 'Poacher', 'Remodel', 'Smithy', 'Throne Room',
+            'Artisan', 'Bandit', 'Council Room', 'Library', 'Market',
+            'Mine', 'Sentry', 'Witch',
+        ]
+        card_buy_totals = {}
+        for s in summaries:
+            for card_id_str, counts in s.get('card_buys', {}).items():
+                cid = int(card_id_str)
+                card_buy_totals[cid] = card_buy_totals.get(cid, 0) + counts[0] + counts[1]
+        # Average per player per game, sorted by frequency
+        card_buy_avg = {cid: total / (2 * n) for cid, total in card_buy_totals.items()}
+        avg_silver = card_buy_avg.get(1, 0)
+        avg_gold = card_buy_avg.get(2, 0)
+        top_buys = sorted(card_buy_avg.items(), key=lambda x: -x[1])
 
         self.writer.add_scalar('GameQuality/DOM_AvgBuys', avg_buys, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgProvinces', avg_provinces, self.iteration)
@@ -717,11 +791,22 @@ class Trainer:
         self.writer.add_scalar('GameQuality/DOM_AvgEstates', avg_estates, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgCopper', avg_copper, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgTreasures', avg_treasures, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgSilver', avg_silver, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgGold', avg_gold, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgActionBuys', avg_action_buys, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgCurses', avg_curses, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_ActionRate', action_rate, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_ActionUtilization', action_utilization, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCoinsWasted', avg_coins_wasted, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgTurns', avg_turns, self.iteration)
         self.writer.add_scalar('GameQuality/DOM_AvgCoinsAtBuy', avg_coins_at_buy, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCardsTrashed', avg_cards_trashed, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgCellarDiscards', avg_cellar_discards, self.iteration)
+        self.writer.add_scalar('GameQuality/DOM_AvgEmptySelects', avg_empty_selects, self.iteration)
+        # Log top action card buys to tensorboard
+        for cid, avg in top_buys:
+            if cid >= 7:  # action/kingdom cards only
+                self.writer.add_scalar(f'CardBuys/{CARD_NAMES[cid]}', avg, self.iteration)
 
         self._game_quality['avg_buys'] = round(avg_buys, 2)
         self._game_quality['avg_provinces'] = round(avg_provinces, 2)
@@ -729,18 +814,80 @@ class Trainer:
         self._game_quality['avg_estates'] = round(avg_estates, 2)
         self._game_quality['avg_copper'] = round(avg_copper, 2)
         self._game_quality['avg_treasures'] = round(avg_treasures, 2)
+        self._game_quality['avg_silver'] = round(avg_silver, 2)
+        self._game_quality['avg_gold'] = round(avg_gold, 2)
         self._game_quality['avg_action_buys'] = round(avg_action_buys, 2)
         self._game_quality['avg_curses'] = round(avg_curses, 2)
         self._game_quality['action_rate'] = round(action_rate, 3)
+        self._game_quality['action_utilization'] = round(action_utilization, 3)
+        self._game_quality['avg_coins_wasted'] = round(avg_coins_wasted, 2)
         self._game_quality['avg_turns'] = round(avg_turns, 1)
         self._game_quality['avg_coins_at_buy'] = round(avg_coins_at_buy, 2)
+        self._game_quality['avg_cards_trashed'] = round(avg_cards_trashed, 2)
+        self._game_quality['avg_cellar_discards'] = round(avg_cellar_discards, 2)
+        self._game_quality['avg_empty_selects'] = round(avg_empty_selects, 2)
+        # Top action card buys (kingdom cards only, sorted by frequency)
+        action_buys_breakdown = {CARD_NAMES[cid]: round(avg, 2)
+                                 for cid, avg in top_buys if cid >= 7 and avg >= 0.05}
+        if action_buys_breakdown:
+            self._game_quality['top_buys'] = action_buys_breakdown
+
+        # Turn-bucketed buy curve (10 buckets of 5 turns each)
+        NUM_BUY_BUCKETS = 10
+        bucket_totals = [{} for _ in range(NUM_BUY_BUCKETS)]
+        has_bucketed = False
+        for s in summaries:
+            bucketed = s.get('bucketed_buys', [])
+            if not bucketed:
+                continue
+            has_bucketed = True
+            for b_idx, bucket in enumerate(bucketed):
+                if b_idx >= NUM_BUY_BUCKETS:
+                    break
+                for card_id_str, counts in bucket.items():
+                    cid = int(card_id_str)
+                    bucket_totals[b_idx][cid] = bucket_totals[b_idx].get(cid, 0) + counts[0] + counts[1]
+        if has_bucketed:
+            buy_curve = []
+            for b_idx in range(NUM_BUY_BUCKETS):
+                bucket_avg = {CARD_NAMES[cid]: round(total / (2 * n), 3)
+                              for cid, total in bucket_totals[b_idx].items()
+                              if cid < len(CARD_NAMES) and total > 0}
+                buy_curve.append(bucket_avg)
+            self._game_quality['buy_curve'] = buy_curve
+
+        # Average turn each card is bought (buy timing)
+        turn_sum_totals = {}
+        has_turn_sums = False
+        for s in summaries:
+            for card_id_str, counts in s.get('buy_turn_sum', {}).items():
+                has_turn_sums = True
+                cid = int(card_id_str)
+                turn_sum_totals[cid] = turn_sum_totals.get(cid, 0) + counts[0] + counts[1]
+        if has_turn_sums:
+            buy_timing = {}
+            for cid, turn_sum in turn_sum_totals.items():
+                buy_count = card_buy_totals.get(cid, 0)
+                if buy_count > 0 and cid < len(CARD_NAMES):
+                    buy_timing[CARD_NAMES[cid]] = round(turn_sum / buy_count, 1)
+            if buy_timing:
+                self._game_quality['buy_timing'] = buy_timing
 
         assessment.append(f"Dominion: {avg_buys:.1f} buys/player, "
                           f"{avg_provinces:.1f} prov, {avg_duchies:.1f} duchy, {avg_estates:.1f} estate, "
                           f"{avg_copper:.1f} copper, {avg_treasures:.1f} silver/gold, "
                           f"{avg_action_buys:.1f} action, {avg_curses:.1f} curse")
         assessment.append(f"  {avg_turns:.0f} turns, {action_rate:.0%} action play rate, "
-                          f"${avg_coins_at_buy:.1f} avg purchasing power")
+                          f"{action_utilization:.0%} action utilization, "
+                          f"${avg_coins_at_buy:.1f} avg purchasing power, "
+                          f"${avg_coins_wasted:.1f} wasted/buy")
+        assessment.append(f"  {avg_cards_trashed:.1f} trashed, {avg_cellar_discards:.1f} cellar discards, "
+                          f"{avg_empty_selects:.1f} empty selects/player")
+        if top_buys:
+            action_cards = [(CARD_NAMES[cid], avg) for cid, avg in top_buys if cid >= 7 and avg >= 0.05]
+            if action_cards:
+                parts = [f"{name} {avg:.1f}" for name, avg in action_cards[:6]]
+                assessment.append(f"  Top kingdom buys: {', '.join(parts)}")
 
         if avg_provinces < 0.5 and avg_turns > 15:
             warnings.append("LOW PROVINCES: bot rarely buys provinces — no winning strategy")
@@ -756,14 +903,27 @@ class Trainer:
         return assessment, warnings
 
     def _select_opponent_checkpoint(self):
-        """Select a random older checkpoint from recent 50% of history."""
+        """Select opponent checkpoint, biased toward efficient-buying era if configured."""
         checkpoint_dir = Path(self.config.get('checkpoint_dir', 'data/checkpoints'))
         checkpoints = sorted(checkpoint_dir.glob('model_iter_*.pt'))
         if len(checkpoints) < 2:
             return None
-        # Recent 50% of history (exclude latest to avoid self-play duplicate)
-        half = max(1, len(checkpoints) // 2)
-        candidates = checkpoints[half:-1] if len(checkpoints) > 2 else checkpoints[:-1]
+        # Filter to target iter range if configured
+        target_min = self.config.get('opponent_iter_min', None)
+        target_max = self.config.get('opponent_iter_max', None)
+        if target_min is not None and target_max is not None:
+            candidates = []
+            for cp in checkpoints:
+                try:
+                    it = int(cp.stem.split('_')[-1])
+                    if target_min <= it <= target_max:
+                        candidates.append(cp)
+                except ValueError:
+                    continue
+            if candidates:
+                return candidates[np.random.randint(len(candidates))]
+        # Fallback: full history except latest
+        candidates = checkpoints[:-1]
         if not candidates:
             return None
         return candidates[np.random.randint(len(candidates))]
@@ -772,14 +932,23 @@ class Trainer:
         """Load a checkpoint into a fresh MandalaNet for use as opponent."""
         try:
             net_cfg = self.config.get('network', {})
+            belief_size = net_cfg.get('belief_size', self.config.get('belief_size', 12))
             opponent = MandalaNet(
                 input_channels=net_cfg.get('input_channels', self.config.get('input_channels', 50)),
                 num_actions=net_cfg.get('num_actions', self.config.get('num_actions', 30)),
                 num_res_blocks=net_cfg.get('num_res_blocks', self.config.get('num_res_blocks', 10)),
                 channels=net_cfg.get('channels', self.config.get('channels', 128)),
+                belief_size=belief_size,
             ).to(self.device)
             data = torch.load(path, map_location=self.device, weights_only=False)
-            opponent.load_state_dict(data['model_state_dict'])
+            # Handle architecture mismatches — old checkpoints may have different sizes
+            saved_state = data['model_state_dict']
+            model_state = opponent.state_dict()
+            for key in ['conv_input.weight', 'fc_belief.weight', 'fc_belief.bias']:
+                if key in saved_state and key in model_state:
+                    if saved_state[key].shape != model_state[key].shape:
+                        raise RuntimeError(f"Shape mismatch for {key}: saved {saved_state[key].shape} vs expected {model_state[key].shape}")
+            opponent.load_state_dict(saved_state)
             opponent.eval()
             return opponent
         except Exception as e:
@@ -911,7 +1080,7 @@ class Trainer:
                         new_b[144 + c] = old_b[102 + c]
                 saved_state['fc_policy.weight'] = new_w
                 saved_state['fc_policy.bias'] = new_b
-        # Handle input channel migration (e.g., 121 → 123)
+        # Handle input channel migration (e.g., 156 → 218)
         if 'conv_input.weight' in saved_state and 'conv_input.weight' in model_state:
             old_in = saved_state['conv_input.weight'].shape[1]
             new_in = model_state['conv_input.weight'].shape[1]
@@ -921,6 +1090,15 @@ class Trainer:
                 new_w = torch.zeros_like(model_state['conv_input.weight'])
                 new_w[:, :old_in, :, :] = saved_state['conv_input.weight']
                 saved_state['conv_input.weight'] = new_w
+        # Handle belief head migration (e.g., 12 → 31)
+        if 'fc_belief.weight' in saved_state and 'fc_belief.weight' in model_state:
+            old_out = saved_state['fc_belief.weight'].shape[0]
+            new_out = model_state['fc_belief.weight'].shape[0]
+            if old_out != new_out:
+                policy_migrated = True  # Skip optimizer state
+                print(f"Migrating belief head: {old_out} → {new_out} (reinitializing)")
+                saved_state['fc_belief.weight'] = model_state['fc_belief.weight']
+                saved_state['fc_belief.bias'] = model_state['fc_belief.bias']
         self._unwrapped_network.load_state_dict(saved_state)
         if policy_migrated:
             print("Optimizer state skipped (policy head migrated, sizes incompatible)")
