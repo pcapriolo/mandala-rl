@@ -50,7 +50,7 @@ fi
 train_pid=$($SSH "$REMOTE" "pgrep -f 'train.py.*dominion' | head -1" 2>/dev/null)
 if [ -z "$train_pid" ]; then
     echo "WARNING: Training process not running. Attempting restart..."
-    $SSH "$REMOTE" "cd $TRAIN_DIR && nohup python3 scripts/train.py --config $CONFIG --game dominion > /tmp/dominion_train.log 2>&1 &" 2>/dev/null
+    $SSH "$REMOTE" "cd $TRAIN_DIR && nohup python scripts/train.py --config $CONFIG --resume /workspace/dominion_data/checkpoints/model_latest.pt > /tmp/dominion_train.log 2>&1 &" 2>/dev/null
     sleep 5
     train_pid=$($SSH "$REMOTE" "pgrep -f 'train.py.*dominion' | head -1" 2>/dev/null)
     if [ -z "$train_pid" ]; then

@@ -78,11 +78,11 @@ TGEOF
 echo "  Syncing data from RunPod..."
 mkdir -p "$REPO_DIR/data/dominion"
 scp -q -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 -P 26242 \
-    root@38.147.83.30:/root/mandala-dom/data/dominion/losses.jsonl \
+    root@38.147.83.30:/workspace/dominion_data/losses.jsonl \
     "$REPO_DIR/data/dominion/losses.jsonl" 2>/dev/null \
     && echo "  losses.jsonl synced" || echo "  WARNING: RunPod sync failed (pod may be restarting)"
 scp -q -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 -P 26242 \
-    root@38.147.83.30:/root/mandala-dom/data/dominion/monitor.jsonl \
+    root@38.147.83.30:/workspace/dominion_data/monitor.jsonl \
     "$REPO_DIR/data/dominion/monitor.jsonl" 2>/dev/null || true
 
 # --- Collect raw data ---
@@ -165,8 +165,15 @@ If the CEO gave instructions, or if training is clearly stuck/broken, fix it:
 - Write a DEVLOG entry in ~/GG/mandala-rl/DEVLOG.md for any substantive change
 - RunPod SSH: `ssh root@38.147.83.30 -p 26242 -i ~/.ssh/id_ed25519`
 - RunPod repo: /root/mandala-dom, data: /workspace/dominion_data
-- Config: `sed 's|data/dominion|/workspace/dominion_data|g' configs/dominion.yaml > /tmp/dominion_runpod.yaml`
+- Config: Use `configs/dominion.yaml` directly (NEVER copy/sed to /tmp or /workspace — single source of truth)
 - Don't change game rules to fix degenerate behavior. Fix training signal instead.
+
+**NON-NEGOTIABLE CONFIG GUARD — DO NOT VIOLATE:**
+- `disabled_basic_supply` MUST be `[0, 3, 4, 6, 16]` (Phase 0: Silver/Gold/Province ONLY).
+- Estate (3) and Duchy (4) MUST remain disabled. DO NOT enable them. DO NOT change to Phase 1.
+- If you see disabled_basic_supply as `[0, 6, 16]`, that is WRONG — fix it back to `[0, 3, 4, 6, 16]`.
+- Only the CEO can authorize phase transitions. You are NOT the CEO.
+- DO NOT modify disabled_basic_supply, max_action_cards, or big_money_force_rate for ANY reason.
 
 If nothing needs fixing, skip this step entirely.
 
@@ -302,7 +309,8 @@ Draws     {pct(m.get('draw_rate'))}     Len     {f(m.get('avg_len'))}
 Provinces {f(m.get('avg_provinces'))}    Duchies  {f(m.get('avg_duchies', 0))}
 Estates   {f(m.get('avg_estates', 0))}    Curses   {f(m.get('avg_curses', 0))}
 Silver/Au {f(m.get('avg_treasures'))}    Actions  {f(m.get('avg_action_buys', 0))}
-Buys/plyr {f(m.get('avg_buys'))}    Score    {f(m.get('avg_score'))}</pre>"""
+Buys/plyr {f(m.get('avg_buys'))}    Score    {f(m.get('avg_score'))}
+ActRate   {pct(m.get('action_rate'))}     ActUtil  {pct(m.get('action_utilization'))}</pre>"""
 
     # CEO replies (monk's responses to inbox messages)
     try:

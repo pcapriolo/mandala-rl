@@ -11,9 +11,9 @@ network:
 # MCTS Parameters
 mcts:
   num_simulations: 800
-  c_puct: 1.0
+  c_puct: 1.5
   dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
-  dirichlet_epsilon: 0.25
+  dirichlet_epsilon: 0.50
   action_explore_boost: 0.0
   action_buy_force_rate: 0.0
   action_play_force_rate: 0.0
@@ -24,8 +24,12 @@ selfplay:
   parallel_games: 256
   leaves_per_game: 8
   temperature: 1.0
-  temperature_threshold: 40  # Higher — Dominion games are longer than Mandala/LC
-  opponent_diversity_ratio: 0.0  # Phase 0: pure self-play, no opponent diversity
+  temperature_threshold: 10  # Follow prior sooner → Province depletion → decisive games
+  explore_epsilon: 0.3        # 30% random action after threshold — breaks symmetric mirror play
+  opponent_diversity_ratio: 0.7  # DEVLOG #114: 70% vs healthy VP-buying opponents to break Province-race equilibrium
+  opponent_iter_min: 779  # DEVLOG #122: lock to pre-restart healthy Phase1 opponents only
+  opponent_iter_max: 796  # DEVLOG #122: exclude degraded iters 797-800 from opponent pool
+
 
 # Training Parameters
 training:
@@ -39,7 +43,7 @@ training:
   replay_buffer_size: 100000  # 218-ch tensors are large; saved to /workspace (100GB) which has plenty of room
   min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
   checkpoint_frequency: 1
-  checkpoint_every_n_games: 10
+  checkpoint_every_n_games: 0  # Disabled — was filling /workspace (50MB × 5/iter)
   entropy_weight: 0.15        # Higher for fresh training — encourages exploration of buy space
   policy_weight: 3.0          # Start 3x, decays to 1.0 over 256 iters
 
@@ -68,8 +72,9 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 0: Silver/Gold/Province only
-disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper, Estate, Duchy, Curse, Gardens — cannot be bought
+# Curriculum Learning — Phase 0: Silver/Gold/Province ONLY
+# !! DO NOT CHANGE THIS WITHOUT CEO APPROVAL — see DEVLOG #122+ for Phase reversion incidents !!
+disabled_basic_supply: [0, 3, 4, 6, 16]  # Phase 0: Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
 max_action_cards: 0                   # No action cards in kingdom
 forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
 big_money_force_rate: 0.0
