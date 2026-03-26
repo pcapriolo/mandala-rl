@@ -42,7 +42,7 @@
 <body>
     <div class="header">
         <h1>Dominion Training</h1>
-        <span id="last-updated" style="color: #666; font-size: 0.85em;"></span>
+        <span style="color: #666; font-size: 0.85em;"><span id="live-status"></span> &mdash; <span id="last-updated"></span></span>
         <a href="/">All Games</a>
     </div>
 
@@ -91,6 +91,9 @@
                 <tr>
                     <th>Iter</th>
                     <th>Policy</th>
+                    <th>Value</th>
+                    <th>Belief</th>
+                    <th>Score L</th>
                     <th>Total Loss</th>
                     <th>Score</th>
                     <th>Prov</th>
@@ -108,6 +111,7 @@
                     <th>Len</th>
                     <th>Turns</th>
                     <th>Draw%</th>
+                    <th>MCTS Prov%</th>
                 </tr>
             </thead>
             <tbody id="iter-table"></tbody>
@@ -228,6 +232,11 @@ async function refresh() {
         document.getElementById('last-updated').textContent = `updated ${label}`;
     }
 
+    // Live progress from heartbeat
+    const hb = data.heartbeat || {};
+    const phase = hb.phase === 'selfplay' ? 'Self-play' : hb.phase === 'training' ? 'Training' : hb.phase === 'checkpoint' ? 'Saving' : (hb.phase || 'idle');
+    document.getElementById('live-status').textContent = `Iter ${hb.iteration || '?'} ${phase}: ${hb.detail || ''}`;
+
     // Stats bar
     document.getElementById('s-iter').textContent = latest.iteration;
     document.getElementById('s-games').textContent = (latest.iteration * 100).toLocaleString();
@@ -330,6 +339,9 @@ async function refresh() {
         return `<tr>
         <td>${d.iteration}</td>
         <td>${d.policy.toFixed(4)}</td>
+        <td>${(d.value || 0).toFixed(4)}</td>
+        <td>${(d.belief || 0).toFixed(4)}</td>
+        <td>${(d.score || 0).toFixed(4)}</td>
         <td>${d.total.toFixed(4)}</td>
         <td>${d.avg_score.toFixed(1)}</td>
         <td>${prov.toFixed(2)}</td>
@@ -347,6 +359,7 @@ async function refresh() {
         <td>${d.avg_len.toFixed(0)}</td>
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
+        <td>${(d.mcts_province_pct || 0).toFixed(1)}%</td>
     </tr>`}).join('');
 }
 

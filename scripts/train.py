@@ -167,6 +167,12 @@ def main():
         'opponent_iter_min': config['selfplay'].get('opponent_iter_min', None),
         'opponent_iter_max': config['selfplay'].get('opponent_iter_max', None),
 
+        # Explore epsilon (Dominion: Big Money prior blending in buy phase)
+        'explore_epsilon': config['selfplay'].get('explore_epsilon', 0.0),
+
+        # Min buffer for training (skip training until buffer has enough diversity)
+        'min_buffer_for_training': config['training'].get('min_buffer_for_training', 0),
+
         # Action exploration boost (Dominion: multiply PLAY priors in ACTION phase)
         'action_explore_boost': config['mcts'].get('action_explore_boost', 0.0),
 
