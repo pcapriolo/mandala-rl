@@ -1,16 +1,34 @@
-# Data and checkpoints
+# Data and checkpoints (per-game)
 data/replays/*
 data/checkpoints/*
 data/logs/*
 data/lost_cities/checkpoints/*
 data/lost_cities/replays/*
 data/lost_cities/logs/*
+data/dominion/checkpoints/*
+data/dominion/replays/*
+data/dominion/logs/*
+data/dominion/heartbeat.json
 data/human_games/
 !data/replays/.gitkeep
 !data/checkpoints/.gitkeep
 !data/logs/.gitkeep
 # Allow deploy checkpoints (lightweight, for Railway)
 !data/deploy/
+# Keep losses.jsonl and monitor.jsonl (small, important training history)
+!data/dominion/losses.jsonl
+!data/dominion/monitor.jsonl
+
+# Binary blobs and seed data
+*.pkl
+
+# Backup files
+*.bak
+*.bak_*
+*.serial_backup
+
+# Stray config copies
+cpp/dominion.yaml
 
 # Python
 __pycache__/
