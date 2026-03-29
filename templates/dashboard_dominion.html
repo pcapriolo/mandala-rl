@@ -185,6 +185,26 @@ function makeDataset(label, color, data) {
     return { label, borderColor: color, backgroundColor: color + '33', data, tension: 0.3, pointRadius: 3, fill: false };
 }
 
+function getHiddenState(chart) {
+    const state = {};
+    if (chart.data.datasets) {
+        chart.data.datasets.forEach((ds, i) => {
+            if (chart.getDatasetMeta(i).hidden) state[ds.label] = true;
+        });
+    }
+    return state;
+}
+
+function updateChart(chart, labels, datasets) {
+    const state = getHiddenState(chart);
+    chart.data.labels = labels;
+    chart.data.datasets = datasets;
+    datasets.forEach((ds, i) => {
+        if (state[ds.label]) chart.getDatasetMeta(i).hidden = true;
+    });
+    chart.update();
+}
+
 function initCharts() {
     lossChart = new Chart(document.getElementById('chart-loss'), {
         type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Loss')
@@ -252,25 +272,20 @@ async function refresh() {
     el.className = 'value ' + (health === 'STALLED' ? 'warn' : health === 'EARLY' ? 'ok' : 'ok');
 
     // Loss chart
-    lossChart.data.labels = labels;
-    lossChart.data.datasets = [
+    updateChart(lossChart, labels, [
         makeDataset('Policy', '#e94560', iters.map(d => d.policy)),
         makeDataset('Value', '#3498db', iters.map(d => d.value)),
         makeDataset('Total', '#f1c40f', iters.map(d => d.total)),
-    ];
-    lossChart.update();
+    ]);
 
     // Quality chart
-    qualityChart.data.labels = labels;
-    qualityChart.data.datasets = [
+    updateChart(qualityChart, labels, [
         makeDataset('Avg Score', '#27ae60', iters.map(d => d.avg_score)),
         makeDataset('P0 Win Rate', '#e67e22', iters.map(d => d.p0_wr)),
-    ];
-    qualityChart.update();
+    ]);
 
     // Buys chart
-    buysChart.data.labels = labels;
-    buysChart.data.datasets = [
+    updateChart(buysChart, labels, [
         makeDataset('Total Buys', '#9b59b6', iters.map(d => d.avg_buys)),
         makeDataset('Provinces', '#e74c3c', iters.map(d => d.avg_provinces)),
         makeDataset('Duchies', '#e67e22', iters.map(d => d.avg_duchies || 0)),
@@ -283,16 +298,13 @@ async function refresh() {
         makeDataset('Market', '#1abc9c', iters.map(d => (d.top_buys || {}).Market || 0)),
         makeDataset('Curses', '#8e44ad', iters.map(d => d.avg_curses || 0)),
         makeDataset('$/Wasted', '#e74c3c', iters.map(d => d.avg_coins_wasted || 0)),
-    ];
-    buysChart.update();
+    ]);
 
     // Length chart
-    lengthChart.data.labels = labels;
-    lengthChart.data.datasets = [
+    updateChart(lengthChart, labels, [
         makeDataset('Game Length (moves)', '#3498db', iters.map(d => d.avg_len)),
         makeDataset('Avg Turns', '#1abc9c', iters.map(d => d.avg_turns)),
-    ];
-    lengthChart.update();
+    ]);
 
     // Buy Curve (stacked bar for latest iteration)
     const CURVE_CARDS = ['Copper','Silver','Gold','Estate','Duchy','Province','Curse','Smithy','Gardens','Market'];
@@ -300,12 +312,16 @@ async function refresh() {
     const curve = latest.buy_curve;
     if (curve && curve.length >= 5) {
         const bucketLabels = curve.map((_, i) => `T${i*5+1}-${(i+1)*5}`);
+        const curveState = getHiddenState(buyCurveChart);
         buyCurveChart.data.labels = bucketLabels;
         buyCurveChart.data.datasets = CURVE_CARDS.map((card, i) => ({
             label: card,
             data: curve.map(bucket => bucket[card] || 0),
             backgroundColor: CURVE_COLORS[i],
         }));
+        buyCurveChart.data.datasets.forEach((ds, i) => {
+            if (curveState[ds.label]) buyCurveChart.getDatasetMeta(i).hidden = true;
+        });
         buyCurveChart.update();
     }
 
@@ -315,11 +331,9 @@ async function refresh() {
     const timingIters = iters.filter(d => d.buy_timing);
     if (timingIters.length) {
         const timingLabels = timingIters.map(d => d.iteration);
-        buyTimingChart.data.labels = timingLabels;
-        buyTimingChart.data.datasets = timingCards.map((card, i) => makeDataset(
+        updateChart(buyTimingChart, timingLabels, timingCards.map((card, i) => makeDataset(
             card, timingColors[i], timingIters.map(d => d.buy_timing[card] || null)
-        ));
-        buyTimingChart.update();
+        )));
     }
 
     // Table
