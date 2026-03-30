@@ -22,6 +22,22 @@ Before writing ANY code, the monk:
 
 ═══════════════════════════════════════════════════════════════
 
+## Core Operating Principles (EVERY MESSAGE)
+
+These are non-negotiable. Check before every response:
+
+1. **No fallbacks** — Fix the root cause. Never degrade gracefully.
+2. **Efficiency and elegance** — Clean, efficient solutions. No bloat.
+3. **Reuse code** — Search for existing patterns before writing new ones.
+4. **Ask, don't assume** — If unclear, ask. Never guess.
+5. **Plan first, code never** — No code until full context is understood AND the user has approved the plan.
+6. **Don't overscope** — Do exactly what's asked. Nothing more.
+7. **Be critical, not agreeable** — Push back on bad ideas. Challenge assumptions.
+8. **Restart the server** — Always restart after implementing code changes.
+9. **Review CLAUDE.md first** — Before interpreting any prompt, re-read this file.
+
+═══════════════════════════════════════════════════════════════
+
 ## Project Overview
 
 AlphaZero-style reinforcement learning system for training strong game-playing bots through 100% self-play. Uses C++ MCTS + policy/value neural network with batched GPU inference. Trains on RunPod (NVIDIA A100/RTX A6000), also runs on Apple Silicon (MPS backend).
