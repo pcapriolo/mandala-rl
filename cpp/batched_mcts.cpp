@@ -18,7 +18,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          int max_action_cards,
                          double big_money_force_rate,
                          std::vector<int> forced_kingdom_cards,
-                         std::vector<int> disabled_basic_supply)
+                         std::vector<int> disabled_basic_supply,
+                         int province_supply)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
@@ -27,7 +28,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
       action_play_force_rate_(action_play_force_rate),
       big_money_force_rate_(big_money_force_rate),
       forced_kingdom_cards_(forced_kingdom_cards),
-      disabled_basic_supply_(disabled_basic_supply), rng_(seed)
+      disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -38,6 +39,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         dom->set_max_action_cards(max_action_cards);
         if (!forced_kingdom_cards.empty()) dom->set_forced_kingdom_cards(forced_kingdom_cards);
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
+        if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
         max_turns_ = 0;  // No cap — bot now buys ~4.65 provinces/game, games terminate naturally
     } else {

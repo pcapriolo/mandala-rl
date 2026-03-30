@@ -579,6 +579,11 @@ std::unique_ptr<GameState> DominionGame::create_initial_state(std::mt19937& rng)
         s->supply[cid] = initial_supply_count(cid, true);
     }
 
+    // Override province supply count (default 8, use 7 to reduce draws)
+    if (province_supply_ != 8) {
+        s->supply[CARD_PROVINCE] = province_supply_;
+    }
+
     // Disable basic supply cards for curriculum
     for (auto cid : disabled_basic_supply_) {
         s->supply[cid] = 0;

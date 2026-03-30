@@ -22,7 +22,8 @@ public:
                 int max_action_cards = 10,
                 double big_money_force_rate = 0.0,
                 std::vector<int> forced_kingdom_cards = {},
-                std::vector<int> disabled_basic_supply = {});
+                std::vector<int> disabled_basic_supply = {},
+                int province_supply = 8);
 
     void init_games(int num_games);
 
@@ -80,6 +81,7 @@ private:
     double big_money_force_rate_;
     std::vector<int> forced_kingdom_cards_;
     std::vector<int> disabled_basic_supply_;
+    int province_supply_ = 8;
     std::mt19937 rng_;
 
     int max_turns_ = 0;  // 0 = no limit; when set, caps on get_turn_number() not sub-actions

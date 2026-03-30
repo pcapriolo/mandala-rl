@@ -281,6 +281,7 @@ public:
         forced_kingdom_cards_.clear();
         for (int c : cards) forced_kingdom_cards_.push_back(static_cast<int8_t>(c));
     }
+    void set_province_supply(int n) { province_supply_ = n; }
     void set_disabled_basic_supply(const std::vector<int>& cards) {
         disabled_basic_supply_.clear();
         for (int c : cards) disabled_basic_supply_.push_back(static_cast<int8_t>(c));
@@ -296,6 +297,7 @@ public:
 
 private:
     int max_action_cards_ = 10;
+    int province_supply_ = 8;
     std::vector<int8_t> forced_kingdom_cards_;  // if non-empty, use exactly these cards every game
     std::vector<int8_t> disabled_basic_supply_;  // basic supply cards to zero out (curriculum)
 
