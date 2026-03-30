@@ -54,3 +54,4 @@ build/
 .ipynb_checkpoints/
 *.ipynb
 .env
+.gstack/
