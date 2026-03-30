@@ -118,7 +118,10 @@ def load_model(path, net_cfg, device):
         input_channels=net_cfg['input_channels'],
         num_actions=net_cfg['num_actions'],
         num_res_blocks=net_cfg['num_res_blocks'],
-        channels=net_cfg['channels']
+        channels=net_cfg['channels'],
+        belief_size=net_cfg.get('belief_size', 12),
+        phase_aware_policy=net_cfg.get('phase_aware_policy', False),
+        factored_policy=net_cfg.get('factored_policy', False),
     ).to(device)
     ckpt = torch.load(path, map_location=device, weights_only=False)
     m.load_state_dict(ckpt['model_state_dict'])

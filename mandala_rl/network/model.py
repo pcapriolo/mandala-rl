@@ -2,12 +2,29 @@
 Policy-Value neural network for Mandala.
 
 Architecture: ResNet-style with shared trunk + policy/value heads.
+Supports optional phase-aware routing and factored action policy.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from ..game.state import GameState
+
+# Dominion action space layout
+_DOM_PLAY_OFFSET = 3
+_DOM_BUY_OFFSET = 34
+_DOM_SELECT_OFFSET = 65
+_DOM_GAIN_OFFSET = 96
+_DOM_NUM_CARD_TYPES = 31
+_DOM_CONTROL_INDICES = [0, 1, 2, 127, 128, 129, 130]  # END_ACTIONS, END_BUYS, DONE_SELECTING, REVEAL_MOAT, DECLINE_REACTION, ACCEPT, DECLINE
+
+# Phase values encoded in channel 129 of the tensor
+_PHASE_ACTION = 0.0
+_PHASE_BUY = 0.33
+_PHASE_SELECT = 0.67
+_PHASE_REACT = 1.0
+_PHASE_VALS = [_PHASE_ACTION, _PHASE_BUY, _PHASE_SELECT, _PHASE_REACT]
+_PHASE_NAMES = ['action', 'buy', 'select', 'react']
 
 
 class ResBlock(nn.Module):
@@ -29,11 +46,40 @@ class ResBlock(nn.Module):
         return x
 
 
+class FactoredPolicyHead(nn.Module):
+    """Factored policy: control + type + card logits → 131 actions."""
+
+    def __init__(self, in_features: int, num_actions: int):
+        super().__init__()
+        self.num_actions = num_actions
+        self.fc_control = nn.Linear(in_features, len(_DOM_CONTROL_INDICES))
+        self.fc_type = nn.Linear(in_features, 4)  # PLAY, BUY, SELECT, GAIN
+        self.fc_card = nn.Linear(in_features, _DOM_NUM_CARD_TYPES)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        B = features.size(0)
+        control = self.fc_control(features)  # (B, 7)
+        type_logits = self.fc_type(features)  # (B, 4)
+        card_logits = self.fc_card(features)  # (B, 31)
+
+        policy = torch.zeros(B, self.num_actions, device=features.device, dtype=features.dtype)
+
+        # Control actions at fixed positions
+        for i, idx in enumerate(_DOM_CONTROL_INDICES):
+            policy[:, idx] = control[:, i]
+
+        # Card-based actions: type + card (broadcasting)
+        for t, offset in enumerate([_DOM_PLAY_OFFSET, _DOM_BUY_OFFSET, _DOM_SELECT_OFFSET, _DOM_GAIN_OFFSET]):
+            policy[:, offset:offset + _DOM_NUM_CARD_TYPES] = type_logits[:, t:t + 1] + card_logits
+
+        return policy
+
+
 class MandalaNet(nn.Module):
     """
     Policy-Value network for Mandala.
 
-    Input: State tensor (channels × height × width)
+    Input: State tensor (channels x height x width)
     Output:
         - Policy: Probability distribution over actions
         - Value: Expected outcome for current player [-1, 1]
@@ -44,19 +90,17 @@ class MandalaNet(nn.Module):
         input_channels: int = 50,
         num_actions: int = 256,
         num_res_blocks: int = 10,
-        channels: int = 128
+        channels: int = 128,
+        belief_size: int = 12,
+        phase_aware_policy: bool = False,
+        factored_policy: bool = False,
     ):
-        """
-        Args:
-            input_channels: Number of input planes in state tensor
-            num_actions: Size of action space
-            num_res_blocks: Number of residual blocks in trunk
-            channels: Number of channels in residual blocks
-        """
         super().__init__()
 
         self.input_channels = input_channels
         self.num_actions = num_actions
+        self.phase_aware = phase_aware_policy
+        self.factored = factored_policy
 
         # Initial convolution
         self.conv_input = nn.Conv2d(input_channels, channels, kernel_size=3, padding=1)
@@ -67,10 +111,29 @@ class MandalaNet(nn.Module):
             ResBlock(channels) for _ in range(num_res_blocks)
         ])
 
-        # Policy head
+        # Policy head (shared conv)
         self.conv_policy = nn.Conv2d(channels, 32, kernel_size=1)
         self.bn_policy = nn.BatchNorm2d(32)
-        self.fc_policy = nn.Linear(32 * 8 * 8, num_actions)  # Assuming 8×8 board
+        policy_in = 32 * 8 * 8
+
+        if phase_aware_policy and factored_policy:
+            # 4 phase-routed factored heads
+            self.phase_policy_heads = nn.ModuleDict({
+                name: FactoredPolicyHead(policy_in, num_actions)
+                for name in _PHASE_NAMES
+            })
+        elif phase_aware_policy:
+            # 4 phase-routed flat FCs
+            self.phase_policy_heads = nn.ModuleDict({
+                name: nn.Linear(policy_in, num_actions)
+                for name in _PHASE_NAMES
+            })
+        elif factored_policy:
+            # Single factored head
+            self.fc_policy = FactoredPolicyHead(policy_in, num_actions)
+        else:
+            # Original single flat FC
+            self.fc_policy = nn.Linear(policy_in, num_actions)
 
         # Value head
         self.conv_value = nn.Conv2d(channels, 32, kernel_size=1)
@@ -84,10 +147,33 @@ class MandalaNet(nn.Module):
         self.fc_score1 = nn.Linear(32 * 8 * 8, 128)
         self.fc_score2 = nn.Linear(128, 1)
 
-        # Belief head (predicts opponent hand/cup contents, 12 binary outputs)
+        # Belief head (predicts opponent hand/cup contents)
         self.conv_belief = nn.Conv2d(channels, 32, kernel_size=1)
         self.bn_belief = nn.BatchNorm2d(32)
-        self.fc_belief = nn.Linear(32 * 8 * 8, 12)
+        self.fc_belief = nn.Linear(32 * 8 * 8, belief_size)
+
+    def _compute_policy(self, policy_features: torch.Tensor, x_input: torch.Tensor) -> torch.Tensor:
+        """Compute policy logits with optional phase routing and factoring."""
+        if self.phase_aware:
+            B = policy_features.size(0)
+            phase_vals = x_input[:, 129, 0, 0]  # (B,)
+            policy = torch.zeros(B, self.num_actions, device=policy_features.device, dtype=policy_features.dtype)
+
+            for phase_val, name in zip(_PHASE_VALS, _PHASE_NAMES):
+                mask = (phase_vals - phase_val).abs() < 0.1
+                if mask.any():
+                    head = self.phase_policy_heads[name]
+                    policy[mask] = head(policy_features[mask])
+
+            # Safety: if any example didn't match a phase, use action head as fallback
+            unmatched = policy.sum(dim=1) == 0
+            if unmatched.any():
+                head = self.phase_policy_heads['action']
+                policy[unmatched] = head(policy_features[unmatched])
+
+            return policy
+        else:
+            return self.fc_policy(policy_features)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -101,8 +187,10 @@ class MandalaNet(nn.Module):
                 - policy_logits: (batch, num_actions)
                 - value: (batch, 1) in range [-1, 1]
                 - score: (batch, 1) unbounded score margin prediction
-                - belief: (batch, 12) opponent hand/cup predictions (logits)
+                - belief: (batch, belief_size) opponent hand/cup predictions (logits)
         """
+        x_input = x  # Save for phase routing
+
         # Initial conv
         x = F.relu(self.bn_input(self.conv_input(x)))
 
@@ -111,9 +199,9 @@ class MandalaNet(nn.Module):
             x = block(x)
 
         # Policy head
-        policy = F.relu(self.bn_policy(self.conv_policy(x)))
-        policy = policy.view(policy.size(0), -1)
-        policy = self.fc_policy(policy)
+        policy_features = F.relu(self.bn_policy(self.conv_policy(x)))
+        policy_features = policy_features.view(policy_features.size(0), -1)
+        policy = self._compute_policy(policy_features, x_input)
 
         # Value head
         value = F.relu(self.bn_value(self.conv_value(x)))
@@ -207,7 +295,7 @@ class MandalaNet(nn.Module):
             target_policies: Target policy distributions from MCTS
             target_values: Target values (game outcomes)
             target_scores: Target score margins (normalized), optional
-            target_beliefs: Target belief labels (12 binary), optional
+            target_beliefs: Target belief labels (binary), optional
             entropy_weight: Weight for entropy regularization (0 = disabled)
             policy_weight: Weight for policy loss (decays from 3.0 to 1.0)
 

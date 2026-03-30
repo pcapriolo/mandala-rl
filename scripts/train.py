@@ -93,7 +93,9 @@ def main():
         num_actions=network_config['num_actions'],
         num_res_blocks=network_config['num_res_blocks'],
         channels=network_config['channels'],
-        belief_size=network_config.get('belief_size', 12)
+        belief_size=network_config.get('belief_size', 12),
+        phase_aware_policy=network_config.get('phase_aware_policy', False),
+        factored_policy=network_config.get('factored_policy', False),
     )
     print(f"Created network with {sum(p.numel() for p in network.parameters())} parameters")
 

@@ -446,6 +446,18 @@ void DominionState::to_tensor(std::vector<float>& out) const {
             if (counts[i] > 0) set_channel(187 + i, counts[i] / 12.0f);
         }
     }
+
+    // Ch 218-248: My cumulative buy counts per card type / 4
+    for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+        if (card_buys[i][0] > 0)
+            set_channel(218 + i, std::min(1.0f, card_buys[i][0] / 4.0f));
+    }
+
+    // Ch 249-279: Opponent cumulative buy counts per card type / 4
+    for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+        if (card_buys[i][1] > 0)
+            set_channel(249 + i, std::min(1.0f, card_buys[i][1] / 4.0f));
+    }
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {
@@ -469,6 +481,14 @@ std::unique_ptr<GameState> DominionState::get_canonical() const {
     std::swap(s->players[0], s->players[1]);
     std::swap(s->coins_wasted[0], s->coins_wasted[1]);
     std::swap(s->buy_phase_entries[0], s->buy_phase_entries[1]);
+    // Swap buy history tracking (used by tensor channels 218-279)
+    for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+        std::swap(s->card_buys[i][0], s->card_buys[i][1]);
+        std::swap(s->buy_turn_sum[i][0], s->buy_turn_sum[i][1]);
+        for (int b = 0; b < DOM_BUY_BUCKETS; b++) {
+            std::swap(s->bucketed_buys[b][i][0], s->bucketed_buys[b][i][1]);
+        }
+    }
     s->active_player_ = 1 - s->active_player_;
     s->current_player_ = 0;
     if (s->pending.target_player >= 0) {

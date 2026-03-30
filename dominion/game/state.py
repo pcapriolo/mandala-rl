@@ -203,9 +203,12 @@ class DominionState:
         return s
 
     def to_tensor(self) -> np.ndarray:
-        """Convert state to (156, 8, 8) float32 tensor.
+        """Convert state to (280, 8, 8) float32 tensor.
 
         State is assumed to be in canonical form (current_player = 0).
+        Note: Channels 156-279 match the C++ tensor layout but some
+        (e.g., buy history 218-279) are zeroed in Python since the
+        Python state doesn't track all behavioral data.
 
         Channels:
           0-30:    My full deck composition (count per card type / 12)
@@ -241,7 +244,7 @@ class DominionState:
           154:     Best +coins from playable action in hand / 5
           155:     Number of action cards in hand / 5
         """
-        tensor = np.zeros((156, 8, 8), dtype=np.float32)
+        tensor = np.zeros((280, 8, 8), dtype=np.float32)
         me = self.players[0]
         opp = self.players[1]
 
