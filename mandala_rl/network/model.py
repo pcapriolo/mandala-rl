@@ -85,6 +85,8 @@ class MandalaNet(nn.Module):
         - Value: Expected outcome for current player [-1, 1]
     """
 
+    LEAKY_SLOPE = 0.01  # Prevents dead neuron collapse in value/score heads (DEVLOG #66)
+
     def __init__(
         self,
         input_channels: int = 50,
@@ -175,6 +177,7 @@ class MandalaNet(nn.Module):
         else:
             return self.fc_policy(policy_features)
 
+
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass.
@@ -203,16 +206,16 @@ class MandalaNet(nn.Module):
         policy_features = policy_features.view(policy_features.size(0), -1)
         policy = self._compute_policy(policy_features, x_input)
 
-        # Value head
-        value = F.relu(self.bn_value(self.conv_value(x)))
+        # Value head (LeakyReLU to prevent dead neuron collapse — DEVLOG #66)
+        value = F.leaky_relu(self.bn_value(self.conv_value(x)), negative_slope=self.LEAKY_SLOPE)
         value = value.view(value.size(0), -1)
-        value = F.relu(self.fc_value1(value))
+        value = F.leaky_relu(self.fc_value1(value), negative_slope=self.LEAKY_SLOPE)
         value = torch.tanh(self.fc_value2(value))
 
-        # Score head (auxiliary: normalized score margin)
-        score = F.relu(self.bn_score(self.conv_score(x)))
+        # Score head (LeakyReLU for same reason — DEVLOG #66)
+        score = F.leaky_relu(self.bn_score(self.conv_score(x)), negative_slope=self.LEAKY_SLOPE)
         score = score.view(score.size(0), -1)
-        score = F.relu(self.fc_score1(score))
+        score = F.leaky_relu(self.fc_score1(score), negative_slope=self.LEAKY_SLOPE)
         score = self.fc_score2(score)
 
         # Belief head (opponent hand/cup color predictions)

@@ -67,6 +67,7 @@ class Trainer:
             mcts_simulations=config.get('mcts_simulations', 800),
             temperature=config.get('temperature', 1.0),
             temperature_threshold=config.get('temperature_threshold', 30),
+            explore_epsilon=config.get('explore_epsilon', 0.0),
             c_puct=config.get('c_puct', 1.0),
             dirichlet_alpha=config.get('dirichlet_alpha', 0.3),
             dirichlet_epsilon=config.get('dirichlet_epsilon', 0.25),
@@ -128,8 +129,14 @@ class Trainer:
         self.games_in_current_iteration = 0  # Track progress within iteration
         self.best_checkpoint = None
 
+    def _init_heartbeat_path(self):
+        """Cache the heartbeat path once at startup."""
+        if not hasattr(self, '_heartbeat_path'):
+            self._heartbeat_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'heartbeat.json'
+
     def _write_heartbeat(self, phase: str, detail: str = ""):
         """Write a heartbeat JSON so the observer can show live progress."""
+        self._init_heartbeat_path()
         num_games = self.config.get('games_per_iteration', 100)
         hb = {
             'iteration': self.iteration,
@@ -140,11 +147,10 @@ class Trainer:
             'total_games': self.total_games,
             'timestamp': time.time(),
         }
-        hb_path = Path(self.config.get('checkpoint_dir', 'data/checkpoints')).parent / 'heartbeat.json'
         try:
-            hb_path.write_text(json.dumps(hb))
-        except Exception:
-            pass
+            self._heartbeat_path.write_text(json.dumps(hb))
+        except Exception as e:
+            print(f"[heartbeat] write failed: {e}")
 
     def _get_lr_for_iteration(self, iteration: int) -> float:
         """Compute LR based on absolute iteration (restart-resilient)."""
@@ -181,7 +187,8 @@ class Trainer:
 
             # 1. Self-play
             print("\n[1/3] Generating self-play games...")
-            self._write_heartbeat('selfplay', '0/?')
+            num_games = self.config.get('games_per_iteration', 100)
+            self._write_heartbeat('selfplay', f'0/{num_games}')
             games = self._generate_selfplay_games()
             # Log quality from ALL games (fast+full), train only on full-sim games
             all_games = getattr(self, '_all_games_for_quality', games)
@@ -279,8 +286,8 @@ class Trainer:
         """Generate self-play games using batched parallel play.
 
         Uses playout cap randomization (KataGo): 75% of games run at reduced
-        MCTS sims for game diversity, 25% run at full sims and are recorded
-        for training. Fast games still contribute game quality metrics.
+        MCTS sims for game diversity, 25% run at full sims. All games are
+        used for training (fast games have noisier policies but valid outcomes).
         """
         num_games = self.config.get('games_per_iteration', 100)
         replay_dir = Path(self.config.get('replay_dir', 'data/replays'))
@@ -288,7 +295,7 @@ class Trainer:
         checkpoint_every_n_games = self.config.get("checkpoint_every_n_games", 10)
         parallel_games = self.config.get('parallel_games', 8)
         full_sims = self.config.get('mcts_simulations', 800)
-        fast_sims = min(200, full_sims // 4)
+        fast_sims = 50  # DEVLOG #106: 50 sims (was 200) to break symmetric Province-race equilibrium
 
         # Playout cap: 25% full, 75% fast
         n_full = max(num_games // 4, 10)
@@ -317,7 +324,7 @@ class Trainer:
                 tqdm.write(f"Checkpoint after game {self.games_in_current_iteration}/{num_games}")
                 self._save_checkpoint(suffix=f"_game{self.total_games}")
 
-        # Phase 1: Fast games (diversity, not recorded for training)
+        # Phase 1: Fast games (diversity)
         if n_fast > 0 and remaining_total > n_full:
             fast_remaining = min(n_fast, remaining_total - n_full)
             self.selfplay_worker.mcts_simulations = fast_sims
@@ -331,7 +338,7 @@ class Trainer:
             )
             all_games.extend(fast_games)
 
-        # Phase 2: Full-sim games (recorded for training)
+        # Phase 2: Full-sim games
         self.selfplay_worker.mcts_simulations = full_sims
         full_games = self.selfplay_worker.play_games_batched(
             num_games=min(n_full, remaining_total),
@@ -347,7 +354,7 @@ class Trainer:
         n_opponent = 0
         opp_ratio = self.config.get('opponent_diversity_ratio', 0.0)
         if opp_ratio > 0 and self.iteration > 20:
-            n_opponent = max(1, int(n_full * opp_ratio))
+            n_opponent = max(1, int(num_games * opp_ratio))
             opp_path = self._select_opponent_checkpoint()
             if opp_path:
                 opp_network = self._load_opponent_network(opp_path)
@@ -377,9 +384,9 @@ class Trainer:
         self.writer.add_scalar('Training/FullGames', n_full, self.iteration)
         self.writer.add_scalar('Training/OpponentGames', n_opponent, self.iteration)
 
-        # Log quality from ALL games, but only return full-sim games for training
+        # Train on ALL games (KataGo: fast games have noisier policies but valid outcomes)
         self._all_games_for_quality = all_games
-        return full_games
+        return all_games
 
     def _add_to_replay_buffer(self, games: list):
         """Extract examples from games and add to buffer."""
@@ -820,6 +827,9 @@ class Trainer:
         self._game_quality['avg_coins_wasted'] = round(avg_coins_wasted, 2)
         self._game_quality['avg_turns'] = round(avg_turns, 1)
         self._game_quality['avg_coins_at_buy'] = round(avg_coins_at_buy, 2)
+        # Raw MCTS Province visit % (before epsilon blend) — tracks organic learning
+        mcts_prov_vals = [s.get('mcts_province_pct', 0) for s in summaries if s.get('mcts_province_pct') is not None]
+        self._game_quality['mcts_province_pct'] = round(sum(mcts_prov_vals) / max(len(mcts_prov_vals), 1) * 100, 1)
         self._game_quality['avg_cards_trashed'] = round(avg_cards_trashed, 2)
         self._game_quality['avg_cellar_discards'] = round(avg_cellar_discards, 2)
         self._game_quality['avg_empty_selects'] = round(avg_empty_selects, 2)

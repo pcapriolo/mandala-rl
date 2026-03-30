@@ -54,7 +54,7 @@ class DominionGame:
         state = DominionState()
 
         # Select kingdom cards
-        if self._kingdom_card_ids:
+        if self._kingdom_card_ids is not None:
             state.kingdom_cards = list(self._kingdom_card_ids)
         else:
             state.kingdom_cards = sorted(random.sample(

@@ -43,6 +43,7 @@ class SelfPlayWorker:
         mcts_simulations: int = 800,
         temperature: float = 1.0,
         temperature_threshold: int = 30,
+        explore_epsilon: float = 0.0,
         c_puct: float = 1.0,
         dirichlet_alpha: float = 0.3,
         dirichlet_epsilon: float = 0.25,
@@ -63,6 +64,7 @@ class SelfPlayWorker:
         self.mcts_simulations = mcts_simulations
         self.temperature = temperature
         self.temperature_threshold = temperature_threshold
+        self.explore_epsilon = explore_epsilon
         self.c_puct = c_puct
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
@@ -116,8 +118,11 @@ class SelfPlayWorker:
         has_beliefs = len(game.belief_labels) == len(game.states)
 
         for i, (state, policy, player) in enumerate(zip(game.states, game.policies, game.current_players)):
-            value = outcome if player == 0 else -outcome
             score = score_margin / max_margin if player == 0 else -score_margin / max_margin
+            # DEVLOG #123: Phase 1 uses binary win/loss (not score margin).
+            # Score margin gave tiny ±0.07 targets (Province = Estate at same VP) → value head blind.
+            # Binary outcome: +1 win / -1 loss / 0 draw → strong gradient for Province-buying strategies.
+            value = outcome if player == 0 else -outcome
 
             # Policy target pruning: zero out actions with <2% visits
             policy = policy.copy()
@@ -149,6 +154,7 @@ class SelfPlayWorker:
             dirichlet_epsilon=self.dirichlet_epsilon,
             temperature=self.temperature,
             temperature_threshold=self.temperature_threshold,
+            explore_epsilon=self.explore_epsilon,
             leaves_per_game=self.leaves_per_game,
             action_explore_boost=self.action_explore_boost,
             action_buy_force_rate=self.action_buy_force_rate,
@@ -183,9 +189,10 @@ class SelfPlayWorker:
                 if len(leaf_tensors) > 0:
                     with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                         batch = torch.from_numpy(np.stack(leaf_tensors)).to(self.device)
-                        logits, vals, _scores, _beliefs = self.network(batch)
+                        logits, vals, scores, _beliefs = self.network(batch)
                         pols = F.softmax(logits, dim=1).cpu().numpy()
-                        vals_np = vals.cpu().numpy()[:, 0]
+                        # Use score head (VP margin) for MCTS leaf eval, bounded by tanh
+                        vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy()
                     mgr.apply_nn_results(pols, vals_np)
 
             # Select actions, advance games
@@ -235,6 +242,7 @@ class SelfPlayWorker:
             dirichlet_epsilon=self.dirichlet_epsilon,
             temperature=self.temperature,
             temperature_threshold=self.temperature_threshold,
+            explore_epsilon=self.explore_epsilon,
             leaves_per_game=self.leaves_per_game,
             action_explore_boost=self.action_explore_boost,
             action_buy_force_rate=self.action_buy_force_rate,
@@ -342,9 +350,10 @@ class SelfPlayWorker:
         for m_idx, indices in groups.items():
             batch = torch.from_numpy(stacked[indices]).to(self.device)
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
-                logits, vals, *_ = models[m_idx](batch)
+                logits, vals, scores, *_ = models[m_idx](batch)
                 pols = F.softmax(logits, dim=1).cpu().numpy()
-                vals_np = vals.cpu().numpy()[:, 0] if not policy_only else None
+                # Use score head (VP margin) for MCTS leaf eval, bounded by tanh
+                vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy() if not policy_only else None
 
             if all_policies is None:
                 all_policies = np.empty((n, pols.shape[1]), dtype=np.float32)

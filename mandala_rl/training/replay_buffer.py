@@ -155,18 +155,75 @@ class ReplayBuffer:
             pickle.dump(list(self.buffer), f)
 
     def load(self, filepath: Path):
-        """Load buffer from disk."""
+        """Load buffer from disk, migrating old-format examples if needed."""
         with open(filepath, 'rb') as f:
             examples = pickle.load(f)
             self.buffer = deque(examples, maxlen=self.max_size)
+        self._migrate_if_needed()
 
     def get_all_data(self) -> list:
         """Get all data for checkpointing."""
         return list(self.buffer)
 
     def load_data(self, data: list):
-        """Load data from checkpoint."""
+        """Load data from checkpoint, migrating old-format examples if needed."""
         self.buffer = deque(data, maxlen=self.max_size)
+        self._migrate_if_needed()
+
+    def set_target_sizes(self, input_channels: int, belief_size: int):
+        """Set expected sizes for migration. Call before load/load_data."""
+        self._target_channels = input_channels
+        self._target_belief_size = belief_size
+
+    def _migrate_if_needed(self):
+        """Migrate old-format examples to current sizes (zero-pad states/beliefs)."""
+        if not self.buffer:
+            return
+        target_ch = getattr(self, '_target_channels', None)
+        target_bl = getattr(self, '_target_belief_size', None)
+        if target_ch is None and target_bl is None:
+            return
+
+        # Peek at first example to check sizes
+        sample = self.buffer[0]
+        state = sample[0]
+        belief = sample[4] if len(sample) >= 5 else None
+
+        need_state_migration = (target_ch is not None and
+                                hasattr(state, 'shape') and state.shape[0] < target_ch)
+        need_belief_migration = (target_bl is not None and
+                                 belief is not None and
+                                 hasattr(belief, 'shape') and belief.shape[0] < target_bl)
+
+        if not need_state_migration and not need_belief_migration:
+            return
+
+        old_ch = state.shape[0] if need_state_migration else None
+        old_bl = belief.shape[0] if need_belief_migration else None
+        count = len(self.buffer)
+
+        if need_state_migration:
+            print(f"Migrating replay buffer states: {old_ch} → {target_ch} channels ({count} examples)")
+        if need_belief_migration:
+            print(f"Migrating replay buffer beliefs: {old_bl} → {target_bl} ({count} examples)")
+
+        migrated = deque(maxlen=self.max_size)
+        for ex in self.buffer:
+            s, p, v, sc = ex[0], ex[1], ex[2], ex[3]
+            bl = ex[4] if len(ex) >= 5 else np.zeros(target_bl or 12, dtype=np.float32)
+
+            if need_state_migration and hasattr(s, 'shape') and s.shape[0] < target_ch:
+                pad = np.zeros((target_ch - s.shape[0],) + s.shape[1:], dtype=s.dtype)
+                s = np.concatenate([s, pad], axis=0)
+
+            if need_belief_migration and hasattr(bl, 'shape') and bl.shape[0] < target_bl:
+                pad = np.zeros(target_bl - bl.shape[0], dtype=bl.dtype)
+                bl = np.concatenate([bl, pad])
+
+            migrated.append((s, p, v, sc, bl))
+
+        self.buffer = migrated
+        print(f"Buffer migration complete: {count} examples migrated")
 
     def __len__(self):
         return len(self.buffer)
