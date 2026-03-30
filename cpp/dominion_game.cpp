@@ -288,11 +288,12 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         set_channel(139, std::max(-0.5f, std::min(1.0f, opp_vp / 20.0f)));
     }
 
-    // Ch 140: ZEROED (inverse of Ch 131, both duplicate of supply[Province])
-    // {
-    //     int prov_gone = 8 - supply[CARD_PROVINCE];
-    //     set_channel(140, prov_gone / 8.0f);
-    // }
+    // Ch 140: VP differential (my_vp - opp_vp) / 20
+    {
+        int my_vp = me.count_vp(kingdom_cards, num_kingdom);
+        int opp_vp = opp.count_vp(kingdom_cards, num_kingdom);
+        set_channel(140, std::max(-1.0f, std::min(1.0f, (my_vp - opp_vp) / 20.0f)));
+    }
 
     // Ch 141: My total cards / 50
     set_channel(141, me.total_cards() / 50.0f);
@@ -530,7 +531,7 @@ int DominionGame::initial_supply_count(int8_t card_id, bool is_kingdom) {
         case CARD_GOLD:     return 30;
         case CARD_ESTATE:   return 8;   // 2-player
         case CARD_DUCHY:    return 8;
-        case CARD_PROVINCE: return 8;
+        case CARD_PROVINCE: return 3;   // Low count = depletes fast with sparse Province buying
         case CARD_CURSE:    return 10;  // (num_players-1)*10
         default:
             if (is_kingdom) {
@@ -803,16 +804,18 @@ void DominionGame::get_valid_moves(const GameState& state_base, std::vector<floa
             }
         }
     } else if (s.phase == DOM_PHASE_BUY) {
-        out[DOM_END_BUYS] = 1.0f;
         // Treasures auto-played on phase transition — buy phase is purely "what to buy?"
-        // Can buy cards if buys remaining
+        bool can_buy_something = false;
         if (s.buys_remaining > 0) {
             for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
                 if (i == CARD_CURSE) continue;  // Never allow voluntary Curse purchase
-                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= s.coins)
+                if (s.supply[i] > 0 && CARD_DEFS[i].cost <= s.coins) {
                     out[DOM_BUY_OFFSET + i] = 1.0f;
+                    can_buy_something = true;
+                }
             }
         }
+        out[DOM_END_BUYS] = 1.0f;  // Always allow pass — bot must learn when NOT to buy
     }
 }
 
@@ -1695,6 +1698,7 @@ int DominionGame::get_score(const GameState& state_base, int player) const {
     auto& s = static_cast<const DominionState&>(state_base);
     return compute_vp(s, player);
 }
+
 
 void DominionGame::randomize_hidden(GameState& state_base, std::mt19937& rng) const {
     auto& s = static_cast<DominionState&>(state_base);

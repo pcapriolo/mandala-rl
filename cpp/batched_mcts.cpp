@@ -11,6 +11,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          int num_simulations, double c_puct,
                          double dirichlet_alpha, double dirichlet_epsilon,
                          double temperature, int temperature_threshold,
+                         double explore_epsilon,
                          int leaves_per_game,
                          double action_explore_boost,
                          double action_buy_force_rate,
@@ -23,6 +24,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
+      explore_epsilon_(explore_epsilon),
       leaves_per_game_(leaves_per_game), action_explore_boost_(action_explore_boost),
       action_buy_force_rate_(action_buy_force_rate),
       action_play_force_rate_(action_play_force_rate),
@@ -41,7 +43,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
-        max_turns_ = 0;  // No cap — bot now buys ~4.65 provinces/game, games terminate naturally
+        max_turns_ = 100;  // Turn cap: allow Province discovery via temperature sampling
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
@@ -311,6 +313,82 @@ std::vector<int> BatchedMCTS::finish_move() {
             }
         }
 
+        // Track raw MCTS Province visit fraction (before epsilon blend)
+        if (game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_BUY && !ds->pending.active()) {
+                int prov_action = DOM_BUY_OFFSET + CARD_PROVINCE;
+                if (ds->supply[CARD_PROVINCE] > 0 && CARD_DEFS[CARD_PROVINCE].cost <= ds->coins) {
+                    // Province is affordable — record raw MCTS visit fraction
+                    g.mcts_province_visit_sum += action_probs[prov_action];
+                    g.mcts_province_visit_count++;
+                }
+            }
+        }
+
+        // Epsilon-greedy exploration: blend Big Money prior into policy target.
+        // Province-biased when affordable, Gold-biased at $6-7, Silver at $3-5.
+        // This bootstraps the prior toward correct buy priorities.
+        if (explore_epsilon_ > 0.0 && g.move_count >= temperature_threshold_) {
+            std::vector<float> valid;
+            game_->get_valid_moves(*g.state, valid);
+            float eps = static_cast<float>(explore_epsilon_);
+
+            // Build exploration distribution: Big Money priority for Dominion buy phase
+            std::vector<float> explore_dist(num_actions, 0.0f);
+            bool used_bm_prior = false;
+
+            if (game_type_ == "dominion") {
+                auto* ds = dynamic_cast<DominionState*>(g.state.get());
+                if (ds && ds->phase == DOM_PHASE_BUY && !ds->pending.active()) {
+                    // Province-biased exploration at $8+
+                    int prov_action = DOM_BUY_OFFSET + CARD_PROVINCE;
+                    int gold_action = DOM_BUY_OFFSET + CARD_GOLD;
+                    int silver_action = DOM_BUY_OFFSET + CARD_SILVER;
+
+                    if (valid[prov_action] > 0.0f) {
+                        // Can afford Province: 80% Province, 10% Gold, 10% Silver
+                        explore_dist[prov_action] = 0.8f;
+                        if (valid[gold_action] > 0.0f) explore_dist[gold_action] = 0.1f;
+                        if (valid[silver_action] > 0.0f) explore_dist[silver_action] = 0.1f;
+                        used_bm_prior = true;
+                    } else if (valid[gold_action] > 0.0f) {
+                        // Can afford Gold but not Province: 70% Gold, 30% Silver
+                        explore_dist[gold_action] = 0.7f;
+                        if (valid[silver_action] > 0.0f) explore_dist[silver_action] = 0.3f;
+                        used_bm_prior = true;
+                    }
+                    // Normalize in case some weren't valid
+                    if (used_bm_prior) {
+                        float esum = 0.0f;
+                        for (int a = 0; a < num_actions; a++) esum += explore_dist[a];
+                        if (esum > 0.0f) {
+                            for (int a = 0; a < num_actions; a++) explore_dist[a] /= esum;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: uniform over valid actions (non-Dominion or non-buy phase)
+            if (!used_bm_prior) {
+                int num_valid = 0;
+                for (int a = 0; a < num_actions; a++) {
+                    if (valid[a] > 0.0f) num_valid++;
+                }
+                if (num_valid > 0) {
+                    float uniform_prob = 1.0f / num_valid;
+                    for (int a = 0; a < num_actions; a++) {
+                        explore_dist[a] = (valid[a] > 0.0f) ? uniform_prob : 0.0f;
+                    }
+                }
+            }
+
+            // Blend: (1-eps) * MCTS + eps * explore_dist
+            for (int a = 0; a < num_actions; a++) {
+                action_probs[a] = action_probs[a] * (1.0f - eps) + explore_dist[a] * eps;
+            }
+        }
+
         // Force play action cards in Dominion ACTION phase (epsilon-greedy exploration)
         // Prioritize +action cards (Village, etc.) before terminals (Chapel, Smithy, etc.)
         if (action_play_force_rate_ > 0.0 && game_type_ == "dominion") {
@@ -459,8 +537,6 @@ std::vector<int> BatchedMCTS::finish_move() {
             if (move_cap_hit) {
                 // get_reward guards on game_over flag; bypass it and score by VP margin
                 float margin = static_cast<float>(g.score_p0 - g.score_p1);
-                // Apply same province-buy bonus as get_reward (from P0 perspective)
-                margin += game_->score_bonus_p0(*g.state);
                 g.outcome = std::max(-1.0f, std::min(1.0f, margin / 5.0f));
             } else {
                 g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
@@ -644,6 +720,12 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
             }
         }
         summary["buy_turn_sum"] = turn_sums;
+
+        // Raw MCTS Province visit fraction (before epsilon blend)
+        float mcts_prov_pct = (g.mcts_province_visit_count > 0)
+            ? g.mcts_province_visit_sum / g.mcts_province_visit_count
+            : 0.0f;
+        summary["mcts_province_pct"] = mcts_prov_pct;
     }
 
     return summary;

@@ -15,6 +15,7 @@ public:
                 int num_simulations = 800, double c_puct = 1.0,
                 double dirichlet_alpha = 0.3, double dirichlet_epsilon = 0.25,
                 double temperature = 1.0, int temperature_threshold = 30,
+                double explore_epsilon = 0.0,
                 int leaves_per_game = 1,
                 double action_explore_boost = 0.0,
                 double action_buy_force_rate = 0.0,
@@ -56,6 +57,10 @@ private:
         int score_p1 = 0;
         bool finished = false;
 
+        // Track raw MCTS Province visit fraction (before epsilon blend)
+        float mcts_province_visit_sum = 0.0f;  // sum of Province visit fractions
+        int mcts_province_visit_count = 0;       // number of buy-phase decisions at $8+
+
         // Per-move
         std::unique_ptr<MCTSNode> root;
     };
@@ -74,6 +79,7 @@ private:
     double dirichlet_epsilon_;
     double temperature_;
     int temperature_threshold_;
+    double explore_epsilon_;
     int leaves_per_game_;
     double action_explore_boost_;
     double action_buy_force_rate_;
