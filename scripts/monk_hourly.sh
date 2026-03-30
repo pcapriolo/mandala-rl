@@ -338,9 +338,29 @@ except Exception as e:
         f.write(f"Monk check complete (error: {e})")
 PYEOF
 
-curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
-    -d chat_id="$TG_CHAT" \
-    -d parse_mode=HTML \
-    --data-urlencode text@"$TG_MSG" > /dev/null 2>&1
+# Only send if noteworthy (health issue, action taken, or CEO replies)
+SHOULD_SEND=$(python3 -c "
+import json
+try:
+    with open('/Users/paulcapriolo/GG/mandala-rl/data/monk_hourly.jsonl') as f:
+        m = json.loads([l for l in f if l.strip()][-1])
+    health = m.get('health', 'OK')
+    action = m.get('action', '')
+    has_action = action and action not in ('none', 'observation only', '')
+    print('1' if health != 'OK' or has_action else '0')
+except: print('0')
+")
+
+REPLIES_EXIST=0
+[ -s /tmp/monk_ceo_replies.txt ] && REPLIES_EXIST=1
+
+if [ "$SHOULD_SEND" = "1" ] || [ "$REPLIES_EXIST" = "1" ]; then
+    curl -s -X POST "https://api.telegram.org/bot${TG_BOT}/sendMessage" \
+        -d chat_id="$TG_CHAT" \
+        -d parse_mode=HTML \
+        --data-urlencode text@"$TG_MSG" > /dev/null 2>&1
+else
+    echo "  No issues — skipping Telegram"
+fi
 
 echo "=== Monk Hourly Complete ==="

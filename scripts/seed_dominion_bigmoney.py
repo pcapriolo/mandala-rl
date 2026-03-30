@@ -83,9 +83,12 @@ def main():
             ))
             s = g.get_next_state(s, action)
 
-        # Get final outcomes
-        r0 = g.get_reward(s, 0)
-        r1 = g.get_reward(s, 1)
+        # Get final outcomes using VP margin
+        vp0 = s.players[0].count_vp(s.kingdom_cards)
+        vp1 = s.players[1].count_vp(s.kingdom_cards)
+        margin = vp0 - vp1
+        r0 = float(max(-1.0, min(1.0, margin / 5.0)))
+        r1 = float(max(-1.0, min(1.0, -margin / 5.0)))
 
         # Build training examples
         for (tensor, action, player) in game_states:

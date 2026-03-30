@@ -1251,8 +1251,9 @@ class DominionModelServer:
 class DominionHeuristicServer:
     """Big Money heuristic AI for Dominion — no trained model needed."""
 
-    def __init__(self, engine):
+    def __init__(self, engine, disabled_supply=None):
         self.engine = engine
+        self.disabled_supply = disabled_supply or set()
         self.iteration = 'heuristic'
         self.total_games = 0
         self.checkpoint_path = 'heuristic'
@@ -1359,6 +1360,9 @@ class DominionGameSession:
         self.server = server
         self.engine = server.engine
         self.state = self.engine.get_initial_state()
+        # Remove disabled cards from supply to match training config
+        for cid in server.disabled_supply:
+            self.state.supply.pop(cid, None)
         self.human_player = human_player
         self.move_count = 0
         self.game_history = []
@@ -1628,10 +1632,12 @@ def create_dominion_blueprint(server):
 
 
 # Load Dominion (heuristic AI — no trained model needed)
-_dominion_server = DominionHeuristicServer(DominionGame())
+# Match training config: no action cards, disable Copper/Estate/Curse/Gardens buys (Duchy re-enabled)
+_dominion_engine = DominionGame(kingdom_card_ids=[])
+_dominion_server = DominionHeuristicServer(_dominion_engine, disabled_supply={0, 3, 4, 6, 16})
 app.register_blueprint(create_dominion_blueprint(_dominion_server), url_prefix='/dominion')
 loaded_games['dominion'] = {'total_games': 41000}
-print("[serve] Dominion loaded with heuristic AI (Big Money)")
+print("[serve] Dominion loaded with heuristic AI (training supply: Silver/Gold/Province only)")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1673,16 +1679,19 @@ def training_dominion_api():
             iterations.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    # Include heartbeat timestamp for "last updated" display
+    # Include heartbeat for "last updated" display and live progress
     heartbeat_file = project_root / 'data' / 'dominion' / 'heartbeat.json'
-    last_updated = None
+    heartbeat = {}
     if heartbeat_file.exists():
         try:
-            hb = json.loads(heartbeat_file.read_text())
-            last_updated = hb.get('timestamp')
+            heartbeat = json.loads(heartbeat_file.read_text())
         except (json.JSONDecodeError, KeyError):
             pass
-    return jsonify({'iterations': iterations, 'last_updated': last_updated})
+    return jsonify({
+        'iterations': iterations,
+        'last_updated': heartbeat.get('timestamp'),
+        'heartbeat': heartbeat,
+    })
 
 @app.route('/stats')
 def stats_page():

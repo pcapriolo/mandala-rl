@@ -712,14 +712,21 @@ class MonkDaemon:
             self.send(msg)
 
     def send_scheduled_report(self):
-        """15-minute scheduled report with proactive actions."""
+        """15-minute scheduled report — only notify if actions taken or issues found."""
         log("Scheduled report...")
         s = self.get_status(force=True)
         actions = ""
         if time.time() >= self._kill_hold_until:
             actions = run_proactive_actions(s)
-        msg = build_status_msg(s, actions=actions)
-        self.send(msg)
+
+        # Only send Telegram if there's something noteworthy
+        has_issue = s.get("PID") == "NONE" or s.get("_ssh_failed")
+        if actions or has_issue:
+            msg = build_status_msg(s, actions=actions)
+            self.send(msg)
+        else:
+            log("No issues or actions — skipping Telegram.")
+
         self.last_report = time.time()
         self.save_state()
         run_eval()

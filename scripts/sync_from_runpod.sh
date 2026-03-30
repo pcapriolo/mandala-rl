@@ -60,6 +60,22 @@ echo
 echo "===ELO_DOM==="
 cat /workspace/dominion_data/elo_ratings.json 2>/dev/null || echo "{}"
 echo
+echo "===RUNPOD_HEALTH==="
+PID=$(pgrep -f "train.py.*dominion" | head -1)
+echo "PID=${PID:-NONE}"
+DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
+DISK_AVAIL=$(df -h / | tail -1 | awk '{print $4}')
+echo "DISK_PCT=${DISK_PCT}"
+echo "DISK_AVAIL=${DISK_AVAIL}"
+GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null || echo "N/A")
+GPU_MEM=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader 2>/dev/null || echo "N/A")
+echo "GPU_UTIL=${GPU_UTIL}"
+echo "GPU_MEM=${GPU_MEM}"
+BUF_SIZE=$(du -sh /workspace/dominion_data/checkpoints/buffer_latest.pkl 2>/dev/null | cut -f1 || echo "N/A")
+echo "BUF_SIZE=${BUF_SIZE}"
+LAST_ERROR=$(grep -E "Error|Traceback|RuntimeError|killed|OOM" /tmp/dominion_train.log 2>/dev/null | tail -1 || echo "")
+echo "LAST_ERROR=${LAST_ERROR}"
+echo
 echo "===DONE==="
 CMDS
     ) 2>/dev/null
@@ -99,7 +115,54 @@ CMDS
     safe_write "$(extract_section "LOSSES_DOM")" "$LOCAL_BASE/dominion/losses.jsonl"
     extract_section "ELO_DOM" > "$LOCAL_BASE/dominion/elo_ratings.json"
 
-    # 2. Sync latest checkpoints via SCP
+    # 2. Per-iteration Telegram notification
+    local ITER_STATE="/tmp/mandala-sync-last-iter.json"
+    local dom_losses="$LOCAL_BASE/dominion/losses.jsonl"
+    if [ -f "$dom_losses" ]; then
+        local current_iter
+        current_iter=$(tail -1 "$dom_losses" | python3 -c "import sys,json; print(json.load(sys.stdin).get('iteration',0))" 2>/dev/null || echo 0)
+        local last_iter=0
+        [ -f "$ITER_STATE" ] && last_iter=$(python3 -c "import sys,json; print(json.load(open('$ITER_STATE')).get('iteration',0))" 2>/dev/null || echo 0)
+
+        if [ "$current_iter" -gt "$last_iter" ] 2>/dev/null; then
+            # Load TG credentials
+            if [ -f "$HOME/GG/mandala-rl/.env" ]; then
+                set -a; source "$HOME/GG/mandala-rl/.env"; set +a
+            fi
+            if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+                # Parse RunPod health from SSH output
+                local health_section
+                health_section=$(extract_section "RUNPOD_HEALTH")
+                parse_health() { echo "$health_section" | grep "^$1=" | head -1 | cut -d= -f2-; }
+                local h_pid=$(parse_health PID)
+                local h_disk_pct=$(parse_health DISK_PCT)
+                local h_disk_avail=$(parse_health DISK_AVAIL)
+                local h_gpu_util=$(parse_health GPU_UTIL)
+                local h_gpu_mem=$(parse_health GPU_MEM)
+                local h_buf_size=$(parse_health BUF_SIZE)
+                local h_last_error=$(parse_health LAST_ERROR)
+
+                # Get latest, prev, and baseline loss lines
+                local latest_loss=$(tail -1 "$dom_losses")
+                local prev_loss=$(tail -2 "$dom_losses" | head -1)
+                local baseline_loss=$(grep '"iteration": 250' "$dom_losses" | tail -1)
+
+                SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                python3 "$SCRIPT_DIR/tg_notify.py" \
+                    "$TG_BOT_TOKEN" "$TG_CHAT_ID" \
+                    "$h_pid" "$h_disk_pct" "$h_disk_avail" "$h_gpu_util" "$h_gpu_mem" "$h_buf_size" \
+                    "" "$h_last_error" \
+                    "$latest_loss" "$prev_loss" "$baseline_loss" \
+                    "" "" "" "" 2>/dev/null
+
+                echo "[$(date +%H:%M:%S)] Telegram sent (iter $current_iter)"
+            fi
+            # Update state with current line
+            tail -1 "$dom_losses" > "$ITER_STATE"
+        fi
+    fi
+
+    # 3. Sync latest checkpoints via SCP
     local new=0
     for game_dir in "" "lost_cities/" "dominion/"; do
         if [ "$game_dir" = "dominion/" ]; then
