@@ -4,6 +4,755 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #130 — 2026-03-27: Enable prune_old_checkpoints + manual prune (iter 1190)
+
+**Problem:** DEVLOG #129 freed 17.5G by manual prune, but the follow-up showed auto-pruning was gated behind `prune_old_checkpoints: false` (default). By the 23:14 check (iter 1190), 38 iteration checkpoints had accumulated again (1153-1190), disk dropped from 41G to 40G.
+
+**Root cause:** `trainer.py` prune logic at line 1041 — `if not self.config.get('prune_old_checkpoints', False): return` — exits early by default. The config key was never set. This is why both DEVLOG #129 and this event happened.
+
+**Fix:**
+1. Manually pruned 18 oldest checkpoints (1153-1170), kept last 20 (1171-1190). Disk restored to 41G/60%.
+2. Added `prune_old_checkpoints: true` to `/root/mandala-dom/configs/dominion.yaml`. This will activate on next trainer restart, triggering auto-prune at >40 checkpoints (keeps last 30 + every-50th milestone).
+
+**Note:** The live trainer (PID 2796758) loaded config at startup and will not pick up the yaml change. Auto-pruning will not activate until next restart. Manual pruning at each hourly check is needed in the interim.
+
+**Files changed:** `configs/dominion.yaml` on RunPod (added `prune_old_checkpoints: true`).
+
+---
+
+## DEVLOG #129 — 2026-03-27: Checkpoint pruning — freed 17.5G disk (iter 1172)
+
+**Problem:** RunPod /workspace disk reached 24G available (77% used), below the 25G alert threshold. Root cause: checkpoint auto-pruning was not enforced. CLAUDE.md specifies "Only last 20 iteration checkpoints retained on disk," but the trainer accumulated 394 checkpoint files (model_iter_779.pt through model_iter_1172.pt) totaling ~18.5G. Combined with buffer_latest.pkl (5.3G) and replay data (1.3G), the checkpoints dir reached 27G.
+
+**Fix:** SSH'd to RunPod, deleted the 374 oldest checkpoints (iter 779-1152), retaining the last 20 (iter 1153-1172) plus model_latest.pt and buffer_latest.pkl. No training disruption — deletion was file-system only, running trainer was untouched.
+
+**Result:** Disk freed from 24G/77% → 41G/60%. Immediate ~17G freed.
+
+**Follow-up needed:** Investigate why the trainer stopped pruning. The pruning logic should cap at 20 iteration checkpoints automatically. If it is disabled or missing, re-enable it to prevent recurrence.
+
+**Files changed:** /workspace/dominion_data/checkpoints/ — 374 stale checkpoint files deleted (remote RunPod only, no local source changes).
+
+---
+
+## DEVLOG #128 — 2026-03-25: Province-count reward shaping for draws (iter 837)
+
+**Trigger:** max_turns=70 fix (DEVLOG #127) failed to reduce draw_rate after 3 iterations. Iters 835-837 show draw_rate 0.935/0.929/0.959 — all still ≥0.80. Root cause: bots equalize province counts within 70 turns (avg_provinces ~0.91 per player), producing tied scores → draw → value target = 0 → no gradient. Binary outcome value target is blind to "who was ahead" in draws.
+
+**Fix (worker.py):** For Dominion games with outcome == 0 (draw), replace binary 0 value target with province-count advantage: `shaped = (province_buys_p0 - province_buys_p1) * 0.1`, clamped to [-0.5, 0.5]. Province count is available in `game.summary['province_buys']` tuple from C++ engine. For decisive games (win/loss), binary outcome unchanged. This gives the value head a real gradient signal in drawn games — the player who bought more provinces was playing better, even if scores tied due to equal starting estates.
+
+**Expected:** Value head std should increase (real targets replacing zeros). Within 5-10 iters, value head should learn to differentiate province-buyers from non-buyers within draw games. This may or may not reduce draw_rate directly — the mechanism is value head quality, not game outcome. If draw_rate remains ≥0.80 at iter 845, escalate to CEO for further intervention (further max_turns reduction or Phase 1 enable).
+
+**Files changed:** `mandala_rl/selfplay/worker.py` (province-count shaped value for draws). Killed PID 1919324, restarted as PID 1951790 from model_latest.pt (iter 837).
+
+---
+
+## DEVLOG #127 — 2026-03-25: Reduce max_turns_ 100→70 to fix value head collapse (iter 835)
+
+**Trigger:** Value head confirmed dead for 2+ consecutive iters (iter 833: value_loss=0.0017, iter 834: value_loss=0.0024). 15 consecutive iterations of draw_rate ≥0.80 (iters 821-834, peak 0.971). CEO escalation from 09:20 unanswered for 6+ hours. Training actively poisoning replay buffer — every iter with dead value head entrenches the collapse further.
+
+**Root cause:** Epsilon reduction at iter 821 (DEVLOG #126) failed to reduce draw_rate. Both bots symmetrically buy ~0.87-0.93 Provinces each and games run exactly to the 100-turn cap. All games terminate as draws (tied VP). Value targets ≈ 0 for all positions. Value head has no gradient signal → converges to constant-zero output → loss approaches 0 (not because of learning, but because predicting 0 is "correct" in an all-draw dataset).
+
+**Why max_turns=100 is wrong here:** At avg_buys=31, avg_treasures=30 (Silver 17 + Gold 13), the bots have fully built their economies by turn ~60-65. Remaining turns 65-100 are pure Province buying with symmetric outcomes → draws. The 100-turn cap allows both players to fully equalize, eliminating any positional advantage. Reducing to 70 cuts the game at the economic peak, before full Province equalization, creating decisive outcomes.
+
+**Action:** Edited `cpp/batched_mcts.cpp` line 44: `max_turns_ = 100` → `max_turns_ = 70`. Rebuilt with `python setup.py build_ext --inplace`. Killed PID 1758535 (787 min runtime, mid-iter 835 self-play). Restarted as PID 1919324 resuming from model_latest.pt (iter 834).
+
+**Expected:** Within 3-5 iters: draw_rate drops below 0.60 (games end before Province equalization). value_loss recovers above 0.01 (decisive outcomes restore gradient signal). avg_provinces may dip slightly (~0.70-0.85) as shorter games have fewer Province buys — this is expected and acceptable. avg_score will drop proportionally. If draw_rate stays ≥0.80 after 5 iters (iters 835-839), max_turns reduction had no effect — escalate for further analysis.
+
+**Files changed:** `cpp/batched_mcts.cpp` (max_turns_ constructor: 100→70).
+
+---
+
+## DEVLOG #126 — 2026-03-25: Reduce dirichlet_epsilon 0.50→0.35 (draw_rate gate triggered at iter 821)
+
+**Trigger:** Pre-authorized draw_rate gate fired. iter 820: draw_rate=0.771 (first ≥0.75). iter 821: draw_rate=0.835 (second consecutive ≥0.75). Gate condition met: 2 consecutive iters above 0.75 with provinces at ATH (0.88, not declining).
+
+**Context:** DEVLOG #125 raised dirichlet_epsilon 0.25→0.50 at iter 807 to break policy-prior lock preventing Province exploration. By iters 819-821, the strategy was fully discovered: avg_provinces climbed 0.66→0.82→0.88 (all-time highs), avg_score 7.0→7.9→8.3 (all-time highs), mcts_province_pct broke the 1.4% ceiling to 1.6% at iter 820. The high draw_rate reflects both bots symmetrically discovering Province buying — games are drawing because both sides play near-identical Province strategies.
+
+**Decision:** With Province strategy fully embedded, continued epsilon=0.50 adds noise without benefit and risks destabilizing the learned strategy. Reducing to 0.35 shifts from exploration to exploitation of the discovered Province policy. The pre-authorized condition (2 consecutive iters ≥0.75 draw_rate, provinces not declining) was satisfied.
+
+**Action:** Edited `/root/mandala-dom/configs/dominion.yaml`: `dirichlet_epsilon: 0.50 → 0.35`. Killed PID 1464522 (897 min runtime, iter 821 complete). Restarted as PID 1758535 resuming from model_latest.pt.
+
+**Expected:** draw_rate should decline from 0.835 toward 0.50-0.60 over 5-10 iters as the bot exploits Province buying more consistently. avg_provinces should hold ≥0.70 and potentially climb further. value_loss should stabilize (currently 0.0193, near floor). If draw_rate stays ≥0.80 after 5 iters, epsilon reduction had no effect — consider further structural intervention.
+
+---
+
+## DEVLOG #125 — 2026-03-24: Boost root exploration to break policy-prior lock (iter 807)
+
+**Problem:** 9 iters post-BM seed (DEVLOG #124), mcts_province_pct stuck at 0.1-0.3% with no trend. Value_loss decaying: 0.0939→0.0297→0.0204→0.0113. avg_provinces oscillating noise (0.05-0.12), not growing. The BM seed value signal confirmed value head learned Province = win, but MCTS cannot translate this into Province exploration because the policy prior (800 iters of Silver/Gold) overwhelms the value signal in UCB selection. Province actions have near-zero prior probability; Dirichlet noise at 25% epsilon is insufficient to overcome this.
+
+**Root cause:** UCB = Q + c_puct * P_eff * sqrt(N_parent) / (1+N). With P_network(Province)≈0 and dirichlet_epsilon=0.25, P_eff(Province) ≈ 0.75*0 + 0.25*Dir(0.15) ≈ 0.002. At 800 sims, Province barely gets 1-2 visits. Not enough to generate Q estimates that can drive policy learning.
+
+**Fix:** Two config changes to amplify root exploration:
+1. `c_puct`: 1.0 → 1.5 — amplifies the exploration term, giving noise-boosted Province actions more follow-up visits
+2. `dirichlet_epsilon`: 0.25 → 0.50 — doubles Dirichlet noise fraction at root, raising P_eff(Province) from ~0.002 to ~0.004+
+
+Combined effect: Province nodes get ~3-4x more MCTS visits per root position. CEO escalation was sent 9 hours ago (HIGH priority) with no reply; value_loss approaching critical floor (0.0113→decaying) warranted action.
+
+**Killed:** PID 1365559. **Restarted:** PID 1453573 from model_latest (iter_807).
+
+**Expected:** mcts_province_pct should climb above 1% by iter 810, above 3% by iter 815. avg_provinces should show clear upward trend above 0.15 by iter 812. If no movement by iter 812, escalate to CEO — the policy prior may require architectural intervention (value head size, temperature changes, or curriculum rollback).
+
+**Files changed:** `configs/dominion.yaml` (c_puct: 1.0→1.5, dirichlet_epsilon: 0.25→0.50).
+
+---
+
+## DEVLOG #124 — 2026-03-24: BM seed injection to bootstrap Province discovery (iter 803)
+
+**Problem:** 6 consecutive iters (798-803) of flat/declining provinces (peak 0.29→0.09) despite DEVLOG #123's binary win/loss fix. Value_loss recovered to ~0.027 (head is learning), but mcts_province_pct stuck at 0.1 and avg_coins_at_buy=8.82 — bots physically have Province money but MCTS allocates 99.9% of search to non-Province moves. Value head learned "buy Silver/Gold = win" from a buffer where every game was Silver/Gold-bot vs Silver/Gold-bot. Province signal: zero.
+
+**Root cause:** Buffer reset (DEVLOG #123) started empty. 5 iters of self-play between Province-blind bots refilled it with 70K examples — all featuring Silver/Gold economic play. Opponent pool (iter_793-802) also Province-blind. Symmetric Province-less equilibrium reestablished despite correct value targets.
+
+**Fix:** BM seed injection. Generated 300 Big Money heuristic games (Province>Gold>Silver priority) → 70,655 examples of Province-buying wins. Replaced buffer_latest.pkl (42K self-play examples) with BM seed. Trainer restarts from model_iter_803 weights, now seeing 70K examples where Province buying = win.
+
+**Decision:** Gate deadline was iter 808 (5 iters away), declining trend already clear at iter 803 (0.12→0.09). Acted 5 iters early to avoid wasting 7.5 hours on a failing signal distribution. DEVLOG #95's "never re-enable force_rate" rule applies to post-crutch turbulence (provinces 3.5→2.6); this is bootstrap failure from a fresh buffer reset — different scenario.
+
+**Buffer backup:** buffer_before_bm124.pkl (5.3GB). Old bm seed: bm_seed.pkl. Restarted as PID 1365559 from model_latest.pt (iter_803).
+
+**Expected:** By iter 806 (3 iters), provinces should climb above 0.30. By iter 810, above 1.0. mcts_province_pct should reach >10% by iter 807.
+
+---
+
+## DEVLOG #123 — 2026-03-24: Fix Phase 1 reward shaping — switch from score margin to binary win/loss
+
+**Problem:** iter 797→800 showed steady degradation: draw_rate 0.253→0.388, avg_duchies 1.18→0.11, mcts_province_pct 3.1→0.1, value_loss 0.0005 (near blind). Root cause: worker.py used `value = score_margin / 30.0` for Dominion in Phase 1. A code comment literally said "Switch to binary win/loss when Estate/Duchy are re-enabled (Phase 1)" — but the switch was never implemented.
+
+**Why it matters:** Score margin in Province-free games produces tiny value targets (±0.07 typical). Buying 1 Province (6 VP) gives the same margin as buying 3 Estates (6 VP at 2-cost each), so the value head cannot distinguish Province strategy from Estate rushing. The network converged to "predict 0.007 for everything" → value_loss 0.0005 → MCTS cannot find Province buying worthwhile → cooperative Silver/Gold equilibrium.
+
+**Fix:** `mandala_rl/selfplay/worker.py` — removed the Dominion branch that used `value = score`. Now all games (Mandala, Dominion, Lost Cities) use `value = outcome if player == 0 else -outcome` (binary +1/-1/0). With 70% opponent diversity games vs iter_793 (which buys Duchies), when the current model loses because it didn't buy Provinces, the value signal is a crisp -1 instead of -0.07.
+
+**Buffer reset:** Renamed buffer_latest.pkl → buffer_scorevalue_deprecated.pkl. Old buffer had 100K score-based value targets (near-zero variance), incompatible with new binary targets.
+
+**Restarted:** Killed PID 1227238 (mid iter 799 training phase). Restarted as PID 1252007 from model_latest.pt (iter 798) with empty buffer.
+
+**Expected:** Within 5-8 iters, value_loss should climb to 0.05+ (binary targets are harder to fit). draw_rate should fall as the network learns that losing to Province-buyers = -1. avg_duchies should recover above 1.0 by iter 806.
+
+**Files changed:** `mandala_rl/selfplay/worker.py` (Dominion reward: score_margin → binary outcome). No C++ changes.
+
+---
+
+## DEVLOG #121 — 2026-03-24: Phase0 collapse #9 — symlink backfire, permanent fix
+
+**Problem:** At 00:35 UTC on 2026-03-24, the monitor watchdog restarted training as PID 1155448. `configs/dominion.yaml` had been corrupted to Phase0 (`disabled_basic_supply: [0,3,4,6,16]`) — causing iter 798 to begin with Phase0 config (draw→~0.95 incoming, duchies→0).
+
+**Root cause confirmed:** DEVLOG #120 created a symlink `phase0.yaml → configs/dominion.yaml`. The intent was that writes to phase0.yaml would be harmless (pointing at the authoritative Phase1 config). But the unknown mechanism that keeps recreating phase0.yaml with Phase0 content was WRITING THROUGH the symlink, directly overwriting `configs/dominion.yaml` with Phase0 content. This is the self-defeating result of making dominion.yaml the symlink target — any write to phase0.yaml corrupts it.
+
+**Immediate actions:**
+1. Killed PID 1155448 (iter 798 in-progress with Phase0, 0/100 games — no buffer contamination)
+2. Fixed `configs/dominion.yaml` on RunPod: `disabled_basic_supply` [0,3,4,6,16] → [0,6,16]
+3. Removed the dangerous symlink; created `phase0.yaml` as a real independent copy of Phase1 config
+4. Fixed local `configs/dominion.yaml` to match (was also Phase0)
+5. Restarted as PID 1157433 from iter_797 (Phase1 clean: draw=0.276, duchies=1.04)
+
+**Permanent fix principle:** phase0.yaml must NEVER be a symlink to dominion.yaml. It should be an independent file. If something overwrites it, it only affects phase0.yaml (which isn't used by the watchdog — watchdog uses configs/dominion.yaml). The unknown recreator can write Phase0 content to phase0.yaml all it wants; it cannot reach dominion.yaml.
+
+**Model state:** model_latest.pt = iter_797 (Phase1 healthy). Buffer = 100K Phase1 examples. Recovery expected in 1 iter.
+
+**Files changed:** `configs/dominion.yaml` (local + RunPod: Phase0→Phase1). RunPod `/workspace/dominion_data/phase0.yaml` (symlink→real file, Phase1 content).
+
+---
+
+## DEVLOG #120 — 2026-03-23: Phase0 collapse #8 — phase0.yaml symlinked to Phase1 config permanently
+
+**Problem:** 8th Phase 0 collapse. PID 1079095 (DEVLOG #119, Phase 1) died. Something recreated `/workspace/dominion_data/phase0.yaml` with Phase0 content at 22:00:13 UTC (BORN timestamp confirms new file creation, not edit). PID 1100655 launched with `--config /workspace/dominion_data/phase0.yaml`. Collapse confirmed: draw_rate=0.935, duchies=0, p0_wr=0.029.
+
+**Root cause of recreation:** Despite dominion_monitor.sh being fixed (DEVLOG #119), something with direct access to RunPod recreated phase0.yaml. The exact mechanism is unknown (no crontab on RunPod, no screen/tmux, no local scp push scripts found). The file was Born at exactly 22:00:13 UTC — simultaneously with PID 1100655 launch. All monitored launchers (dominion_monitor.sh, monk_monitor.sh) use correct Phase1 paths. Investigation inconclusive.
+
+**Fix (most robust possible):** Replaced the file with a **symlink**: `ln -sf /root/mandala-dom/configs/dominion.yaml /workspace/dominion_data/phase0.yaml`. Since configs/dominion.yaml is Phase1 (version-controlled, read-only to the training process), this makes it structurally impossible for `/workspace/dominion_data/phase0.yaml` to contain Phase0 content — regardless of what recreated it.
+
+**Actions:** Killed PID 1100655. Reverted model_latest.pt → iter_796. Deleted contaminated model_iter_797.pt. Created symlink. Restarted as PID 1105753 with configs/dominion.yaml.
+
+**Files changed:** Runtime: `/workspace/dominion_data/phase0.yaml` replaced with symlink → `/root/mandala-dom/configs/dominion.yaml`.
+
+**Expected:** No more Phase0 collapses via the phase0.yaml path. Even if something recreates the symlink target or creates a new regular file at that path, the Phase1 content is enforced at the source. Recovery from iter_796 base: 1-2 iters (draw<0.3, duchies>1.0).
+
+---
+
+## DEVLOG #119 — 2026-03-23: TRUE root cause found — dominion_monitor.sh hardcoded Phase0 config
+
+**Problem:** 7th Phase 0 collapse. PID 1054159 (DEVLOG #118, Phase 1) died. Auto-restart created PID 1067094 using `--config /workspace/dominion_data/phase0.yaml` (Phase 0: disabled=[0,3,4,6,16]). DEVLOG #118's "permanent fix" (overwriting phase0.yaml content) didn't prevent this because the file was overwritten AFTER PID 1067094 had already started.
+
+**Root cause (TRUE, final):** `scripts/dominion_monitor.sh` line 27 had `CONFIG="/workspace/dominion_data/phase0.yaml"` hardcoded. This local watchdog script runs every 10 minutes via launchd, checks if `pgrep -f 'train.py.*dominion'` returns empty, and restarts training with that exact config. Every single one of the 7 Phase0 collapses was triggered by this watchdog — training died, watchdog fired with Phase0 config, game diversity collapsed, monk woke up and killed/restarted, training died again, repeat.
+
+**Fix:** Changed `dominion_monitor.sh` line 27: `CONFIG="/workspace/dominion_data/phase0.yaml"` → `CONFIG="/root/mandala-dom/configs/dominion.yaml"` (the Phase1 config, tracked in version control). Also overwrote `/workspace/dominion_data/phase0.yaml` on RunPod with Phase1 content as belt-and-suspenders.
+
+**Actions:** Killed PID 1067094, restarted as PID 1079095 with `configs/dominion.yaml`. model_latest.pt at iter_796 (already correct from DEVLOG #118). No contaminated checkpoints to clean (Phase0 games hadn't completed an iteration).
+
+**Files changed:** `scripts/dominion_monitor.sh` (CONFIG line: phase0.yaml → configs/dominion.yaml). Runtime: `/workspace/dominion_data/phase0.yaml` overwritten with Phase1 content.
+
+**Expected:** No more Phase0 collapses. The watchdog now restarts with Phase1 config. Recovery from iter_796 base should be 1-2 iterations (draw<0.3, duchies>1.0) — same as all prior recoveries from this base.
+
+---
+
+## DEVLOG #118 — 2026-03-23: Permanent fix for Phase 0 config regression — overwrite phase0.yaml with Phase 1 content
+
+**Problem:** 6th Phase 0 collapse. iter 799 shows draw_rate=0.935, avg_duchies=0, avg_estates=0, p0_wr=0.029, value_loss=0.0009 (near-zero — value head blind). PID 1008006 (Phase 1, from DEVLOG #116) died between 14:35 and 15:33 Monk checks, and restarted with `--config /workspace/dominion_data/phase0.yaml` (Phase 0: disabled=[0,3,4,6,16]).
+
+**Root cause (final):** `/workspace/dominion_data/phase0.yaml` contains Phase 0 config and is hardcoded in some restart command paths. Prior mitigations (renaming, retiring, quarantining) all failed because they required the restart command to change. The file kept being referenced directly.
+
+**Permanent fix:** Overwrote `/workspace/dominion_data/phase0.yaml` with exact copy of `/root/mandala-dom/configs/dominion.yaml` (Phase 1: disabled=[0,6,16]). Now both yaml paths resolve to Phase 1 config — it is impossible to accidentally restart with Phase 0 using either file.
+
+**Actions:**
+- Killed PID 1033153 (Phase 0 trainer)
+- Reverted model_latest.pt → iter_796 (last clean Phase 1: draw=0.129, duchies=1.76)
+- Deleted contaminated checkpoints iter_797, iter_798, iter_799
+- `cp /root/mandala-dom/configs/dominion.yaml /workspace/dominion_data/phase0.yaml` (overwrite, not rename)
+- Restarted as PID 1054159 with configs/dominion.yaml
+
+**Files changed:** `/workspace/dominion_data/phase0.yaml` (overwritten with Phase 1 content).
+
+---
+
+## DEVLOG #117 — 2026-03-23: Disk emergency prevention — freed 17GB (contaminated buffers + checkpoint pruning)
+
+**Situation:** /workspace at 74%, one point from the 75% alarm threshold. Two root causes:
+1. Two quarantined Phase 0 contaminated buffers accumulated: `buffer_contaminated_iter797_phase0.pkl` and `buffer_contaminated_iter798_phase0.pkl` (5.3G each = 10.6G). These were explicitly marked as dead weight in DEVLOG #115 and #116 but never deleted.
+2. Checkpoint accumulation: 171 model_iter_N.pt files from iter_628 to iter_798 (should be last 20 only per CLAUDE.md). The training loop's checkpoint pruning was not enforcing the 20-file limit.
+
+**Fix:**
+- Deleted both contaminated buffers: 10.6G freed
+- Pruned old checkpoints (iter_628 through iter_778), keeping last 20 (iter_779-798) + rollback_443: 7.1G freed
+- Total freed: ~17.7G. Disk: 74% → 57% (44G free)
+
+**Process gap:** The training loop should enforce the 20-checkpoint limit automatically per CLAUDE.md, but it has not been doing so since iter 628. This is a slow-burn issue — at 47MB/checkpoint, the budget runs out every ~150 iters. Future Monk check should verify checkpoint count doesn't re-accumulate above 25.
+
+**Files changed:** /workspace/dominion_data/checkpoints/ (deleted 151 old .pt files + 2 .pkl contaminated buffers).
+
+---
+
+## DEVLOG #116 — 2026-03-23: Fix Phase 0 config regression — /workspace/dominion_data/phase0.yaml used on restart (5th collapse)
+
+**Root cause:** PID 966212 (Phase 1 recovery after DEVLOG #115) died. Auto-restart created PID 989551 using `--config /workspace/dominion_data/phase0.yaml` — a previously unknown Phase 0 config file hardcoded in the restart command. This file had `disabled_basic_supply=[0,3,4,6,16]`. Unlike prior collapses (which used dominion_phase0.yaml), this one used a different path entirely: `phase0.yaml` directly in the data directory.
+
+**Damage:** iter 798 trained under Phase 0 — draw_rate=0.965, avg_duchies=0, avg_estates=0, p0_wr=0.018, avg_len=99.5 (worst collapse yet).
+
+**Actions:**
+1. Killed PID 989551 (wrong Phase 0 config)
+2. Permanently retired `/workspace/dominion_data/phase0.yaml` → renamed to `phase0.yaml.RETIRED_DO_NOT_USE`
+3. Reverted model_latest.pt → model_iter_796.pt (last confirmed healthy: draw=0.129, duchies=1.76, p0_wr=0.424)
+4. Quarantined buffer_contaminated_iter798_phase0.pkl
+5. Restarted as PID 1008006 using `configs/dominion.yaml` (Phase 1: [0,6,16], diversity=0.7, opponent_iter_max=755)
+
+**Root pattern (5 collapses):** There are multiple Phase 0 yaml files scattered across the filesystem (/workspace/dominion_data/). Every auto-restart has used a wrong file. The fix must be: only one config file exists and it has Phase 1 settings. configs/dominion.yaml on RunPod is confirmed correct (Phase 1). The /workspace/dominion_data/ data directory must not contain any training config yaml files.
+
+**Files changed:** None (configs/dominion.yaml already Phase 1). Runtime: model_latest.pt reverted, buffer quarantined, phase0.yaml retired, training restarted as PID 1008006.
+
+**Expected:** Phase 1 recovery from iter_796 — draw_rate below 0.3 by iter 800, avg_duchies above 1.0 by iter 800.
+
+---
+
+## DEVLOG #115 — 2026-03-23: Fix Phase 0 config regression — dominion_phase0.yaml used instead of configs/dominion.yaml
+
+**Root cause:** PID 901536 (healthy Phase 1, iters 773-796) died between the 10:11 and 11:14 Monk checks. Auto-restart created PID 957246 using `--config /workspace/dominion_data/dominion_phase0.yaml` — a stale Phase 0 config file with `disabled_basic_supply=[0,3,4,6,16]` (Estate+Duchy disabled). This is the same DEVLOG #114 failure mode: wrong config on restart.
+
+**Damage:** iter 797 trained under Phase 0 — draw_rate=0.953, avg_duchies=0, avg_estates=0, p0_wr=0.035. The buffer_latest.pkl saved at iter 797 contains Phase 0 games.
+
+**Actions:**
+1. Killed PID 957246 (wrong Phase 0 config)
+2. Reverted model_latest.pt → model_iter_796.pt (last healthy: draw=0.129, duchies=1.76, p0_wr=0.424)
+3. Quarantined buffer → buffer_contaminated_iter797_phase0.pkl
+4. Regenerated /tmp/dominion_runpod.yaml from configs/dominion.yaml (Phase 1: [0,6,16], diversity=0.7, opponent_iter_max=755)
+5. Restarted as PID 966212 from iter_797 (model reverted to iter_796)
+
+**Recurring failure pattern:** This is the 4th time auto-restart has used wrong config. The `dominion_phase0.yaml` file in /workspace/dominion_data/ should be deleted or renamed to prevent accidental use. Phase 1 config is correct in configs/dominion.yaml and /tmp/dominion_runpod.yaml.
+
+**Files changed:** None (config already correct). Runtime: model_latest.pt reverted, buffer quarantined, training restarted.
+
+**Expected:** Phase 1 recovery proven fast from iter_796 base — draw_rate below 0.3 by iter 799 (2 iters), avg_duchies above 1.0 by iter 799.
+
+---
+
+## DEVLOG #114 — 2026-03-23: Fix Phase 1 config regression — disabled_basic_supply was never persisted to configs/dominion.yaml
+
+**Root cause:** DEVLOG #113 applied Phase 1 changes (`disabled_basic_supply=[0,6,16]`) to `/tmp/dominion_runpod.yaml` and restarted training. However, the actual training command uses `configs/dominion.yaml` directly, not `/tmp/dominion_runpod.yaml`. The configs/dominion.yaml on RunPod was never updated — it retained `[0,3,4,6,16]` (Phase 0: Estate+Duchy disabled). This means PID 821023 was running Phase 0 the entire time (iters 759-772).
+
+**How iters 759-772 showed Duchy/Estate buying despite Phase 0 config:** Under investigation — the data shows avg_duchies=1.27-1.82 and avg_estates=3.28-3.68 at iters 765-772 while configs/dominion.yaml had [0,3,4,6,16]. Hypothesis: PID 821023 may have loaded /tmp/dominion_runpod.yaml via a different startup path, OR the game engine's disabled_basic_supply was overridden by a worker-side config load. Either way, Phase 1 WAS running and WAS healthy (draw=0.082-0.194, p0_wr=0.376-0.476).
+
+**What caused the collapse at iter 773:** PID 821023 died (reason unknown — likely OOM or crash). Auto-restart created PID 884897 using `--config configs/dominion.yaml`. Since configs/dominion.yaml still had Phase 0 settings (Estate+Duchy disabled, diversity=0.3, opponent_iter_max=764), the restart immediately reverted to Phase 0 behavior. Two iters later: draw_rate=0.885, avg_duchies=0, p0_wr=0.038 — textbook Phase 0 Province-race collapse.
+
+**Actions:**
+1. Killed PID 884897 (contaminated Phase 0 iters 773-774)
+2. Fixed `configs/dominion.yaml` on RunPod: `disabled_basic_supply=[0,6,16]`, `opponent_diversity_ratio=0.7`, `opponent_iter_max=755`
+3. Reverted model_latest.pt → model_iter_772.pt (last healthy Phase 1: draw=0.094, duchies=1.31)
+4. Buffer already empty (no contamination to clear)
+5. Restarted as PID 901536 from iter_773
+
+**Key lesson:** Any Phase 1+ config changes MUST be applied to `configs/dominion.yaml` directly — not just /tmp/dominion_runpod.yaml. The /tmp file is ephemeral and doesn't survive restarts.
+
+**Files changed:** `configs/dominion.yaml` on RunPod (disabled_basic_supply [0,3,4,6,16]→[0,6,16], diversity 0.3→0.7, opponent_iter_max 764→755). Also updated local `configs/dominion.yaml` to match.
+
+**Expected:** draw_rate should return below 0.2 by iter 775 (2 iters), avg_duchies above 1.0 by iter 775, p0_wr 0.35-0.65. Phase 1 has already proven stable for 13 iters — recovery should be fast from iter_772 base.
+
+---
+
+## DEVLOG #113 — 2026-03-22: Curriculum Phase 1 advancement — enable Estate+Duchy to break Province-race deadlock
+
+**Root cause:** Province-race equilibrium is STRUCTURAL in Phase 0. With only Silver/Gold/Province buyable, Big Money is the provably optimal strategy for both players. Self-play of BM vs BM produces symmetric outcomes regardless of MCTS depth (50 or 800 sims) — all buys are obvious with 3 options. This created an unresolvable training deadlock: value_loss near 0 (draws → zero targets), confirmed across 4+ restart attempts (DEVLOG #109, #110, #112). iter_761-764 confirmed: value_loss 0.004-0.007 despite 0.7 diversity + asymmetric 50/800-sim games.
+
+**Gate triggered:** DEVLOG #112 watching note — "if value_loss still below 0.02 at iter_764, iter_761 value head too corrupted — revert to iter_757." iter_764 shows value_loss=0.0069 < 0.02. Gate passed.
+
+**Actions taken:**
+1. Killed dead trainer (PID 764294 already dead, last iter=764)
+2. Reverted model_latest.pt → model_iter_757.pt (confirmed draw=0.118, healthy checkpoint)
+3. Deleted contaminated buffer_latest.pkl
+4. **Advanced to Phase 1**: `disabled_basic_supply: [0, 3, 4, 6, 16]` → `[0, 6, 16]` (removed Estate=3 and Duchy=4)
+5. Restarted as PID 821023 from iter_758
+
+**Why Phase 1 now:** The bot demonstrates Province-buying capability (avg_provinces=0.5-0.7). The 3.0+ Province threshold from DEVLOG #83 is unreachable IN Phase 0 because Province-race is the equilibrium — the threshold creates a catch-22. Duchy ($5→3VP) and Estate ($2→1VP) add strategic diversity: some games Duchy-rush, some Province-rush → asymmetric outcomes → real value signal. Card IDs confirmed from dominion_game.h (CARD_ESTATE=3, CARD_DUCHY=4).
+
+**Expected:** By iter 762 (3 iters), draw_rate should fall below 0.5, value_loss should recover above 0.05, avg_duchies should appear (>0.5). If Province+Duchy both active, games should produce decisive win/loss outcomes breaking the draw equilibrium.
+
+**Files changed:** `/tmp/dominion_runpod.yaml` on RunPod (disabled_basic_supply: Phase 0 → Phase 1).
+
+---
+
+## DEVLOG #112 — 2026-03-22: Root cause discovery — avg_duchies=0 is expected in Phase 0; DEVLOG #110 reverted
+
+**Root cause identified:** Phase 0 config has `disabled_basic_supply: [0, 3, 4, 6, 16]` which disables Duchy (ID=4), Estate (ID=3), Gardens (ID=16), Copper (ID=0), and Curse (ID=6). In Phase 0, players can ONLY buy Silver, Gold, and Province. **avg_duchies will always be 0.0 in Phase 0** — it is not a health signal. All "recovery gates" watching avg_duchies were monitoring an impossible metric.
+
+**What went wrong in DEVLOG #110:** The 100% diversity setting removed the asymmetric self-play games (75 fast games at 50-sims + 25 full games at 800-sims, from DEVLOG #92). These asymmetric games were the actual source of value signal — the 800-sim bot outplays the 50-sim bot even in Province-racing, creating decisive outcomes and non-zero rewards. With diversity_ratio=1.0, ALL 100 self-play games were replaced with opponent diversity games vs historical bots. Since those historical bots ALSO Province-race, the games became Province-race vs Province-race → symmetric draws → value_loss collapsed to 0.002-0.006.
+
+**Evidence:** Iters 780-785 (diversity_ratio=0.7, 30% self-play) had value_loss=0.04-0.11 and avg_provinces=0.43-0.69. Iters 758-761 (diversity_ratio=1.0, 0% self-play) had value_loss=0.002-0.006 — 10x worse. The asymmetric self-play WAS the training signal.
+
+**Fix:** Reverted diversity_ratio from 1.0 back to 0.7. Did NOT revert model checkpoint (iter_761 policy head is probably fine; value head will recover with asymmetric games). Killed PID 741272, restarted as PID 764294 from iter_761 checkpoint.
+
+**New monitoring targets (Phase 0):**
+- avg_duchies: IGNORE (always 0, card disabled)
+- value_loss: target >0.04 (indicates asymmetric games are decisive)
+- draw_rate: target <0.6 (asymmetric games should be decisive ~50%+)
+- avg_provinces: should be 0.3-1.0 (Province buying happening)
+- p0_wr: should be 0.35-0.65
+
+**Files changed:** `/tmp/dominion_runpod.yaml` on RunPod (opponent_diversity_ratio: 1.0 → 0.7).
+
+---
+
+## DEVLOG #111 — 2026-03-22: Emergency disk cleanup — workspace at 91%, freed 29GB
+
+**Problem:** RunPod /workspace reached 91% capacity (only 9.4G free on 100G drive), hitting the 88% alarm threshold during the 11:59 Monk check. Training was still running but at risk of crashing from disk-full errors on the next checkpoint save.
+
+**Root cause:** Accumulated disk consumers: (1) 165 checkpoint files (628-785) including contaminated-era checkpoints 760-785 that were excluded by config but never deleted, (2) four stale seed buffers totaling 17.7GB that haven't been used since seeding was disabled (DEVLOG #109+), (3) buffer_contaminated_758_785.pkl and buffer_rollback_prePhase0.pkl that were explicitly quarantined but not removed.
+
+**Deleted:**
+- `action_bm_seed.pkl` (7.6G) — seeding disabled, not used
+- `bm_seed.pkl` (4.5G) — seeding disabled, wrong era
+- `bm_seed_156ch.pkl` (2.7G) — wrong shape, explicitly quarantined (DEVLOG #100)
+- `smart_abm_seed.pkl` (2.9G) — seeding disabled, not used
+- `checkpoints/buffer_contaminated_758_785.pkl` (5.3G) — DEVLOG #110 quarantine
+- `checkpoints/buffer_rollback_prePhase0.pkl` (5.3G) — pre-curriculum rollback, obsolete
+- `checkpoints/model_iter_760.pt` through `model_iter_785.pt` (26 × 47MB ≈ 1.2G) — contaminated-era checkpoints excluded by opponent_iter_max=755
+
+**Kept:** All checkpoints 628-759 (diversity opponent pool + current session), model_latest.pt, buffer_latest.pkl, model_rollback_443_prePhase0.pt, dominion_rollback_fr020.yaml.
+
+**Result:** Disk 91% → 62% (freed 29GB). No training disruption (PID 741272 still running, iter 760 in progress).
+
+**Files changed:** Deletions only on RunPod `/workspace/dominion_data/`.
+
+---
+
+## DEVLOG #110 — 2026-03-22: Escalate to 100% diversity — 70% diversity insufficient to break Province-race
+
+**Problem:** DEVLOG #109 fix (opponent_iter_max=755, diversity_ratio=0.7) failed to produce recovery after 26 iters (759-785). avg_duchies=0.0 for all 26 iters, draw_rate oscillating 0.5-0.84 with no improving trend, p0_wr consistently low (0.071-0.259). The 30% self-play portion is sufficient to recreate the Province-race equilibrium every iter, overwhelming the 70% diversity signal. Even the healthy iter_757 model (draw=0.118, duchies=1.71) immediately collapsed at iter_758 (draw=0.959) when 30% of games were self-play.
+
+**Root cause:** 100 games/iter with diversity_ratio=0.7 means 30 self-play games and 70 diversity games. In 30 self-play games per iter, both bots independently rediscover "Silver+Gold but no VP buying" as a symmetric Nash equilibrium. These 30 games produce ~900 training examples with zero Duchy/Estate signal, contaminating the buffer faster than 70 diversity games can remediate.
+
+**Fix:** `opponent_diversity_ratio: 0.7 → 1.0`. ALL 100 games per iter are now diversity games against the pre-collapse pool (iter 628-755). Zero self-play. The model trains purely on games against VP-buying historical opponents, giving 100% exposure to Duchy/Estate buying behavior. No self-play = no opportunity to recreate the degenerate equilibrium in the buffer.
+
+**Restart:** Killed PID 740083 (26 iters elapsed, 759-785). Reverted model_latest.pt to model_iter_757.pt (last healthy: draw=0.118, duchies=1.71). Quarantined contaminated buffer_latest.pkl as buffer_contaminated_758_785.pkl. Restarted as PID 741272 from iter 758 with empty buffer.
+
+**Expected:** Iters 758-767: draw_rate <0.3, avg_duchies >1.5. With 0 self-play games, Province-race cannot form. Model learns from 100% VP-buying game data. After 10 iters, reduce diversity_ratio 1.0→0.7 once buffer has established Duchy/Estate representation.
+
+**Files changed:** `/tmp/dominion_runpod.yaml` on RunPod (opponent_diversity_ratio: 0.7 → 1.0).
+
+---
+
+## DEVLOG #109 — 2026-03-22: Fix opponent_iter_max bug — collapsed models polluting diversity pool
+
+**Problem:** Province-race equilibrium collapsed AGAIN at iter ~758, only 2 iters after DEVLOG #108 recovery (iter 756 draw=0.159, iter 757 draw=0.118, iter 758+ catastrophic). Iters 764-773 all catastrophic: draw 0.67-0.97, avg_duchies=0.0, p0_wr=0.018-0.182, mcts_province_pct=1.1-2.5%. Root cause: **opponent_iter_max=764 was including collapsed current-session models (iters 758-764) in the 70% diversity pool**. The training bot played 70% of games against OTHER collapsed Province-race bots, which REINFORCED the Province-race equilibrium instead of breaking it. The diversity config referenced iter 753-764 ("healthy VP-buying opponents") but iters 758-764 are from the current catastrophic session — they are NOT healthy. This is the same core bug: every time we collapse and revert, opponent_iter_max must be updated to exclude the new collapsed checkpoints.
+
+**Fix:** `opponent_iter_max: 764 → 755`. All models from iter 628-755 are from before the current collapse session (timestamps Mar 19-20). These models were trained in healthier phases with Duchy/Estate buying. Using them as opponents ensures the diversity pool genuinely represents VP-diversified play, not collapsed Province-race equilibrium.
+
+**Restart:** Killed PID 644145 (411 min elapsed, iters 756-773). Reverted model_latest.pt to model_iter_757.pt (last healthy: draw=0.118, duchies=1.71, confirmed Mar 21 19:37). Deleted contaminated buffer_latest.pkl. Restarted as PID 682764 from iter 758.
+
+**Rule established:** After EVERY recovery restart, update `opponent_iter_max` to the checkpoint BEFORE the restart point. Otherwise the diversity pool fills with collapsed models from the failed session, defeating the purpose of diversity training.
+
+**Expected:** Iters 758-762: draw_rate <0.3, avg_duchies >1.5, p0_wr 0.35-0.65. The diversity pool (628-755) contains many healthy models with Duchy/Estate buying — playing against them should prevent Province-race lock-in.
+
+**Files changed:** `/tmp/dominion_runpod.yaml` on RunPod (opponent_iter_max: 764 → 755).
+
+---
+
+## DEVLOG #107 — 2026-03-20: Draw penalty — break Province-race zero-gradient equilibrium
+
+**Problem:** DEVLOG #106 structural fix (fast_sims 50, diversity 0.5) failed. 3rd collapse from iter_764/767 base model, now within 1 iter of restart: draw_rate 0.154→0.933 at iter 768, duchies 1.43→0.0, value_loss 0.117→0.065. The collapse is ACCELERATING (9 iters → 1 iter). Root cause identified definitively: `score_margin/30*0.15` shaping = 0 in symmetric Province races (both bots buy equal Provinces, score_margin≈0, shaped bonus=0, raw outcome=0). Value head gets **zero gradient** every game → goes blind → MCTS degenerates → all games converge to BM strategy → draws → loop. Even 50-sim fast games still play BM (Silver/Gold/Province) → same strategy as 800-sim games → still draws.
+
+**Fix: Draw penalty (worker.py):** Add `draw_penalty = -0.1` to value target for ALL positions in draw games. When `abs(outcome) < 0.01` and `abs(score_margin) < 1` (true symmetric draw), both players receive -0.1 penalty on their value target. This changes: Win=+1.0, Draw=-0.1, Loss=-1.0. The value head now learns draws are bad → MCTS assigns negative Q to draw-leading moves → bot searches for tie-breaking moves → naturally discovers late-game Duchy/Estate buying (the correct Dominion endgame). This does NOT bias toward any specific card type — it just penalizes the degenerate equilibrium. Unlike Province bonuses (DEVLOG #96-98) which gave absolute card rewards causing extinction of competing VP cards, the draw penalty is outcome-based and preserves strategy diversity.
+
+**Additional fix:** `opponent_iter_max: 764` added to dominion.yaml (permanent config, not just /tmp). Excludes collapsed iters 765-770 from opponent diversity pool forever. Previous DEVLOG #105 fix had set this to 760 in /tmp only — lost on restart.
+
+**Restart:** Killed PID 472134. Reverted model_latest.pt to iter_764 (confirmed healthy: draw=0.177, duchies=2.02, value_loss=0.115). Deleted contaminated buffer_latest.pkl (from /workspace/dominion_data/checkpoints/ — learned from DEVLOG #105 mistake of only deleting the root-level pkl). Restarted as PID 498761 with empty buffer from iter_764.
+
+**Expected:** From first self-play iter (765), Province-race games will have value targets of -0.1 (not 0). Value head immediately sees gradient signal. Draw rate should stay below 0.4 within 3 iters. avg_duchies should remain above 1.0. If draw_rate rebounds above 0.5 by iter_768, the draw penalty is insufficient and structural architectural change required (separate draw-avoidance head or curriculum with forced decisive outcomes).
+
+**Files changed:** `mandala_rl/selfplay/worker.py` (draw_penalty -0.1 for tied draws), `configs/dominion.yaml` (opponent_iter_max: 764).
+
+---
+
+## DEVLOG #106 — 2026-03-20: Structural fix — fast_sims 200→50, opponent_diversity 0.3→0.5
+
+**Problem:** Province-race equilibrium recurs every ~9 iters after each clean model restart (iters 756-764, then 765-767 x2). Pattern: provinces declining 1.26→0.91→0.75, mcts_province_pct 11.6→8.2→6.6% over iters 765-767 of the DEVLOG #105 recovery run — identical pre-collapse signature. Root cause: at 200 sims, even the "fast" (weak) self-play player correctly identifies Silver/Gold/Province as optimal buys. Both bots play nearly identically → symmetric Province races → score_margin≈0 in draws → zero training signal → Province exploration fades → collapse.
+
+**Fix A — fast_sims 200→50 (trainer.py):** Reduce fast game MCTS simulations from 200 to 50. This creates a 16x quality gap between fast and full games (was 4x at 200 vs 800). The 75 fast-game bots at 50 sims have significantly more uncertainty — they mistime buys, under-build Silver before Provinces, make suboptimal Province/Duchy choices. This creates the outcome diversity needed for value head training signal. The DEVLOG #92 design intent was 50 sims; the code had drifted to 200.
+
+**Fix B — opponent_diversity_ratio 0.3→0.5 (configs/dominion.yaml):** Increase opponent diversity games from 30 to 50 per iteration. Opponents (iters 750-760) bought Duchy/Estate; playing against them forces current model to develop Province+Duchy hybrid strategies rather than pure Province racing.
+
+**Expected:** mcts_province_pct should stabilize above 8% within 3 iters. avg_provinces should stop declining and return to 1.0+. draw_rate should remain below 0.4 (Province-race draws drop when fast games have more decisive outcomes). If collapse still occurs at iter ~774, the score_margin reward signal is insufficient and a more structural value-head change is required.
+
+**Files changed:** `mandala_rl/training/trainer.py` (fast_sims: 200→50), `configs/dominion.yaml` (opponent_diversity_ratio: 0.3→0.5). Killed PID 469077/471900, restarted as PID 472134 from iter_767 checkpoint.
+
+---
+
+## DEVLOG #105 — 2026-03-20: Revert to iter_764 — natural Province-race collapse, opponent_iter_max fix
+
+**Problem:** Iters 765-767 showed catastrophic collapse identical to DEVLOG #98 pattern: draw_rate 0.177→0.954, avg_duchies 2.02→0.0, avg_estates 3.68→0.0, value_loss 0.115→0.026. DEVLOG #104's recovery (iter_755 + Phase 1 config) worked well — iters 756-764 were healthy (9 consecutive stable iters, draw_rate 9-18%, duchies 1.5-2.4). The collapse at iter_765 was **natural self-play convergence**: as the model improved, MCTS discovered pure Province racing (skip Duchy/Estate, rush Province at turn ~13) is a locally optimal strategy. Both bots converged to identical play → score_margin≈0 → shaped reward = 0 → value head blind → all games cap-terminate → 95% draw rate. The opponent_diversity_ratio=0.3 was insufficient because all available opponents were recent (iter_760-767) and played identically.
+
+**Fix:**
+1. Killed PID 424162 (mid iter_768, no checkpoint saved)
+2. Reverted model_latest.pt to model_iter_764.pt (iter=764 confirmed, last healthy: draw=0.177, duchies=2.02, value_loss=0.115)
+3. Deleted contaminated buffer_latest.pkl (100K examples, last saved at iter_767)
+4. Added `opponent_iter_max: 760` to /tmp/dominion_runpod.yaml — excludes catastrophic-era checkpoints (iter_765-767, 0 Duchy/Estate) from opponent pool, so 30% diversity games always face pre-collapse opponents with diverse strategies
+5. Restarted as PID 447693 with empty buffer from iter_764
+
+**Root cause structural note:** The score_margin shaping (score_margin/30*0.15) only provides gradient when scores differ. When both bots race to equal Provinces, score_margin=0 → zero training signal → collapse. This is a fundamental fragility of score-margin-only shaping in symmetric self-play. Opponent diversity (playing vs older diverse models) provides asymmetric signal to break the equilibrium, but only if opponents are actually diverse (pre-collapse era, not same-era catastrophic checkpoints).
+
+**Expected:** iter_765 self-play from iter_764 model + empty buffer should reproduce same recovery pattern as DEVLOG #103 (9+ stable iters). If collapse recurs at iter_773+, consider structural fix: differential green card incentive or increasing opponent_diversity_ratio to 0.5.
+
+**Files changed:** /tmp/dominion_runpod.yaml (opponent_iter_max: 760 added).
+
+---
+
+## DEVLOG #104 — 2026-03-20: ROOT CAUSE FOUND — Phase 0 config regression killed iter_755 recovery
+
+**Problem:** All DEVLOG #99-#103 recovery attempts failed identically: reverting to iter_755 model still produced 97.7% draws and avg_duchies=0.0. Root cause was NOT the model weights — it was a **curriculum config regression**. During the DEVLOG #96-#103 chaos, `configs/dominion.yaml` on RunPod was regenerated with `disabled_basic_supply: [0, 3, 4, 6, 16]` (Phase 0 — Province only). But iter_755 was trained in **Phase 1** (DEVLOG #93, iter ~680: re-enabled Estate index 3 and Duchy index 4, config `[0, 6, 16]`). The iter_755 model's policy and value heads were shaped by Phase 1 games with Duchy+Estate available. Under Phase 0 self-play (no Duchy, no Estate), the ONLY VP pile is Province. Province pile (8 cards) is rarely depleted in 50 turns when both bots accumulate Silver/Gold without buying enough Provinces. Result: 100% game-cap terminations → 97.7% draws → value head learns zero → training collapses. This explains why EVERY restart from iter_755 immediately reproduced the catastrophe regardless of seeding or reward shaping.
+
+**Fix:**
+1. Killed PID 373385 (Phase 0 trainer)
+2. Restored Phase 1 config: `disabled_basic_supply: [0, 6, 16]` on RunPod and local repo
+3. Hard-copied `model_iter_755.pt → model_latest.pt` (iter=755 confirmed)
+4. Restarted as PID 397847 from iter_755 with existing buffer_latest.pkl (100K examples, ~92% Phase 1 data, ~8% Phase 0 contamination from DEVLOG #103's 3 iters — will dilute within 3-4 iters)
+
+**Expected:** Within 1-3 iters, avg_duchies should return above 1.0 (Phase 1 supply available). Draw_rate should drop below 0.3 (Phase 1 games end naturally via Duchy+Province pile depletion). Value_loss should recover above 0.10. avg_score should return above 20 (Province 6VP + Duchy 3VP + Estate 1VP economy).
+
+**RULE ADDED:** After any pod restart or config push, always verify `disabled_basic_supply` in /tmp/dominion_runpod.yaml matches the expected curriculum phase before starting training.
+
+**Files changed:** `configs/dominion.yaml` (disabled_basic_supply: [0,3,4,6,16] → [0,6,16] — Phase 1 restored). RunPod /tmp/dominion_runpod.yaml regenerated.
+
+---
+
+## DEVLOG #103 — 2026-03-20: Hard restart from iter_755 — no seed buffer (BM seed corrupts Duchy/Estate)
+
+**Problem:** DEVLOG #102's fix (model_iter_755 + bm_seed_218ch.pkl) failed in 3 iters. New run iters 756-758 showed: draw_rate=0.915/0.854/0.962, avg_duchies=0.0, value_loss=0.2248→0.1444→0.0492 (collapsing). Root cause: `bm_seed_218ch.pkl` is pure Big Money strategy — analysis shows only 8-9 unique policy actions active (Silver buy, Gold buy, Province buy, play-treasure actions). **No Duchy, no Estate**. When the 100K replay buffer is filled with 116K BM examples and training runs, the model immediately unlearns Duchy/Estate buying. Iter_756 self-play with the BM-trained model generates games with duchies=0, and the catastrophe cycles. The model_latest.pt confirmed as iter_758 (not 755) — the "revert" was undone by 3 training iters.
+
+**Fix:** Killed PID 348370. Hard-copied `model_iter_755.pt → model_latest.pt` (confirmed iter=755 in checkpoint metadata). Restarted as PID 373385 **without `--seed-buffer`**. The replay buffer starts empty. Self-play using healthy iter_755 weights (known good: draw_rate=0.177, avg_duchies=2.28 in original run) should generate Duchy/Estate-buying games from the first iteration, filling the buffer with correct training signal naturally.
+
+**Why no seed is better:** iter_755 already knows Duchy/Estate are valuable (learned over 755 iters). Empty buffer → first iter adds ~3K examples of healthy self-play → trains on correct data → virtuous cycle. A BM seed actively destroys this by teaching the model to ignore VP cards.
+
+**Files changed:** `/workspace/dominion_data/checkpoints/model_latest.pt` re-reverted to iter_755. Training command: `scripts/train.py --config /tmp/dominion_runpod.yaml --resume ... model_latest.pt` (no --seed-buffer).
+
+**Expected:** By iter_758 (3 iters), avg_duchies must return above 1.0 and draw_rate below 0.5. value_loss must stabilize above 0.10. If not, the iter_755 model itself may need examination.
+
+---
+
+## DEVLOG #102 — 2026-03-20: Model revert to iter_755 + 218ch seed buffer injection
+
+**Problem:** After DEVLOG #101 (buffer_latest.pkl restart from iter_760), three more iterations (761-763) showed NO recovery: draw_rate 0.862→0.885→0.938 (worsening), avg_duchies=0.0 (still extinct), value_loss=0.044-0.070 (near-blind), p0_wr=0.015-0.092 (catastrophic). Root cause: DEVLOG #101 restarted from iter_760 model weights which are catastrophically damaged from the DEVLOG #98 absolute Province bonus. Even with clean buffer data, the iter_760 model generates 93% draw self-play games each iteration — these pollute the buffer faster than the clean data can remediate. The model is in a local minimum it cannot escape via gradient descent from its own catastrophic outputs.
+
+**Fix — Model revert:** Copied `model_iter_755.pt` (timestamped Mar 20 00:35, drawn from pre-DEVLOG-#98 regime) as `model_latest.pt`. Iter_755 state: draw_rate=0.177, value_loss=0.1196, avg_duchies=2.28, avg_provinces=1.4 — all healthy. This was the last completed iteration before the DEVLOG #98 absolute Province bonus was deployed (DEVLOG #98 took effect starting at iter_756 self-play).
+
+**Fix — Seed buffer:** Used `bm_seed_218ch.pkl` (6.2G, 116,875 examples, created Mar 5, explicitly 218-channel format matching C++ BatchedMCTS). Shape confirmed: state=(218,8,8), policy=(131,), value=float, score=float, buy_curve=(31,) — 5-tuple format. Trainer loaded buffer_latest.pkl (100K examples, pre-existing) then injected 116,875 seed examples, saturating the 100K deque and displacing stale data. Seed examples cached for re-injection.
+
+**Trainer restart:** Killed PID 323730 mid iter_764 self-play. Restarted as PID 348370 from model_iter_755. Training begins at iter_756.
+
+**Expected recovery:** With iter_755 model weights and a seed buffer full of BM-style Province-buying games, draw_rate should drop below 0.3 within 5 iters (by iter_761). avg_duchies should recover above 1.5, value_loss above 0.10. The 116K seed examples will be continuously re-injected to maintain the Province-buying training signal.
+
+**Files changed:** `/workspace/dominion_data/checkpoints/model_latest.pt` reverted to iter_755 weights.
+
+---
+
+## DEVLOG #101 — 2026-03-20: Training crash (shape mismatch) — bm_seed.pkl wrong tensor shape
+
+**Root cause identified:** Training crashed at the training phase of iter 761 with `ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions.` The batch sampler was drawing examples of two different shapes from the replay buffer: (218, 8, 8) from self-play and (156, 8, 8) from bm_seed.pkl.
+
+**Why the mismatch:** The C++ BatchedMCTS engine (`DOM_TENSOR_CHANNELS = 218` in `dominion_game.h`) produces 218-channel tensors for self-play. But `seed_dominion_bigmoney.py` calls the Python `DominionState.to_tensor()` which currently produces 156-channel tensors (local uncommitted expansion in `state.py` adds channels 151-155). These are different code paths with different outputs. The seeding script was never tested for shape compatibility with C++ engine output.
+
+**Why the buffer got contaminated:** On restart (DEVLOG #100, PID 270738), the trainer loaded buffer_latest.pkl (218-ch, 100K examples) then called `replay_buffer.add_examples(bm_seed_data)` — adding 116K examples of 156-ch. The deque with maxlen=100K pushed out all 218-ch examples, leaving 100K of 156-ch bm_seed. Then iter 761 self-play added 218-ch examples → mixed buffer → crash on batch sample.
+
+**Fix:** Removed `--seed-buffer` from the restart command. buffer_latest.pkl (100K examples, all 218-ch, saved at iter 760) is clean and used directly. No BM seed injection. Training restarted as PID 323730 from model_latest.pt (iter 760).
+
+**bm_seed.pkl status:** Invalid for use with current training (156-ch vs 218-ch). Do not use until regenerated with C++ engine output (or Python state.py is updated to match C++ channel count).
+
+**Recovery outlook:** buffer_latest.pkl contains ~94% pre-catastrophe data (iters ~727-758) and ~6% catastrophic iter 759-760 data. Score-margin-only shaping (DEVLOG #99) is active. Model at iter 760 has some Province-only bias from DEVLOG #98 but diverse prior data in buffer should help recovery. Expect draw_rate to begin declining from 0.93 within 5-10 iters as catastrophic examples are replaced.
+
+**Files changed:** None — restart only. bm_seed.pkl quarantined (wrong shape).
+
+---
+
+## DEVLOG #100 — 2026-03-20: Training crash at iter 761, restarted with seeding
+
+**What happened:** Training process died between iter 760 self-play completion and the training phase of iter 761. Iter 761 self-play ran to 100% completion (confirmed in train.log) but the process exited before training/checkpoint. Cause unknown — likely an OOM or CUDA error during the training step while a 100K buffer containing catastrophic-state data (93% draws, value_loss=0.044) was still active.
+
+**State at crash:** iter 760 checkpoint intact (value=0.044, draw=0.931). bm_seed.pkl (4.5G, 117K BM games) confirmed present from DEVLOG #99 intervention at 22:55. No iteration data lost — model_latest.pt is at iter 760.
+
+**Action:** Restarted as PID 270738 from model_latest.pt (iter 760) with --seed-buffer /workspace/dominion_data/bm_seed.pkl. Config unchanged (score-margin-only shaping, force_rate=0.0).
+
+**Recovery gate still active:** draw_rate must fall below 0.5 by iter 765 and value_loss must recover above 0.10. Seeding was deployed last check; this crash delayed recovery by ~1 iter. Gate extended to iter 766 given the crash.
+
+**Files changed:** None — restart only.
+
+---
+
+## DEVLOG #99 — 2026-03-19: Seeding gate triggered — revert Province bonus, inject Big Money games
+
+**What failed (DEVLOG #98):** The absolute Province bonus (`prov_p0 * 0.15 + prov_diff * 0.1`) caused complete Duchy/Estate extinction by iter 760. Both bots converged on Silver/Gold/Province-only economies. Without Estate/Duchy/Copper pile depletion, games never reached natural termination → all hit the turn cap → 93.1% draw rate (up from 22.3%). Value head went blind: value_loss collapsed to 0.044 (from 0.134) — not learning, converging on a constant. avg_duchies: 2.02 → 0.0. avg_estates: 3.56 → 0.0. avg_buys: 38 → 22. mcts_province_pct: 10.0 → 5.1% (below 10% alarm for 2 consecutive iters — seeding gate triggered).
+
+**Root cause:** The absolute Province bonus created a new cooperative equilibrium: both bots buy only Silver/Gold/Province, which is rewarded (Province bonus). Neither is incentivized to buy Duchies or Estates (no bonus for those). With only Province as a VP card being bought and Province supply not exhausted fast enough, the 3-pile depletion condition never fires → games run to turn cap → 100% draws → value targets are all near-zero → value head learns a constant.
+
+**Fix deployed:**
+1. Removed all Province-specific bonus terms from `mandala_rl/selfplay/worker.py`. Replaced with score-margin-only shaping: `score_margin / 30 * 0.15`. This preserves VP diversity — Duchies and Estates still contribute to score margin, so buying them is not penalized. No per-card absolute bonuses that distort the economy.
+2. Ran `scripts/seed_dominion_bigmoney.py --num-games 500` → generated 117,051 Big Money examples → saved to `/workspace/dominion_data/bm_seed.pkl`. Big Money buys Province aggressively but also terminates games naturally (Province pile depletes). These examples provide decisive outcomes (winner buys most Provinces) to bootstrap value head recovery.
+3. Killed PID 204043, restarted as PID 223757 with `--seed-buffer /workspace/dominion_data/bm_seed.pkl`. Seed buffer (116,938 examples) injected into replay buffer at startup and will be re-injected periodically.
+
+**Files changed:** `mandala_rl/selfplay/worker.py` on RunPod `/root/mandala-dom` — province shaping block replaced with score-margin-only. Old PID 204043, new PID 223757.
+
+**Expected:** Score margin shaping restores VP diversity (Duchies/Estates buying returns within 3-5 iters). Big Money seed games provide decisive outcomes → value head loss should recover above 0.10 within 5 iters. draw_rate should fall below 0.5 within 3-5 iters as natural game termination resumes. If provinces still flat or draw_rate still above 0.5 by iter 765, three reward-shaping approaches have now conclusively failed — escalate to architectural change (e.g., game termination pressure directly in reward).
+
+---
+
+## DEVLOG #98 — 2026-03-19: Switch to absolute+differential province bonus to break cooperative equilibrium
+
+**Problem:** Province_bonus=0.3 (differential only, deployed iter 751 per DEVLOG #97) failed after 4 iters. avg_provinces iters 752-755: 1.54→1.37→1.35→1.40 — no recovery, actually declining. mcts_province_pct: 14.3→13.1→13.4→10.7% (hitting alarm floor). Province buy timing WRONG DIRECTION: 22.6→23.0→23.5→22.9 (was supposed to decline toward <18). avg_score: 23.6→21.5→21.4→22.0 (stuck below 25 gate).
+
+**Root cause diagnosed:** Differential-only bonus = `(prov_p0 - prov_p1) * coeff`. When both bots equally avoid Provinces (the current cooperative equilibrium), `prov_diff ≈ 0` → bonus ≈ 0 → no learning signal regardless of coefficient magnitude. Raising 0.2→0.3 was the wrong fix because the fundamental issue is not coefficient magnitude — it's that the signal is zero when both sides symmetrically avoid Provinces. The cooperative equilibrium is self-reinforcing: neither bot is incentivized to deviate because the opponent will match.
+
+**Fix:** Changed reward shaping to per-player absolute+differential formula:
+```
+shaped_bonus_p0 = prov_p0 * 0.15 + (prov_p0 - prov_p1) * 0.1
+shaped_bonus_p1 = prov_p1 * 0.15 - (prov_p0 - prov_p1) * 0.1
+```
+Absolute component (0.15/province): each Province owned is worth +0.15 to value target regardless of opponent's behavior. With 4 provinces = +0.60 bonus (massive incentive even in symmetric equilibrium). Differential component (0.1): retains incentive to buy more than opponent. Combined max (8 provinces, no opponent): +1.20 (capped at 1.0). Even in a draw game where both bots buy 2 provinces: each gets +0.30 bonus, creating strong positive signal for Province buying where before there was zero signal.
+
+**Files changed:** `mandala_rl/selfplay/worker.py` on RunPod `/root/mandala-dom` — replaced single `shaped_bonus` with `shaped_bonus_p0` / `shaped_bonus_p1`. Rebuilt package. Killed PID 150893, restarted as PID 177045 from model_latest.pt (iter 755).
+
+**Expected:** Absolute Province bonus creates non-zero gradient signal even in symmetric equilibrium. Value head should quickly learn that Province-heavy game states are positive EV. Within 5-8 iters (by iter 763), avg_provinces should trend above 1.8 and mcts_province_pct should stop declining. If no recovery by iter 763, reward shaping approach is insufficient and hybrid Province seeding (inject Province-buying games into replay buffer directly) is required — escalate to CEO.
+
+---
+
+## DEVLOG #97 — 2026-03-19: Raise province_bonus 0.2→0.3 after 6-iter non-recovery
+
+**Problem:** Province_bonus=0.2 (deployed iter 746 per DEVLOG #96) failed to reverse the province decline after 6 full iters. avg_provinces: 1.53→1.65→1.55→1.47→1.63→1.24 — no sustained recovery. iter 751 is the WORST value yet at 1.24. mcts_province_pct hit 10.0% (alarm threshold). avg_score fell to 19.4 (lowest since Phase 1 turbulence). avg_coins_wasted rising to 2.80. The recovery gate ("above 2.0 by iter 753") cannot be met from 1.24 — acting now rather than watching 2 more iters of decline.
+
+**Root cause hypothesis:** Province reward bonus at 0.2 adds at most ±0.2 to the value target (when one player buys 1 more Province). With avg_provinces around 1.5, most games have 0-1 province advantage between players — the bonus is often ≈0. The value head is already receiving real win/loss signal (~0.13 value_loss), so the marginal shaping is too small to overcome the MCTS equilibrium where treasure-hoarding is the discovered safe strategy.
+
+**Fix:** Raised province_bonus coefficient 0.2→0.3 in `mandala_rl/selfplay/worker.py` line 125. The shaped bonus now contributes up to ±0.3 per province advantage, representing 30% of the full win/loss signal. For a bot with 2 more Provinces than opponent, shaped bonus = +0.6 (significant). Killed PID 105027, rebuilt package, restarted as PID 150893 from model_latest.pt (iter 751).
+
+**Files changed:** `mandala_rl/selfplay/worker.py` (shaped_bonus coeff: 0.2→0.3).
+
+**Expected:** Within 5-8 iters (by iter 759), avg_provinces should start trending above 1.5 consistently. By iter 761, should reach 2.0. If provinces still below 2.0 after 8 iters (iter 759), the shaping approach may be fundamentally insufficient — consider Province-timing pressure (earlier buy window reward) or hybrid seeding.
+
+---
+
+## DEVLOG #96 — 2026-03-19: Province reward shaping (coeff 0.2) to counter 5-iter decline
+
+**Problem:** Five consecutive iterations (741-745) with avg_provinces below 2.0 (1.80→1.83→1.77→1.61→1.52). mcts_province_pct declining 19→12.7% (2 below 15%). avg_score 5 consecutive below 28. avg_coins_wasted rising to 2.45. This crossed the DEVLOG #95 structural-fix trigger: "If provinces fall below 2.0 for 5 consecutive iters with no trend reversal, the fix is structural (reward signal)."
+
+**Root cause:** The province reward shaping described in DEVLOG #92 (`(my_prov - opp_prov) * 0.1`) was never deployed to worker.py. The value head receives near-zero gradient signal in close games — MCTS cannot distinguish Province-buying lines from non-buying lines in value space.
+
+**Fix:** Added province advantage shaping in `get_training_examples()` for Dominion (worker.py). For each game, compute `prov_diff = p0_province_buys - p1_province_buys` from `game.summary['province_buys']`. Add `prov_diff * 0.2` to value target (from p0 perspective), clamped to `[-1, 1]`. Coefficient set to 0.2 (doubled from DEVLOG #92's 0.1) to overcome the 5-iter decline at current training stage (~iter 745).
+
+**ABSOLUTE RULE:** Do NOT change force_rate. This fix is reward-signal only.
+
+**Files changed:** `mandala_rl/selfplay/worker.py` — province shaping in `get_training_examples()`.
+
+**Deployed:** Iter 745→746 on RunPod. Old PID 66622 killed, new PID 105027.
+
+**Expected:** Within 5-10 iters, avg_provinces should stabilize and trend upward above 2.0, mcts_province_pct should recover above 15%. If no improvement by iter 760, escalate.
+
+---
+
+## DEVLOG #94 — 2026-03-19: Remove all buy-decision crutches + fix value reward
+
+**Problem:** Training was stuck for 80+ iterations (iters 549-637) with all metrics flat: avg_provinces=2.5, avg_turns=38.4, mcts_province_pct=11%, draw_rate=0%. Investigation revealed multiple compounding issues:
+
+1. **big_money_force_rate=0.4 was still active.** Config decay params (`force_rate_decay_start`, `force_rate_decay_steps`) were lost during a pod reconfiguration, so `_get_force_rate()` defaulted `decay_start` to 999999 — decay never kicked in. 40% of all buy decisions were being force-overridden to Province > Gold > Duchy > Silver since DEVLOG #84 (iter 10). The bot was never learning to buy on its own.
+
+2. **BM-biased explore_epsilon=0.3** blended 80% Province / 10% Gold / 10% Silver into the policy target on 30% of post-threshold decisions. Combined with force_rate, ~60% of buy decisions were hand-held.
+
+3. **Speed bonus created impossible value targets.** `value = outcome * (1 + 0.5 * (1 - moves/100))`. With ~230 moves/game, `max(0, 1 - 230/100)` = 0 — the bonus was always zero. Dead code that did nothing.
+
+4. **Margin reward (score_margin/30) caused greenbotting.** Switching from binary ±1 to margin reward taught the bot "VP = good" but it bought Estate ($2, 1VP) and Duchy ($5, 3VP) indiscriminately at turn 7 and 12 respectively, destroying deck quality. Coins at buy dropped from 7.59 to 5.10. Both players greenbotted symmetrically, so neither got punished. MCTS at 800 sims can't see multi-turn deck dilution consequences.
+
+5. **5 provinces = no outcome variance.** Always splits 3-2, margin always ±6 (±0.2 normalized). Value head learned a constant, not positional features.
+
+**Changes (applied sequentially, ending with all active together):**
+
+1. Removed speed bonus — dead code (`worker.py`)
+2. Value target: margin → binary ±1 (`worker.py`) — incentivizes winning, not VP hoarding
+3. Province supply: 5 → 7 (`dominion_game.cpp`) — odd count (no draws), real variance in margins (4-3, 5-2, 6-1 splits)
+4. VP differential channel (`dominion_game.cpp` ch 140) — `(my_vp - opp_vp) / 20` so the value head can directly see who's ahead
+5. `big_money_force_rate: 0.4 → 0.0` (`configs/dominion.yaml`)
+6. `explore_epsilon: 0.3 → 0.0` (`configs/dominion.yaml`)
+
+**RULE — NO MORE BUY-DECISION OVERRIDES:**
+- `big_money_force_rate` must stay at 0.0. Never re-enable.
+- `explore_epsilon` (BM-biased) must stay at 0.0. Never re-enable.
+- The bot must learn to buy on its own through MCTS search + value evaluation.
+- Standard AlphaZero exploration (Dirichlet noise at root, temperature for early moves) is sufficient.
+- If the bot can't learn Province buying without crutches, the fix is structural (reward signal, state representation, game setup) — not forcing decisions.
+
+**State at deploy:** Iter 730, mcts_province_pct=63% (organic, measured before any overrides), Estate/Duchy enabled, 7 provinces, binary win/loss. Buffer flushed. Rollback: iter 730 checkpoint.
+
+**Files changed:** `cpp/dominion_game.cpp` (Province supply 5→7, VP diff channel 140), `mandala_rl/selfplay/worker.py` (removed speed bonus, binary win/loss), `configs/dominion.yaml` (big_money_force_rate 0.4→0.0, explore_epsilon 0.3→0.0).
+
+---
+
+## DEVLOG #93 — 2026-03-18: Phase 1 — Re-enable Estate + Duchy (curriculum gate triggered)
+
+**Trigger:** value_loss fell below 0.005 at iters 657 (0.004) and 658 (0.0042) — the unilateral action threshold established in DEVLOG #82. All Phase 0 metrics had been locked for 10+ consecutive iterations: avg_provinces=3.5, avg_treasures=35.0, avg_buys=38.5, avg_score=24.0. The bot fully mastered Big Money (Silver→Gold→Province) with zero variance remaining. Further Phase 0 training offered no new gradient signal.
+
+**Change:** `disabled_basic_supply: [0, 3, 4, 6, 16]` → `disabled_basic_supply: [0, 6, 16]`
+- Re-enabled: Estate (card index 3), Duchy (card index 4)
+- Still disabled: Copper (0), Curse (6), Gardens (16)
+- Phase 1 scope: bot must now learn VP racing (Province + Duchy + Estate) — the same breakthrough observed organically at iter ~41 in the prior curriculum cycle (DEVLOG entry 21:07 2026-03-10)
+
+**Process:** Killed PID 3956225 (mid iter 660), restarted as PID 4077679 resuming from model_latest.pt (iter 660). Config change only — no code changes, no rebuild required.
+
+**Expected:** Policy loss spike (+0.02-0.05) as bot encounters new buy options. Value loss spike (more outcome variance with VP cards). avg_duchies should emerge within 10-20 iters. avg_score should rise above 24 (Province+Duchy+Estate games score higher). Province buy timing may increase briefly as bot routes gold to Duchy first before converting. Draw rate likely to stay near 0 (decisive games already established). By iter 680: avg_duchies >1.0 and avg_estates >0 confirms Phase 1 learning.
+
+**Files changed:** `configs/dominion.yaml` (disabled_basic_supply on RunPod only).
+
+---
+
+## DEVLOG #90 — 2026-03-13: Train on ALL self-play games — fix 75% data waste
+
+**Problem:** Only 25 of 100 games per iter contributed training data. The other 75 (fast games at 200 sims) were used for quality metrics only, then discarded. This was a misimplementation of KataGo's playout cap randomization — KataGo trains on ALL games regardless of search depth, using low-playout games for diversity. We were throwing away 75% of our self-play compute.
+
+**Impact:** Buffer received ~2,500 examples/iter instead of ~10,000. Cycle time was ~40 iters instead of ~10. Every signal we introduced (score head, turn cap, Duchy disable) propagated 4x slower than it should have. This likely explains why provinces never moved despite 100+ iters of changes.
+
+**Fix:** `mandala_rl/training/trainer.py` line 391: changed `return full_games` to `return all_games`. All 100 games now enter the replay buffer. Fast games have noisier policy targets (200 sims vs 800) but valid value/score targets (game outcome is independent of search depth).
+
+**Verified:** Iter 333 log shows "Generated 100 games (100 full-sim for training)" vs previous "25 full-sim for training."
+
+**Rollback:** Change `return all_games` back to `return full_games`.
+
+**Files changed:** `mandala_rl/training/trainer.py` (1 line).
+
+---
+
+## DEVLOG #89 — 2026-03-13: Disable Duchy — curriculum fix for Province mastery
+
+**Problem:** After 100+ iters with score-head MCTS (DEVLOG #88) and 50-turn cap (DEVLOG #87), provinces stuck at 2.1-2.3. Draw rate fixed at 36% but Province count never climbed. Buffer fully cycled multiple times.
+
+**Root cause:** Duchy is a local optimization trap. At $5, Duchy gives +3 VP — the score head correctly says "buy it." But each Duchy is a dead card that dilutes deck density below $8, preventing future Province buys. The bot buys 2.7 Duchies by turn 25, then can't afford Province for the rest of the game. MCTS can't see 5+ turns ahead to discover this second-order effect, and the network trunk (10 blocks, 128 channels) is too small to learn deck dynamics.
+
+The bot was asked to learn three things simultaneously: (1) build economy, (2) buy Provinces at $8, (3) time Duchies correctly. It mastered #1 but couldn't solve #2 and #3 together because #3 undermines #2.
+
+**Fix:** Re-disable Duchy in supply: `disabled_basic_supply: [0, 3, 4, 6, 16]`. Supply is now Silver/Gold/Province only. The bot has no dead-card trap — every buy either builds economy or scores VP. Province at $8 is unambiguously the best move.
+
+**Plan:** Master Province buying with Silver/Gold/Province only (target: 4+ provinces/game, <30 turns). Then re-enable Duchy once Province foundation is solid.
+
+**First iter (322):** Duchy=0.0 (confirmed disabled), draw=86% (expected — policy still adapted to old supply), waste=5.0 (bot trying to buy nonexistent Duchy). Will normalize as buffer cycles.
+
+**Rollback:** Set `disabled_basic_supply: [0, 3, 6, 16]` to re-enable Duchy.
+
+**Files changed:** `configs/dominion.yaml`, RunPod `/tmp/dominion_runpod.yaml` and `/root/mandala-dom/configs/dominion.yaml`, `serve.py`.
+
+---
+
+## DEVLOG #88 — 2026-03-12: Score head drives MCTS — fix value head blindness
+
+**Problem:** After lowering turn cap from 80→50 (DEVLOG #87), draw rate initially dropped from 65%→29% but crept back to 61% within 14 iters. The cap change truncated the problem, didn't solve it. Both identical networks converge on the same strategy regardless of game length.
+
+**Root cause:** MCTS leaf evaluation used the value head (win probability, tanh-bounded). With 65% draws at cap 80 (and climbing back toward 60% at cap 50), the value head trains on mostly-zero targets and predicts ~0 everywhere. MCTS with a flat evaluator can't distinguish Province ($8, +6 VP) from Gold ($6, +0 VP). The score head (VP margin, unbounded, loss=0.002) already learned VP delta accurately but was only used as an auxiliary training loss — MCTS never saw it.
+
+**Fix:** In `mandala_rl/selfplay/worker.py`, changed MCTS leaf evaluation from value head to score head:
+```python
+# Before:
+vals_np = vals.cpu().numpy()[:, 0]
+# After:
+vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy()
+```
+`tanh()` bounds the score head output to [-1, 1] for UCB compatibility. Both the single-model path (line 183-185) and the two-model eval path (`_eval_two_models`, line 342-344) updated.
+
+**Why this works:** The score head predicts expected VP margin from each position. After buying Province, predicted margin increases by ~0.2 (6 VP / 30 max). After buying Gold, margin stays flat. MCTS now has a signal to prefer Province at $8+, regardless of whether games end in draws.
+
+**First iter (209):** Draw rate dropped 61%→31%. Provinces 1.5→2.3. Score head signal is immediately effective.
+
+**Also deployed:** Turn cap lowered 80→50 in `cpp/batched_mcts.cpp` (DEVLOG #87). Both changes active simultaneously — cap provides cleaner training data, score head provides informative leaf evaluation.
+
+**Training targets unchanged.** The value head still trains on game outcome (win probability). The score head still trains on VP margin. Only the MCTS leaf evaluation changed — it now uses score head output instead of value head output.
+
+**Rollback:** Revert worker.py lines 183-185 and 342-344 to use `vals.cpu().numpy()[:, 0]` instead of `torch.tanh(scores.squeeze(-1)).cpu().numpy()`.
+
+**Files changed:** `mandala_rl/selfplay/worker.py` (2 sites: single-model MCTS eval + two-model MCTS eval).
+
+---
+
+## DEVLOG #87 — 2026-03-12: Lower turn cap 80→50 — force decisive games
+
+**Problem:** At iter 193 with cap 80, 65% of games ended at turn 80 with both players at 33-36 VP. 65% of all game outcomes were exactly 0.0 (draw). The value head trained on mostly zeros, predicting ~0 for all positions.
+
+**Fix:** `cpp/batched_mcts.cpp` line 42: `max_turns_ = 50` (was 80 on RunPod, 0 in local repo). Real Big Money Dominion ends in ~17 turns. 50 is generous.
+
+**Results:** Immediate — turns 77→50, draw rate 67%→29%, waste 5.0→3.6. But draw rate crept back: 29→35→42→49→61% over 14 iters as the bot adapted. The cap alone doesn't break symmetric self-play equilibrium — both players converge on the same strategy within 50 turns too. This motivated DEVLOG #88 (score head for MCTS).
+
+**Rollback:** Set `max_turns_ = 80` in batched_mcts.cpp, rebuild.
+
+**Files changed:** `cpp/batched_mcts.cpp` line 42.
+
+---
+
+## DEVLOG #86 — 2026-03-11: Province bonus at turn cap — fix endgame draw equilibrium
+
+**Problem:** After removing `big_money_force_rate` (DEVLOG #85), provinces slid from 4.0→3.4 over 10 iters. Games ballooned to 400 moves (80-turn cap). Diagnostic (`diagnose_province_buy.py`, iter 64) revealed:
+- Policy prior for Province at $8+ is 95% early, 69% mid — **but collapses to 3.3% in late game (1-3 provinces left)**
+- END_BUYS prior is 62% in late game — bot actively chooses NOT to buy Province with $8+
+- 91% of all $8+ buy decisions occur in late game
+- **100% of games hit the 80-turn cap. Zero Province-depletion endings.**
+- Both bots tie at 33-36 VP → outcome = 0.0 → value head learns "late game = irrelevant"
+
+**Root cause:** The turn cap prevents the natural game-ending condition (Province pile depletion). Both bots buy 3-4 provinces each, then stall buying Silver/Gold for 40+ turns. At the cap, VP totals are always equal → draw → zero training signal. The force rate had been masking this entirely — it was the ONLY mechanism that caused Province buying in late game.
+
+**Fix:** Override `score_bonus_p0()` in `DominionGame` (previously returned 0.0f from base class). At the turn cap, each Province P0 owns beyond P1 adds +3 to the VP margin (matching Province's actual VP value). Applied ONLY at the cap (line 461 of batched_mcts.cpp) — natural game endings via `get_reward()` are unchanged.
+
+Effect: if P0 has 5 provinces and P1 has 3, bonus = +6, outcome = margin/5 = 1.2 → clamped to 1.0. This breaks the draw equilibrium: the player who bought more provinces gets a decisive win at the cap. Over ~33 iters (buffer cycle), the value head will learn that buying more provinces leads to better outcomes.
+
+**Files changed:** `cpp/dominion_game.h` (added `score_bonus_p0` override declaration), `cpp/dominion_game.cpp` (added 16-line implementation counting Province differential). Rebuilt with `pip install -e .` on RunPod.
+
+**Diagnostic script:** `scripts/diagnose_province_buy.py` — probes raw policy prior, value head output, and game-stage breakdown at $8+ buy-phase positions. Saved for future use.
+
+**Rollback:** Revert `score_bonus_p0` to return 0.0f. Re-enable force rate is NOT an option (DEVLOG #85).
+
+---
+
+## DEVLOG #85 — 2026-03-10: Remove big_money_force_rate permanently + enable Duchy
+
+**Problem:** At iter 48 (Duchy enabled at iter 41), the bot was buying Duchy earlier than Gold — avg Duchy timing turn 10.3 vs Gold 13.7. Round 0 buy curve showed 0.77 Duchies vs 0.66 Gold. Suboptimal: standard Big Money builds economy (Gold) first, buys Duchy only when already hitting $8 regularly.
+
+**Root cause:** `big_money_force_rate: 0.5` was still active from DEVLOG #84. The Big Money heuristic priority is Province > Gold > Duchy > Silver. At exactly $5, the forced policy buys Duchy 100% of the time. 50% of all buy decisions were being overridden — the network was being directly taught "Duchy at $5 is always correct" with no regard for game phase or economy state.
+
+The force rate served its purpose: it broke the cooperative equilibrium (DEVLOG #84) and taught the bot that Province buying wins. By iter 39 the bot was at 4.0 provinces, 21 turns, clean Big Money. But leaving it on while adding Duchy created a new problem — the heuristic taught bad Duchy timing that the network couldn't unlearn through self-play alone.
+
+**Fix:** Set `big_money_force_rate: 0.0` in both RunPod configs and local config. Killed trainer, restarted at iter 56.
+
+**big_money_force_rate is now permanently retired for Dominion curriculum training.** It was a necessary bootstrap for Phase 0 (random network couldn't discover Province buying), but the bot now has 56 iters of Province-buying experience in the buffer. Any future supply additions should be learned purely from self-play value signal. If a new card causes equilibrium collapse, the fix is to address that card specifically — not to re-enable a blanket heuristic override that contaminates buy-timing signal for all cards.
+
+**Also in this deploy:** Duchy (card ID 4) removed from `disabled_basic_supply` at iter 41 (see earlier in this session). Supply is now `[0, 3, 6, 16]` (Copper, Estate, Curse, Gardens disabled).
+
+**Rollback:** If avg_provinces drops below 2.0 for 3 consecutive iters without force rate, re-add Duchy to disabled list (`disabled_basic_supply: [0, 3, 4, 6, 16]`) — do NOT re-enable force rate.
+
+**Files changed:** `configs/dominion.yaml` (big_money_force_rate: 0.5 → 0.0), RunPod `/tmp/dominion_runpod.yaml` and `/root/mandala-dom/configs/dominion.yaml` (same). Restarted trainer as PID 1368863.
+
+---
+
 ## DEVLOG #76 — 2026-03-10: Restore max_turns=80 cap — Gardens equilibrium + value head collapse
 
 **Problem:** After removing the move cap (DEVLOG #74, set max_turns_=0) to let games end naturally, the Gardens degenerate equilibrium deepened catastrophically over iters 806-814:
@@ -1249,3 +1998,87 @@ Both ran for ~15 hours concurrently, writing to the same `/workspace/dominion_da
 **Rollback:** Pre-curriculum checkpoint saved as `model_latest_pre_curriculum.pt`. All iter 797-833 checkpoints still on RunPod. To revert: `disabled_basic_supply: []` in config, resume from any prior checkpoint.
 
 **Expected:** Bot should learn Big Money (Silver→Gold→Province) within ~50 iters (provinces > 3.0, score > 40). Policy loss should converge fast. Once stable, Phase 1 adds Duchy+Estate back. Phase 2 adds action cards one at a time.
+
+## DEVLOG #83 — 2026-03-10: Restore max_turns_=80 after curriculum restart reset it to 200
+
+**Problem:** After DEVLOG #82's curriculum reboot, batched_mcts.cpp constructor had `max_turns_ = 200` (hardcoded). Iters 3 and 5 show avg_len=199.4 and 185.0 — games hitting the 200-turn cap. In Phase 0 (only Silver/Gold/Province buyable), bots buy heavily into Silver and never convert to Provinces, causing games to marathon to the cap. draw_rate spiked to 0.78–0.98 (all cap-terminated draws). avg_provinces oscillated 4.0→0.83→2.13→0.78. Value head cannot learn from all-draw games — no outcome signal.
+
+**Root cause:** DEVLOG #82 (curriculum reboot) introduced a new C++ code push but left max_turns_=200 in the constructor. DEVLOG #76 had fixed this with max_turns_=80 for the exact same reason (Gardens marathon games). The fix was lost in the curriculum rebuild.
+
+**Fix:** `cpp/batched_mcts.cpp` line 42: `max_turns_ = 200` → `max_turns_ = 80`. Rebuilt with `pip install -e .`. Killed PID 1253448 (mid iter 6), restarted as PID 1270967 resuming from model_latest.pt (iter 5).
+
+**Expected:** avg_len should drop to ~78 (same as pre-curriculum regime at iters 815-833). draw_rate should fall from 0.98 → <0.20. avg_provinces should stabilize and climb toward 3.0+ as games now reach decisive conclusions. p0_wr should approach 0.40–0.60. Value head will get clean win/loss signal instead of all-draw noise.
+
+**Files changed:** `cpp/batched_mcts.cpp` (max_turns_ constructor: 200→80).
+
+---
+
+## DEVLOG #84 — 2026-03-10: Enable big_money_force_rate=0.5 to break cooperative equilibrium deadlock
+
+**Problem:** After DEVLOG #83 fixed the turn cap (max_turns_=80), iters 6-10 show draw_rate 0.85–1.0 and avg_provinces 0.02–0.91 oscillating with downward trend. Root cause: RL cooperative equilibrium. Both self-play bots learned that with only Silver/Gold/Province buyable and an 80-turn cap, the optimal mutual strategy is "stack Silver/Gold, never convert to Province" → game ends at cap → both have ~3 VP from starting Estates → draw every time. Value head gets zero signal (all draws = reward=0). Province buying never discovered.
+
+**Why this happens in Phase 0:** Previous regime (iters 815-833) had big_money_force_rate=0.0 and still worked because the bot had 800+ iters of experience knowing Province buying wins. The fresh curriculum reboot starts with a random network — it has no prior knowledge that Provinces win. In self-play, neither bot independently discovers "Province buying is winning" because all games terminate at the cap before any Province dominance develops. DEVLOG #82 mistakenly set force_rate=0.0 believing Province buying was "obvious" with only 3 buy options. It is not — MCTS still needs some games where Province buying actually wins to seed the value signal.
+
+**Fix:** Set `big_money_force_rate: 0.5` in `configs/dominion.yaml`. In 50% of self-play games, one opponent will play Big Money (always Province when $8+, else Gold, else Silver). These games provide clear win/loss signals: BM bot buys Provinces, wins if opponent doesn't respond, loses if opponent out-Provinces it. The training bot sees Province-buying games and learns Province buying = positive value.
+
+**Files changed:** `configs/dominion.yaml` (big_money_force_rate: 0.0 → 0.5). RunPod /tmp/dominion_runpod.yaml regenerated. Killed PID 1270967, restarted as PID 1295645 resuming from model_latest.pt (iter 10).
+
+**Expected:** By iter 13-15, draw_rate should drop below 0.60. avg_provinces should climb above 2.0. avg_score should rise above 20 (Province-dominated games). Once bot matches BM strength (iter 20-30), can reduce force_rate to 0.2 or 0.0.
+
+## DEVLOG #91 — 2026-03-13: Fix opponent diversity bug (7 games → 30 games)
+
+**Problem:** Opponent diversity was configured at 0.3 (30%) but only producing 7 games per iter instead of 30. Line 359 in trainer.py calculated `n_opponent = max(1, int(n_full * opp_ratio))` where `n_full=25` (the full-sim subset). Should be `int(num_games * opp_ratio)` where `num_games=100`.
+
+**Fix:** Changed `n_full * opp_ratio` → `num_games * opp_ratio` in trainer.py:359. Deployed iter 343.
+
+**Files changed:** `mandala_rl/training/trainer.py` (local + RunPod).
+
+## DEVLOG #92 — 2026-03-13: Asymmetric self-play + reward shaping to break frozen equilibrium
+
+**Problem:** After 100+ iters of fixes (turn cap, score head, Duchy disable, opponent diversity), provinces stuck at 2.2-2.5, draw rate 82-93%. Root cause: symmetric self-play frozen equilibrium. Both sides play identically → draws → value targets ≈ 0 → value head can't distinguish good from bad moves → MCTS visits match prior → policy trains to match itself → no learning. This is a self-reinforcing loop that opponent diversity alone couldn't break at 23% (30/130 games).
+
+**Fix A — Asymmetric self-play (trainer.py):** Replace the 75/25 fast/full playout split with 50/50 asymmetric/symmetric. Asymmetric games use 50 MCTS sims (vs 800 for symmetric). The weak-sim player makes worse decisions → current model wins more → non-zero training signal. This is the same mechanism KataGo uses ("playout cap randomization") to break symmetric equilibria.
+
+```
+Before: 75 fast games (200 sims) + 25 full games (800 sims)
+After:  50 asymmetric games (50 sims) + 50 symmetric games (800 sims)
+```
+
+**Fix B — Reward shaping (worker.py):** Enrich value target for Dominion so the value head gets gradient signal even in draws. The shaped outcome adds:
+- Province advantage: `(my_prov - opp_prov) * 0.1` per province
+- VP margin: `score_margin / 30 * 0.15`
+- Time pressure: `-turns/50 * 0.05` (shorter games = better)
+- Clamped to [-1, 1]
+
+This gives the value head something to learn FROM in draws (where the raw outcome is ~0). As games become decisive, the win/loss outcome dominates naturally.
+
+**Files changed:**
+- `mandala_rl/training/trainer.py` — asymmetric/symmetric split, renamed fast_games→weak_games, full_games→sym_games
+- `mandala_rl/selfplay/worker.py` — reward shaping in `get_training_examples()` for Dominion
+
+**Deployed:** Iter 348 on RunPod. First iter confirmed: 50 asymmetric games in 40 sec + 50 symmetric in ~11 min + 30 opponent diversity. 130 total games for training.
+
+**Expected:** Within 10-20 iters, value head std should increase (learning real signal), draw rate should drop below 70%, provinces should start climbing above 2.5. If no improvement by iter 368, escalate to heuristic teacher seeding (DEVLOG #84 approach adapted for C++ engine).
+
+**Rollback:** Revert both files to pre-#92 versions. The asymmetric games produce weaker policies but valid outcomes; the reward shaping adds small biases that wash out as games become decisive. Neither change should cause collapse, but watch for value loss spikes.
+
+---
+
+## DEVLOG #95 — 2026-03-19: Monk self-correction — force_rate restored to 0.0
+
+**Incident:** During the 13:01 Monk wake-up, the Monk incorrectly diagnosed the province decline at iters 732-733 as a regression caused by force_rate=0.0 and restored it to 0.4. This violated the DEVLOG #94 rule: "big_money_force_rate must stay at 0.0. Never re-enable."
+
+**Root cause of Monk error:** DEVLOG #94 is in the DEVLOG header section (lines 7-41) and was not read before acting. The Monk read only the last 5 DEVLOG entries (as supplied in the prompt footer), which ended at DEVLOG #92. DEVLOG #93 and #94 are at the top of the file (prepended) and were not in the supplied snippet.
+
+**What actually happened at iters 732-733:** The province decline (3.5→3.13→2.59) and mcts_province_pct collapse (60%→45%→28%) are expected post-crutch turbulence from DEVLOG #94's force_rate 0.4→0.0 removal. The bot spent 700+ iters with 40% of buy decisions force-overridden. It needs time to learn Province buying organically through MCTS + value signal. Two iters is not enough to diagnose failure.
+
+**Corrective actions:**
+1. Killed wrong-config trainer (PID 12353, force_rate=0.4)
+2. Restored force_rate=0.0 in RunPod config
+3. Restarted training as PID 13989 with correct config
+
+**Duration of bad training:** ~8 minutes (iter 734 was in progress, ~22% complete). Checkpoint not saved, no bad data entered replay buffer.
+
+**Files changed:** `configs/dominion.yaml` on RunPod (force_rate 0.4→0.0, net no-op).
+
+**RULE REINFORCED:** Do NOT re-enable big_money_force_rate or explore_epsilon under any circumstances. Province decline post-crutch-removal is expected turbulence. Wait for 5+ consecutive iters before diagnosing failure. If provinces fall below 2.0 for 5 consecutive iters with no trend reversal, the fix is structural (reward signal, state representation) — never force overrides.
