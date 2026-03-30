@@ -13,6 +13,7 @@ public:
     virtual std::unique_ptr<GameState> get_canonical() const = 0;
     virtual int current_player() const = 0;
     virtual int tensor_channels() const = 0;
+    virtual int get_turn_number() const { return 0; }
 };
 
 // Abstract game engine
@@ -31,4 +32,5 @@ public:
     // Determinized MCTS: randomize hidden information from current player's perspective.
     // Default: no-op (perfect information games).
     virtual void randomize_hidden(GameState& state, std::mt19937& rng) const {}
+    virtual float score_bonus_p0(const GameState&) const { return 0.0f; }
 };

@@ -189,6 +189,7 @@ def main():
         'big_money_force_rate': config.get('big_money_force_rate', 0.0),
         'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
         'disabled_basic_supply': config.get('disabled_basic_supply', []),
+        'province_supply': config.get('province_supply', 8),
     }
 
     # Create trainer

@@ -54,7 +54,8 @@ class SelfPlayWorker:
         max_action_cards: int = 10,
         big_money_force_rate: float = 0.0,
         forced_kingdom_cards: list = None,
-        disabled_basic_supply: list = None
+        disabled_basic_supply: list = None,
+        province_supply: int = 8
     ):
         self.game = game
         self.network = network.to(device)
@@ -74,6 +75,7 @@ class SelfPlayWorker:
         self.big_money_force_rate = big_money_force_rate
         self.forced_kingdom_cards = forced_kingdom_cards or []
         self.disabled_basic_supply = disabled_basic_supply or []
+        self.province_supply = province_supply
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -155,6 +157,7 @@ class SelfPlayWorker:
             big_money_force_rate=self.big_money_force_rate,
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
+            province_supply=self.province_supply,
         )
         mgr.init_games(num_games)
 
@@ -240,6 +243,7 @@ class SelfPlayWorker:
             big_money_force_rate=self.big_money_force_rate,
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
+            province_supply=self.province_supply,
         )
         mgr.init_games(num_games)
 

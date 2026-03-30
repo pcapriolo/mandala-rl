@@ -56,10 +56,6 @@ class Trainer:
         self.replay_buffer = ReplayBuffer(
             max_size=config.get('replay_buffer_size', 500000)
         )
-        self.replay_buffer.set_target_sizes(
-            input_channels=config.get('input_channels', 50),
-            belief_size=config.get('belief_size', 12)
-        )
 
         # Seed buffer for periodic re-injection
         self._seed_buffer_data = None
@@ -83,6 +79,7 @@ class Trainer:
             big_money_force_rate=config.get('big_money_force_rate', 0.0),
             forced_kingdom_cards=config.get('forced_kingdom_cards', []),
             disabled_basic_supply=config.get('disabled_basic_supply', []),
+            province_supply=config.get('province_supply', 8),
         )
 
         # Optimizer
@@ -288,7 +285,7 @@ class Trainer:
         num_games = self.config.get('games_per_iteration', 100)
         replay_dir = Path(self.config.get('replay_dir', 'data/replays'))
         save_replay_freq = self.config.get('save_replay_frequency', 10)
-        checkpoint_every_n_games = self.config.get('checkpoint_every_n_games', 10)
+        checkpoint_every_n_games = self.config.get("checkpoint_every_n_games", 10)
         parallel_games = self.config.get('parallel_games', 8)
         full_sims = self.config.get('mcts_simulations', 800)
         fast_sims = min(200, full_sims // 4)
@@ -316,7 +313,7 @@ class Trainer:
             progress.update(1)
             self._write_heartbeat('selfplay', f'{self.games_in_current_iteration}/{num_games}')
 
-            if self.games_in_current_iteration % checkpoint_every_n_games == 0:
+            if checkpoint_every_n_games > 0 and self.games_in_current_iteration % checkpoint_every_n_games == 0:
                 tqdm.write(f"Checkpoint after game {self.games_in_current_iteration}/{num_games}")
                 self._save_checkpoint(suffix=f"_game{self.total_games}")
 
