@@ -939,6 +939,8 @@ class Trainer:
                 num_res_blocks=net_cfg.get('num_res_blocks', self.config.get('num_res_blocks', 10)),
                 channels=net_cfg.get('channels', self.config.get('channels', 128)),
                 belief_size=belief_size,
+                phase_aware_policy=net_cfg.get('phase_aware_policy', False),
+                factored_policy=net_cfg.get('factored_policy', False),
             ).to(self.device)
             data = torch.load(path, map_location=self.device, weights_only=False)
             # Handle architecture mismatches — old checkpoints may have different sizes
@@ -1162,19 +1164,26 @@ class Trainer:
         # Load both models
         print(f"Playing {current_model_id} vs iter_{prev_iteration}")
 
+        net_cfg = self.config.get('network', {})
         current_model = MandalaNet(
-            input_channels=self.config.get('input_channels', 50),
-            num_actions=self.config.get('num_actions', 30),
-            num_res_blocks=self.config.get('num_res_blocks', 10),
-            channels=self.config.get('channels', 128)
+            input_channels=net_cfg.get('input_channels', self.config.get('input_channels', 50)),
+            num_actions=net_cfg.get('num_actions', self.config.get('num_actions', 30)),
+            num_res_blocks=net_cfg.get('num_res_blocks', self.config.get('num_res_blocks', 10)),
+            channels=net_cfg.get('channels', self.config.get('channels', 128)),
+            belief_size=net_cfg.get('belief_size', self.config.get('belief_size', 12)),
+            phase_aware_policy=net_cfg.get('phase_aware_policy', False),
+            factored_policy=net_cfg.get('factored_policy', False),
         ).to(self.device)
         current_model.load_state_dict(self._unwrapped_network.state_dict())
 
         prev_model = MandalaNet(
-            input_channels=self.config.get('input_channels', 50),
-            num_actions=self.config.get('num_actions', 30),
-            num_res_blocks=self.config.get('num_res_blocks', 10),
-            channels=self.config.get('channels', 128)
+            input_channels=net_cfg.get('input_channels', self.config.get('input_channels', 50)),
+            num_actions=net_cfg.get('num_actions', self.config.get('num_actions', 30)),
+            num_res_blocks=net_cfg.get('num_res_blocks', self.config.get('num_res_blocks', 10)),
+            channels=net_cfg.get('channels', self.config.get('channels', 128)),
+            belief_size=net_cfg.get('belief_size', self.config.get('belief_size', 12)),
+            phase_aware_policy=net_cfg.get('phase_aware_policy', False),
+            factored_policy=net_cfg.get('factored_policy', False),
         ).to(self.device)
         prev_checkpoint_data = torch.load(prev_checkpoint, map_location=self.device, weights_only=False)
         prev_model.load_state_dict(prev_checkpoint_data['model_state_dict'])

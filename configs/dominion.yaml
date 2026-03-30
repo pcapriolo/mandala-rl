@@ -2,11 +2,13 @@
 
 # Network Architecture
 network:
-  input_channels: 218
+  input_channels: 280  # 218 base + 62 buy history channels (31 my buys + 31 opp buys)
   num_actions: 131  # 3 phase-end + 31*4 card actions + MOAT/DECLINE/ACCEPT/DECLINE
   num_res_blocks: 10
   channels: 128
   belief_size: 31
+  phase_aware_policy: true   # Route policy through phase-specific sub-heads
+  factored_policy: true      # Decompose policy into control + type + card logits
 
 # MCTS Parameters
 mcts:
