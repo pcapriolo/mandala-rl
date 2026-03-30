@@ -996,6 +996,15 @@ class Trainer:
             if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
                 torch.save(checkpoint, checkpoint_dir / f'model_iter_{self.iteration}.pt')
 
+            # Archive every Nth checkpoint permanently (never pruned)
+            archive_freq = self.config.get('archive_checkpoint_frequency', 100)
+            if archive_freq > 0 and self.iteration % archive_freq == 0:
+                archive_dir = checkpoint_dir / 'archive'
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                archive_path = archive_dir / f'model_iter_{self.iteration}.pt'
+                torch.save(checkpoint, archive_path)
+                print(f"  Archived checkpoint: {archive_path}")
+
         status = f"iteration {self.iteration}"
         if self.games_in_current_iteration > 0:
             status += f", game {self.games_in_current_iteration}/{self.config.get('games_per_iteration', 100)}"
