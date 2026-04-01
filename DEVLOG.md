@@ -4,6 +4,20 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #132 — 2026-04-01: Reduce dirichlet_epsilon 0.50→0.25 — shift from exploration to exploitation (iter 2045)
+
+**Trigger:** mcts_province_pct plateaued at 47-49% for 11 consecutive iters (2034-2045) despite Province buying being fully mastered. All 3 Provinces deplete every game (1.5/player), avg_turns=19, coins_wasted=1.79, value_loss=0.336. The high epsilon (set in DEVLOG #125 to discover Province buying) is now the bottleneck: 50% of the root prior is Dirichlet noise, capping Province visit share at ~48% even when the network policy is correct. This adds noise to policy training targets and likely contributes to the ~25% draw rate.
+
+**Fix:** `configs/dominion.yaml`: `dirichlet_epsilon: 0.50 → 0.25`. This is the AlphaZero default. DEVLOG #125 raised it from 0.25→0.50 specifically to break policy-prior lock preventing Province discovery; that objective is achieved.
+
+**Expected:** mcts_province_pct climbs from ~48% toward 70-80%. draw_rate declines from ~25% toward <15%. Policy targets become cleaner (less noise → faster policy learning). avg_turns and provinces should be unaffected.
+
+**Gate:** If mcts_province_pct doesn't rise above 60% within 5 iters (by iter 2050), or if draw_rate increases, revert to 0.35. If draw_rate drops below 0.10 for 3 consecutive iters, consider curriculum advancement (Stage 2: province_supply 3→5).
+
+**Files changed:** `configs/dominion.yaml` (dirichlet_epsilon: 0.50→0.25).
+
+---
+
 ## DEVLOG #131 — 2026-04-01: Revert province_supply 7→3 and max_turns 100→70 to fix training regression (iter 2027)
 
 **Problem:** Dominion training regressed from healthy play (iters 1000-1500: 0% draws, 16-26 turn games, 3.5 provinces, 1.8 coins wasted) to stuck equilibrium (iter 2026: 62% draws, 100-turn games, 2.5 provinces, 6.22 coins wasted). Value head collapsing (loss 0.019).
