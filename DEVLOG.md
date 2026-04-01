@@ -4,6 +4,27 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #131 — 2026-04-01: Revert province_supply 7→3 and max_turns 100→70 to fix training regression (iter 2027)
+
+**Problem:** Dominion training regressed from healthy play (iters 1000-1500: 0% draws, 16-26 turn games, 3.5 provinces, 1.8 coins wasted) to stuck equilibrium (iter 2026: 62% draws, 100-turn games, 2.5 provinces, 6.22 coins wasted). Value head collapsing (loss 0.019).
+
+**Root cause:** Two values were changed from their healthy-period settings:
+- `province_supply` was raised to 7 (from 3). With 7 Provinces available and only 2.5 bought per game, the pile never depletes → games never end naturally → 100-turn cap → draws → value head starves.
+- `max_turns_` was set to 100 in C++ (commit a73a80b). DEVLOG #127 had set it to 70 to force decisive outcomes before Province equalization.
+
+**Fix:**
+1. `configs/dominion.yaml`: `province_supply: 7` → `province_supply: 3`
+2. `cpp/batched_mcts.cpp` line 46: `max_turns_ = 100` → `max_turns_ = 70`
+3. Rebuilt C++ extension
+
+**Curriculum context:** This is Stage 1 of a 5-stage curriculum ladder. Province supply will be increased (3→5→7→8) as the bot demonstrates ability to deplete the pile at each level. Action cards (max_action_cards) will be introduced at Stage 3 once BM fundamentals are solid. Gate conditions for advancement documented in plan.
+
+**Expected:** Within 3-5 iters: avg_turns < 40, draw_rate < 0.10, value_loss > 0.10, coins_wasted < 2.5. These match the exact metrics from the healthy period (iters 1000-1500) which used these same values.
+
+**Files changed:** `configs/dominion.yaml` (province_supply: 7→3), `cpp/batched_mcts.cpp` (max_turns_: 100→70).
+
+---
+
 ## DEVLOG #130 — 2026-03-27: Enable prune_old_checkpoints + manual prune (iter 1190)
 
 **Problem:** DEVLOG #129 freed 17.5G by manual prune, but the follow-up showed auto-pruning was gated behind `prune_old_checkpoints: false` (default). By the 23:14 check (iter 1190), 38 iteration checkpoints had accumulated again (1153-1190), disk dropped from 41G to 40G.
