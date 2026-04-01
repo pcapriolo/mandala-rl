@@ -43,7 +43,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
-        max_turns_ = 100;  // Turn cap: allow Province discovery via temperature sampling
+        max_turns_ = 70;   // DEVLOG #127: cut game at economic peak, before Province equalization
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
