@@ -26,7 +26,7 @@ selfplay:
   parallel_games: 256
   leaves_per_game: 8
   temperature: 1.0
-  temperature_threshold: 10  # Follow prior sooner → Province depletion → decisive games
+  temperature_threshold: 25  # Stochastic through Province-buying window (turns 12-18)
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
   opponent_diversity_ratio: 0.7  # DEVLOG #114: 70% vs healthy VP-buying opponents to break Province-race equilibrium
   opponent_iter_min: 779  # DEVLOG #122: lock to pre-restart healthy Phase1 opponents only
