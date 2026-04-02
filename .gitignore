@@ -5,19 +5,14 @@ data/logs/*
 data/lost_cities/checkpoints/*
 data/lost_cities/replays/*
 data/lost_cities/logs/*
-data/dominion/checkpoints/*
-data/dominion/replays/*
-data/dominion/logs/*
-data/dominion/heartbeat.json
+data/dominion
 data/human_games/
 !data/replays/.gitkeep
 !data/checkpoints/.gitkeep
 !data/logs/.gitkeep
 # Allow deploy checkpoints (lightweight, for Railway)
 !data/deploy/
-# Keep losses.jsonl and monitor.jsonl (small, important training history)
-!data/dominion/losses.jsonl
-!data/dominion/monitor.jsonl
+# Dominion data is symlinked from the sync directory (~/GG/mandala-rl/data/dominion)
 
 # Binary blobs and seed data
 *.pkl
