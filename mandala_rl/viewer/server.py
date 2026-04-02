@@ -506,6 +506,7 @@ class TrainingObserver:
                 ratings = data.get('ratings', {})
                 stats = data.get('stats', {})
                 bench = data.get('benchmark_stats', {})
+                tlog = data.get('tournament_log', {})
                 points = []
                 for k, v in ratings.items():
                     m = re.match(r'iter_(\d+)$', k)
@@ -514,11 +515,17 @@ class TrainingObserver:
                     it = int(m.group(1))
                     s = stats.get(str(it), {})
                     b = bench.get(str(it), {})
+                    t = tlog.get(str(it), {})
                     points.append({
                         'iter': it, 'elo': v,
                         'wins': s.get('wins'), 'losses': s.get('losses'), 'draws': s.get('draws'),
                         'vs_random': b.get('vs_random'),
                         'vs_strategy': b.get('vs_strategy'),
+                        'elo_delta': t.get('elo_delta'),
+                        'elo_before': t.get('elo_before'),
+                        'num_opponents': t.get('num_opponents'),
+                        'opponents': t.get('opponents'),
+                        'tournament_ts': t.get('timestamp'),
                     })
                 games[name] = sorted(points, key=lambda x: x['iter'])
             return jsonify(games)

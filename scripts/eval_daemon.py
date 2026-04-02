@@ -19,8 +19,10 @@ Usage:
 """
 import argparse
 import json
+import os
 import random
 import re
+import tempfile
 import time
 import yaml
 import torch
@@ -36,7 +38,7 @@ from mandala_rl.evaluation.benchmark_bots import RandomBot, MandalaStrategyBot, 
 
 
 def load_elo_with_metadata(elo_file):
-    """Load Elo JSON preserving the tournament_evaluated set, stats, and benchmarks."""
+    """Load Elo JSON preserving the tournament_evaluated set, stats, benchmarks, and tournament log."""
     if elo_file.exists():
         with open(elo_file) as f:
             data = json.load(f)
@@ -48,12 +50,17 @@ def load_elo_with_metadata(elo_file):
         evaluated = set(data.get('tournament_evaluated', []))
         stats = data.get('stats', {})
         benchmark_stats = data.get('benchmark_stats', {})
-        return elo, evaluated, stats, benchmark_stats
-    return EloRating(initial_rating=1500.0, k_factor=32.0), set(), {}, {}
+        tournament_log = data.get('tournament_log', {})
+        return elo, evaluated, stats, benchmark_stats, tournament_log
+    return EloRating(initial_rating=1500.0, k_factor=32.0), set(), {}, {}, {}
 
 
-def save_elo_with_metadata(elo_file, elo, evaluated, stats=None, benchmark_stats=None):
-    """Save Elo JSON including tournament_evaluated list, per-iter stats, and benchmarks."""
+def save_elo_with_metadata(elo_file, elo, evaluated, stats=None, benchmark_stats=None,
+                           tournament_log=None):
+    """Save Elo JSON including tournament_evaluated list, per-iter stats, benchmarks, and tournament log.
+
+    Uses atomic write (tempfile + rename) to prevent corruption on crash.
+    """
     data = {
         'initial_rating': elo.initial_rating,
         'k_factor': elo.k_factor,
@@ -61,10 +68,17 @@ def save_elo_with_metadata(elo_file, elo, evaluated, stats=None, benchmark_stats
         'tournament_evaluated': sorted(evaluated),
         'stats': stats or {},
         'benchmark_stats': benchmark_stats or {},
+        'tournament_log': tournament_log or {},
     }
     elo_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(elo_file, 'w') as f:
-        json.dump(data, f, indent=2)
+    fd, tmp_path = tempfile.mkstemp(dir=str(elo_file.parent), suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.rename(tmp_path, str(elo_file))
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def get_checkpoint_iters(checkpoint_dir):
@@ -132,19 +146,22 @@ def load_model(path, net_cfg, device):
 def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
                    device='cpu', num_opponents=20, games_per_opponent=5,
                    start_iter=1, write_heartbeat=None):
-    """Run tournament: all games in parallel via one BatchedMCTS session."""
+    """Run tournament: all games in parallel via one BatchedMCTS session.
+
+    Returns dict with 'stats' and 'tournament_log' on success, None on failure.
+    """
     cp_iters = get_checkpoint_iters(checkpoint_dir)
     available = {i for i in cp_iters if i >= start_iter}
     opponent_iters = select_opponents(iteration, available, num_opponents)
 
     if not opponent_iters:
         print(f"[EVAL] No opponents for iter {iteration}")
-        return False
+        return None
 
     current_path = checkpoint_dir / f'model_iter_{iteration}.pt'
     if not current_path.exists():
         print(f"[EVAL] Missing checkpoint: {current_path}")
-        return False
+        return None
 
     game_type = "mandala" if net_cfg['num_actions'] in (108, 150) else ("dominion" if net_cfg['num_actions'] == 131 else "lost_cities")
     mcts_sims = eval_cfg.get('eval_mcts_simulations', 400)
@@ -157,7 +174,7 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
         current_model = load_model(current_path, net_cfg, device)
     except Exception as e:
         print(f"[EVAL] Corrupt checkpoint {current_path}: {e}")
-        return False
+        return None
 
     current_id = f"iter_{iteration}"
 
@@ -168,6 +185,9 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
             if prev_id in elo.ratings:
                 elo.ratings[current_id] = elo.ratings[prev_id]
                 break
+
+    # Snapshot rating before tournament
+    elo_before = elo.get_rating(current_id)
 
     opponents = []
     for opp_iter in opponent_iters:
@@ -183,7 +203,7 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
 
     if not opponents:
         print(f"[EVAL] No valid opponent checkpoints for iter {iteration}")
-        return False
+        return None
 
     total_games = len(opponents) * games_per_opponent
     print(f"[EVAL] Tournament: iter {iteration} vs {len(opponents)} opponents "
@@ -232,11 +252,13 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
     for p1, p2, winner in all_game_results:
         elo.record_match(p1, p2, winner)
 
+    elo_after = elo.get_rating(current_id)
+
     agg_total = total_wins + total_losses + total_draws
     win_rate = total_wins / agg_total if agg_total > 0 else 0
     print(f"[EVAL] Tournament done: {total_wins}W/{total_losses}L/{total_draws}D "
           f"({win_rate:.0%})")
-    print(f"[EVAL] Elo: {current_id} = {elo.get_rating(current_id):.0f}")
+    print(f"[EVAL] Elo: {current_id} = {elo_after:.0f} (delta: {elo_after - elo_before:+.1f})")
 
     if write_heartbeat:
         write_heartbeat(iteration, len(opponents), len(opponents))
@@ -254,7 +276,29 @@ def run_tournament(iteration, checkpoint_dir, elo, net_cfg, eval_cfg, mcts_cfg,
                 'draws': r['draws'],
             }
 
-    return True, all_stats
+    # Build per-opponent breakdown for tournament log
+    opponent_detail = {}
+    for opp_name, r in all_results.items():
+        opponent_detail[opp_name] = {
+            'wins': r['current_wins'],
+            'losses': r['opponent_wins'],
+            'draws': r['draws'],
+        }
+
+    return {
+        'stats': all_stats,
+        'tournament_log': {
+            'timestamp': time.time(),
+            'elo_before': round(elo_before, 2),
+            'elo_after': round(elo_after, 2),
+            'elo_delta': round(elo_after - elo_before, 2),
+            'num_opponents': len(opponents),
+            'games_played': agg_total,
+            'mcts_sims': mcts_sims,
+            'opponents': opponent_detail,
+            'results_summary': {'wins': total_wins, 'losses': total_losses, 'draws': total_draws},
+        },
+    }
 
 
 def run_benchmarks(iteration, checkpoint_dir, net_cfg, mcts_cfg,
@@ -380,7 +424,7 @@ def main():
             pass
 
     while True:
-        elo, evaluated, stats, benchmark_stats = load_elo_with_metadata(elo_file)
+        elo, evaluated, stats, benchmark_stats, tournament_log = load_elo_with_metadata(elo_file)
         needed = find_tournament_needed(
             checkpoint_dir, evaluated,
             tournament_freq=args.tournament_freq,
@@ -399,8 +443,9 @@ def main():
                     start_iter=start_iter,
                     write_heartbeat=write_heartbeat,
                 )
-                if result:
-                    success, all_participant_stats = result
+                if result is not None:
+                    all_participant_stats = result['stats']
+                    tournament_log[str(iteration)] = result['tournament_log']
                     evaluated.add(iteration)
                     # Accumulate W/L/D for all participants (current + opponents)
                     for iter_key, s in all_participant_stats.items():
@@ -420,7 +465,7 @@ def main():
                         benchmark_stats[str(iteration)] = bench
 
                     save_elo_with_metadata(elo_file, elo, evaluated, stats,
-                                           benchmark_stats)
+                                           benchmark_stats, tournament_log)
 
                     # Tensorboard
                     if log_dir:
