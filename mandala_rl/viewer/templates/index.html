@@ -383,6 +383,8 @@
                     x: p.iter, y: p.elo,
                     wins: p.wins, losses: p.losses, draws: p.draws,
                     vs_random: p.vs_random, vs_strategy: p.vs_strategy,
+                    elo_delta: p.elo_delta, num_opponents: p.num_opponents,
+                    opponents: p.opponents,
                 })),
                 borderColor: color,
                 tension: 0.3,
@@ -391,6 +393,22 @@
                 yAxisID: 'y',
                 order: 1,
             });
+
+            // Elo delta bars (dedicated y2 axis, centered on 0)
+            const deltaPts = points.filter(p => p.elo_delta != null);
+            if (deltaPts.length > 0) {
+                datasets.push({
+                    label: 'Elo Delta',
+                    type: 'bar',
+                    data: deltaPts.map(p => ({ x: p.iter, y: p.elo_delta })),
+                    backgroundColor: deltaPts.map(p => p.elo_delta >= 0 ? '#4caf5088' : '#f4433688'),
+                    borderColor: deltaPts.map(p => p.elo_delta >= 0 ? '#4caf50' : '#f44336'),
+                    borderWidth: 1,
+                    yAxisID: 'y2',
+                    barThickness: 6,
+                    order: 3,
+                });
+            }
 
             // vs Random bars (right y-axis, offset left)
             const randomPts = points.filter(p => p.vs_random);
@@ -447,6 +465,9 @@
                             y1: { position: 'right', title: { display: true, text: 'Win %', color: '#666' },
                                   ticks: { color: '#666' }, grid: { drawOnChartArea: false },
                                   min: 0, max: 100 },
+                            y2: { position: 'right', title: { display: false },
+                                  ticks: { display: false }, grid: { drawOnChartArea: false },
+                                  suggestedMin: -50, suggestedMax: 50 },
                         },
                         plugins: {
                             legend: { labels: { color: '#e0e0e0' } },
@@ -455,12 +476,29 @@
                                 callbacks: {
                                     label: function(ctx) {
                                         const p = ctx.raw;
+                                        if (ctx.dataset.yAxisID === 'y2') {
+                                            const sign = p.y >= 0 ? '+' : '';
+                                            return `Elo Delta: ${sign}${p.y.toFixed(1)}`;
+                                        }
                                         if (ctx.dataset.yAxisID === 'y1') {
                                             return `${ctx.dataset.label}: ${p.y.toFixed(0)}%`;
                                         }
                                         let lines = [`Elo: ${p.y.toFixed(0)}`];
                                         if (p.wins != null) {
                                             lines[0] += ` (${p.wins}W ${p.losses}L ${p.draws}D)`;
+                                        }
+                                        if (p.elo_delta != null) {
+                                            const sign = p.elo_delta >= 0 ? '+' : '';
+                                            lines.push(`  Delta: ${sign}${p.elo_delta.toFixed(1)} | ${p.num_opponents} opponents`);
+                                        }
+                                        if (p.opponents) {
+                                            const opps = Object.entries(p.opponents).slice(0, 3);
+                                            opps.forEach(([oname, r]) => {
+                                                lines.push(`  ${oname}: ${r.wins}W/${r.losses}L/${r.draws}D`);
+                                            });
+                                            if (Object.keys(p.opponents).length > 3) {
+                                                lines.push(`  ... and ${Object.keys(p.opponents).length - 3} more`);
+                                            }
                                         }
                                         if (p.vs_random) {
                                             lines.push(`  vs Random: ${p.vs_random.wins}W/${p.vs_random.losses}L/${p.vs_random.draws}D`);
