@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import sys
+import yaml
 from pathlib import Path
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -161,6 +162,50 @@ class Trainer:
                 lr *= gamma
         return lr
 
+    # Tunable config keys: maps YAML path to SelfPlayWorker attribute name
+    _TUNABLE_KEYS = {
+        ('mcts', 'dirichlet_epsilon'): 'dirichlet_epsilon',
+        ('mcts', 'dirichlet_alpha'): 'dirichlet_alpha',
+        ('mcts', 'c_puct'): 'c_puct',
+        ('mcts', 'action_explore_boost'): 'action_explore_boost',
+        ('mcts', 'action_buy_force_rate'): 'action_buy_force_rate',
+        ('mcts', 'action_play_force_rate'): 'action_play_force_rate',
+        ('selfplay', 'temperature'): 'temperature',
+        ('selfplay', 'temperature_threshold'): 'temperature_threshold',
+        ('selfplay', 'explore_epsilon'): 'explore_epsilon',
+    }
+
+    def _hot_reload_config(self):
+        """Re-read YAML and update tunable SelfPlayWorker params. No-op on error."""
+        config_path = Path(self._config_path)
+        if not config_path.exists():
+            return
+        try:
+            with open(config_path) as f:
+                raw = yaml.safe_load(f)
+        except Exception:
+            return
+        changes = []
+        for (section, key), attr in self._TUNABLE_KEYS.items():
+            new_val = raw.get(section, {}).get(key)
+            if new_val is None:
+                continue
+            old_val = getattr(self.selfplay_worker, attr, None)
+            if old_val is not None and old_val != new_val:
+                setattr(self.selfplay_worker, attr, new_val)
+                changes.append(f"{attr} {old_val} → {new_val}")
+        # Also reload top-level keys passed directly to worker
+        for top_key, attr in [('big_money_force_rate', 'big_money_force_rate')]:
+            new_val = raw.get(top_key)
+            if new_val is None:
+                continue
+            old_val = getattr(self.selfplay_worker, attr, None)
+            if old_val is not None and old_val != new_val:
+                setattr(self.selfplay_worker, attr, new_val)
+                changes.append(f"{attr} {old_val} → {new_val}")
+        if changes:
+            print(f"Config reload: {', '.join(changes)}")
+
     def train(self, num_iterations: int):
         """
         Run training loop.
@@ -184,6 +229,9 @@ class Trainer:
             print(f"\n{'='*60}")
             print(f"Iteration {self.iteration}")
             print(f"{'='*60}")
+
+            # 0. Hot-reload tunable config values from YAML
+            self._hot_reload_config()
 
             # 1. Self-play
             print("\n[1/3] Generating self-play games...")
@@ -995,9 +1043,13 @@ class Trainer:
             try:
                 buf_tmp = checkpoint_dir / 'buffer_latest.pkl.tmp'
                 self.replay_buffer.save(buf_tmp)
-                buf_tmp.rename(checkpoint_dir / 'buffer_latest.pkl')
+                buf_final = checkpoint_dir / 'buffer_latest.pkl'
+                buf_tmp.rename(buf_final)
+                buf_size_mb = buf_final.stat().st_size / 1e6
+                if buf_size_mb < 1:
+                    print(f"  WARNING: buffer file suspiciously small ({buf_size_mb:.1f} MB)")
             except Exception as e:
-                print(f"  Warning: buffer save failed ({e}), training continues")
+                print(f"  WARNING: buffer save failed ({e}), training continues")
 
             # Save periodic iteration checkpoint (lightweight, no replay buffer)
             if self.iteration % self.config.get('checkpoint_frequency', 10) == 0:
@@ -1142,13 +1194,17 @@ class Trainer:
             self.replay_buffer.load_data(checkpoint['replay_buffer'])
             print(f"Restored replay buffer with {len(self.replay_buffer)} examples (legacy)")
         elif buffer_path.exists():
+            buf_size_mb = buffer_path.stat().st_size / 1e6
+            print(f"Loading buffer from {buffer_path.name} ({buf_size_mb:.0f} MB)...")
             try:
                 self.replay_buffer.load(buffer_path)
-                print(f"Restored replay buffer with {len(self.replay_buffer)} examples from {buffer_path.name}")
+                print(f"Restored replay buffer with {len(self.replay_buffer)} examples")
             except Exception as e:
-                print(f"Buffer load failed ({e}), starting empty")
+                print(f"WARNING: Buffer load failed ({e}), starting empty")
         else:
             print("Replay buffer starts empty (rebuilds from self-play)")
+        if len(self.replay_buffer) == 0 and self.iteration > 0:
+            print(f"WARNING: Buffer empty at iter {self.iteration} — network vulnerable to overfitting")
 
         print(f"Loaded checkpoint from {filepath}")
         print(f"Resuming from iteration {self.iteration}, total games: {self.total_games}")

@@ -4,6 +4,36 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #134 — 2026-04-02: Add hot-reload for tunable config values (iter 2097)
+
+**Problem:** Every hyperparameter change required restarting the Dominion trainer, which risks buffer corruption and wastes iteration time. The dirichlet_epsilon revert (#133) required yet another restart.
+
+**Fix:** `mandala_rl/training/trainer.py` now re-reads the YAML config file at the top of each iteration and updates tunable SelfPlayWorker attributes if values changed. Tunable params: `dirichlet_epsilon`, `dirichlet_alpha`, `c_puct`, `temperature`, `temperature_threshold`, `explore_epsilon`, `action_explore_boost`, `action_buy_force_rate`, `action_play_force_rate`, `big_money_force_rate`. Structural params (network arch, LR, buffer size) are NOT reloaded.
+
+**How it works:** BatchedMCTS is already recreated every iteration from SelfPlayWorker attributes. The new `_hot_reload_config()` method just updates those attributes from the YAML before self-play begins. Wrapped in try/except — malformed YAML won't crash training. Logs only changed values (e.g., "Config reload: dirichlet_epsilon 0.25 → 0.50").
+
+**Also added:** Buffer save/load size logging, and a loud WARNING if buffer is empty at iter > 0.
+
+**Files changed:** `mandala_rl/training/trainer.py` (hot-reload method, buffer logging), `scripts/train.py` (passes config path to Trainer).
+
+---
+
+## DEVLOG #133 — 2026-04-02: Revert dirichlet_epsilon 0.25→0.50 to fix dead Province prior (iter 2097)
+
+**Problem:** After DEVLOG #132 lowered epsilon from 0.50→0.25, Province buying collapsed. Buffer analysis of 100K examples confirmed: in 7,382 positions where the bot had 8+ coins and Provinces remained in supply, MCTS gave Province exactly 0.0 visits. The network's Province prior dropped to ~0.0, creating a feedback loop: zero prior → zero visits → zero policy target → zero gradient → network never recovers. At ε=0.25 with 131 actions, Dirichlet noise contributes only ~0.19% to Province — insufficient to overcome a dead prior.
+
+**Root cause:** The epsilon reduction (DEVLOG #132) combined with a trainer restart at iter 2071 (for the temperature_threshold change, DEVLOG #9). The restart disrupted the network's fragile Province signal, and the lower noise couldn't compensate.
+
+**Fix:** `configs/dominion.yaml`: `dirichlet_epsilon: 0.25 → 0.50`. At ε=0.50, Province gets ~0.38% noise — enough for MCTS to occasionally visit and rediscover that Province is valuable. Training restarted at iter 2097 with full 100K buffer preserved.
+
+**Gate:** mcts_province_pct should recover toward 40%+ within 10-20 iterations. If Province visits don't rise above 20% by iter 2110, escalate to explicit Province prior boosting in the network.
+
+**RULE:** Do not lower dirichlet_epsilon below 0.50 until the network Province prior is stable (>10% in buy phase with 8+ coins) for at least 20 consecutive iterations.
+
+**Files changed:** `configs/dominion.yaml` (dirichlet_epsilon: 0.25→0.50).
+
+---
+
 ## DEVLOG #132 — 2026-04-01: Reduce dirichlet_epsilon 0.50→0.25 — shift from exploration to exploitation (iter 2045)
 
 **Trigger:** mcts_province_pct plateaued at 47-49% for 11 consecutive iters (2034-2045) despite Province buying being fully mastered. All 3 Provinces deplete every game (1.5/player), avg_turns=19, coins_wasted=1.79, value_loss=0.336. The high epsilon (set in DEVLOG #125 to discover Province buying) is now the bottleneck: 50% of the root prior is Dirichlet noise, capping Province visit share at ~48% even when the network policy is correct. This adds noise to policy training targets and likely contributes to the ~25% draw rate.
