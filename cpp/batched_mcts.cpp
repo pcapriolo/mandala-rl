@@ -195,7 +195,7 @@ py::list BatchedMCTS::simulate_step() {
             game_->randomize_hidden(*state, rng_);
             int sim_depth = 0;
 
-            while (!node->is_leaf() && !game_->is_terminal(*state) && sim_depth < 100) {
+            while (!node->is_leaf() && !game_->is_terminal(*state) && !is_turn_capped(*state) && sim_depth < 100) {
                 sim_depth++;
                 std::vector<float> valid;
                 game_->get_valid_moves(*state, valid);
@@ -216,7 +216,11 @@ py::list BatchedMCTS::simulate_step() {
                 node->player = state->current_player();
             }
 
-            if (game_->is_terminal(*state)) {
+            if (is_turn_capped(*state)) {
+                // Turn cap hit during simulation — backup VP margin reward
+                float value = turn_cap_reward(*state, state->current_player());
+                node->backup(value);
+            } else if (game_->is_terminal(*state)) {
                 // Terminal: backup immediately with true reward
                 float value = game_->get_reward(*state, state->current_player());
                 node->backup(value);
@@ -227,7 +231,7 @@ py::list BatchedMCTS::simulate_step() {
                 // Q-values. Walk forward until we hit a real decision (2+ valid
                 // actions) or a terminal state.
                 int autoplay_depth = 0;
-                while (!game_->is_terminal(*state) && autoplay_depth < 20) {
+                while (!game_->is_terminal(*state) && !is_turn_capped(*state) && autoplay_depth < 20) {
                     std::vector<float> valid;
                     game_->get_valid_moves(*state, valid);
                     int num_valid = 0;
@@ -244,7 +248,11 @@ py::list BatchedMCTS::simulate_step() {
                     autoplay_depth++;
                 }
 
-                if (game_->is_terminal(*state)) {
+                if (is_turn_capped(*state)) {
+                    // Turn cap hit via forced moves — backup VP margin
+                    float value = turn_cap_reward(*state, state->current_player());
+                    node->backup(value);
+                } else if (game_->is_terminal(*state)) {
                     // Reached terminal via forced moves — backup true reward
                     float value = game_->get_reward(*state, state->current_player());
                     node->backup(value);
@@ -311,8 +319,10 @@ std::vector<int> BatchedMCTS::finish_move() {
             visit_counts[action] = static_cast<float>(child->visit_count);
         }
 
-        // Apply temperature
-        double temp = (g.move_count < temperature_threshold_) ? temperature_ : 0.0;
+        // Apply temperature — use turn_number for Dominion (multi-move turns),
+        // move_count for other games where each move IS a turn. DEVLOG #142.
+        int progress = (game_type_ == "dominion") ? g.state->get_turn_number() : g.move_count;
+        double temp = (progress < temperature_threshold_) ? temperature_ : 0.0;
         std::vector<float> action_probs(num_actions, 0.0f);
 
         // Check if we have any visits at all
@@ -363,7 +373,7 @@ std::vector<int> BatchedMCTS::finish_move() {
         // Epsilon-greedy exploration: blend Big Money prior into policy target.
         // Province-biased when affordable, Gold-biased at $6-7, Silver at $3-5.
         // This bootstraps the prior toward correct buy priorities.
-        if (explore_epsilon_ > 0.0 && g.move_count >= temperature_threshold_) {
+        if (explore_epsilon_ > 0.0 && progress >= temperature_threshold_) {
             std::vector<float> valid;
             game_->get_valid_moves(*g.state, valid);
             float eps = static_cast<float>(explore_epsilon_);
@@ -560,18 +570,13 @@ std::vector<int> BatchedMCTS::finish_move() {
 
         // Check terminal or turn cap exceeded
         bool terminal = game_->is_terminal(*g.state);
-        bool move_cap_hit = false;
-        if (!terminal && max_turns_ > 0 && g.state->get_turn_number() >= max_turns_) {
-            terminal = true;
-            move_cap_hit = true;
-        }
+        bool move_cap_hit = !terminal && is_turn_capped(*g.state);
+        if (move_cap_hit) terminal = true;
         if (terminal) {
             g.score_p0 = game_->get_score(*g.state, 0);
             g.score_p1 = game_->get_score(*g.state, 1);
             if (move_cap_hit) {
-                // get_reward guards on game_over flag; bypass it and score by VP margin
-                float margin = static_cast<float>(g.score_p0 - g.score_p1);
-                g.outcome = std::max(-1.0f, std::min(1.0f, margin / 5.0f));
+                g.outcome = turn_cap_reward(*g.state, 0);  // From player 0's perspective
             } else {
                 g.outcome = game_->get_reward(*g.state, 0);  // From player 0's perspective
             }

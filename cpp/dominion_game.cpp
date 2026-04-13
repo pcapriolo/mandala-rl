@@ -1683,15 +1683,11 @@ float DominionGame::get_reward(const GameState& state_base, int player) const {
 
     // Score-margin reward: /5 for stronger gradient during early training
     // (typical margins are 1-3 VP at current training stage, /30 was too weak)
+    // DEVLOG #142: removed time discount (0.995^turn) — it corrupted MCTS search
+    // values by making late-game Province buys look worse. Turn cap now handles
+    // game length pressure directly.
     float scaled = margin / 5.0f;
-    float reward = std::max(-1.0f, std::min(1.0f, scaled));
-
-    // Per-turn discount: penalizes slow Gardens accumulation vs fast Province wins.
-    // At turn 40 (typical Province game): 0.82x. At turn 120 (Gardens equilibrium): 0.55x.
-    // A +4VP Province win in 40 turns (0.80 * 0.82 = 0.66) beats a +6VP Gardens win
-    // in 120 turns (1.00 * 0.55 = 0.55), incentivizing the bot to end games sooner.
-    float discount = std::pow(0.995f, static_cast<float>(s.turn_number));
-    return reward * discount;
+    return std::max(-1.0f, std::min(1.0f, scaled));
 }
 
 int DominionGame::get_score(const GameState& state_base, int player) const {

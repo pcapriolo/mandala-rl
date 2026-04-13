@@ -4,6 +4,26 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #142 — 2026-04-13: Fix 3 MCTS bugs causing Dominion training drift
+
+**Problem:** Dominion training drifted backward over 260 iterations of Phase 2 (province_supply=3). Provinces per game declined (1.26→1.17), draw rate rose (14%→21%), mcts_province_pct fell (76%→71%). The draw penalty slowed the collapse but didn't prevent it.
+
+**Bug 1 — MCTS turn cap blindness (P0):** MCTS simulations did NOT enforce the max_turns=70 turn cap. All `is_terminal()` checks in `simulate_step()` only checked the `game_over` flag (Province depletion / 3 empty piles). The turn cap was only applied in `finish_move()`. MCTS searched an infinite game while reality capped at 70 turns. MCTS couldn't perceive time pressure — it planned "buy Province later" without knowing "later" doesn't exist past turn 70.
+
+**Bug 2 — Reward time discount corrupts search (P1):** `get_reward()` applied `0.995^turn_number` discount to terminal rewards. This discount was also applied during MCTS simulation backups, making late-game Province buys systematically look worse (turn 40: 0.82x, turn 50: 0.78x). Removed the discount entirely — the turn cap now handles game length pressure directly.
+
+**Bug 3 — Temperature uses move_count not turn_number (P2):** `temperature_threshold=25` used `move_count` (every state transition) rather than `turn_number` (real Dominion turns). A single Dominion turn has ~3-5 moves (play action, end_actions, buy, end_buys), so temperature dropped to 0 around turn 6-8, killing exploration in a 25-turn game. Now uses `turn_number` for Dominion, `move_count` for other games.
+
+**Fixes:**
+- Added `is_turn_capped()` and `turn_cap_reward()` helpers to BatchedMCTS
+- Applied turn cap to all 3 simulation paths (tree traversal, post-terminal, post-autoplay)
+- Removed `0.995^turn_number` discount from `DominionGame::get_reward()`
+- Changed temperature/epsilon progress to use `turn_number` for Dominion
+
+**Files:** `cpp/batched_mcts.h`, `cpp/batched_mcts.cpp`, `cpp/dominion_game.cpp`
+
+---
+
 ## DEVLOG #141 — 2026-04-11: Fresh start — Gold/Silver/1 Province, pure self-play
 
 **Problem:** Province buying plateaued at 1/player with 82% draws despite 30x explore boost and +2.0 bias nudge. Both players buy exactly 1 Province → symmetric VP → zero gradient signal. The explore boost was doing all the work; raw network prior stayed at ~0.5%. No amount of nudging would escape the draw equilibrium with province_supply=3.

@@ -97,4 +97,16 @@ private:
 
     py::array_t<float> tensor_to_numpy(const std::vector<float>& data, int channels) const;
     void add_dirichlet_noise(std::vector<float>& policy);
+
+    // Turn cap check: true if state has exceeded max_turns_ (Dominion time limit)
+    bool is_turn_capped(const GameState& state) const {
+        return max_turns_ > 0 && state.get_turn_number() >= max_turns_;
+    }
+    // Compute reward when turn cap is hit (VP margin, no time discount)
+    float turn_cap_reward(const GameState& state, int player) const {
+        int s0 = game_->get_score(state, 0);
+        int s1 = game_->get_score(state, 1);
+        int margin = (player == 0) ? (s0 - s1) : (s1 - s0);
+        return std::max(-1.0f, std::min(1.0f, margin / 5.0f));
+    }
 };
