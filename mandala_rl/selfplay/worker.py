@@ -57,7 +57,8 @@ class SelfPlayWorker:
         forced_kingdom_cards: list = None,
         disabled_basic_supply: list = None,
         province_supply: int = 8,
-        draw_penalty: float = 0.0
+        draw_penalty: float = 0.0,
+        max_turns: int = 0
     ):
         self.game = game
         self.network = network.to(device)
@@ -80,6 +81,7 @@ class SelfPlayWorker:
         self.disabled_basic_supply = disabled_basic_supply or []
         self.province_supply = province_supply
         self.draw_penalty = draw_penalty
+        self.max_turns = max_turns
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -170,6 +172,7 @@ class SelfPlayWorker:
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
+            max_turns=self.max_turns,
         )
         mgr.init_games(num_games)
 
@@ -235,7 +238,7 @@ class SelfPlayWorker:
                                 on_game_complete=None) -> List[SelfPlayGame]:
         """Play games with current network vs an opponent network.
 
-        Game layout: even game_idx → current=P0, odd → current=P1.
+        Game layout: even game_idx -> current=P0, odd -> current=P1.
         Both players' positions are recorded for training (value targets are
         always correct; diverse policy targets aid exploration).
         """
@@ -258,6 +261,7 @@ class SelfPlayWorker:
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
+            max_turns=self.max_turns,
         )
         mgr.init_games(num_games)
 

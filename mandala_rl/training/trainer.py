@@ -83,6 +83,7 @@ class Trainer:
             disabled_basic_supply=config.get('disabled_basic_supply', []),
             province_supply=config.get('province_supply', 8),
             draw_penalty=config.get('draw_penalty', 0.0),
+            max_turns=config.get('max_turns', 0),
         )
 
         # Log curriculum params at startup to catch silent config drops
@@ -90,7 +91,8 @@ class Trainer:
                       "max_action_cards": config.get("max_action_cards", 10),
                       "disabled_basic_supply": config.get("disabled_basic_supply", []),
                       "big_money_force_rate": config.get("big_money_force_rate", 0.0),
-                      "forced_kingdom_cards": config.get("forced_kingdom_cards", [])}
+                      "forced_kingdom_cards": config.get("forced_kingdom_cards", []),
+                      "max_turns": config.get("max_turns", 0)}
         print(f"[CONFIG] Curriculum params: {curriculum}")
 
         # Optimizer
@@ -205,7 +207,8 @@ class Trainer:
                 changes.append(f"{attr} {old_val} → {new_val}")
         # Also reload top-level keys passed directly to worker
         for top_key, attr in [('big_money_force_rate', 'big_money_force_rate'),
-                               ('draw_penalty', 'draw_penalty')]:
+                               ('draw_penalty', 'draw_penalty'),
+                               ('max_turns', 'max_turns')]:
             new_val = raw.get(top_key)
             if new_val is None:
                 continue

@@ -20,7 +20,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          double big_money_force_rate,
                          std::vector<int> forced_kingdom_cards,
                          std::vector<int> disabled_basic_supply,
-                         int province_supply)
+                         int province_supply,
+                         int max_turns)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
@@ -30,7 +31,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
       action_play_force_rate_(action_play_force_rate),
       big_money_force_rate_(big_money_force_rate),
       forced_kingdom_cards_(forced_kingdom_cards),
-      disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply), rng_(seed)
+      disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply),
+      max_turns_(max_turns), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -43,7 +45,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
-        max_turns_ = 70;   // DEVLOG #127: cut game at economic peak, before Province equalization
+        if (max_turns_ == 0) max_turns_ = 70;  // Default for Dominion if not set via config
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }

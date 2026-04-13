@@ -24,7 +24,8 @@ public:
                 double big_money_force_rate = 0.0,
                 std::vector<int> forced_kingdom_cards = {},
                 std::vector<int> disabled_basic_supply = {},
-                int province_supply = 8);
+                int province_supply = 8,
+                int max_turns = 0);
 
     void init_games(int num_games);
 
@@ -88,9 +89,8 @@ private:
     std::vector<int> forced_kingdom_cards_;
     std::vector<int> disabled_basic_supply_;
     int province_supply_ = 8;
-    std::mt19937 rng_;
-
     int max_turns_ = 0;  // 0 = no limit; when set, caps on get_turn_number() not sub-actions
+    std::mt19937 rng_;
     std::vector<PerGame> games_;
     std::vector<int> active_indices_;  // indices of non-finished games
     std::vector<PendingLeaf> pending_leaves_;
