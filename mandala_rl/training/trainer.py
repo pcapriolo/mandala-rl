@@ -84,6 +84,14 @@ class Trainer:
             province_supply=config.get('province_supply', 8),
         )
 
+        # Log curriculum params at startup to catch silent config drops
+        curriculum = {"province_supply": config.get("province_supply", 8),
+                      "max_action_cards": config.get("max_action_cards", 10),
+                      "disabled_basic_supply": config.get("disabled_basic_supply", []),
+                      "big_money_force_rate": config.get("big_money_force_rate", 0.0),
+                      "forced_kingdom_cards": config.get("forced_kingdom_cards", [])}
+        print(f"[CONFIG] Curriculum params: {curriculum}")
+
         # Optimizer
         self.optimizer = optim.AdamW(
             network.parameters(),
