@@ -45,7 +45,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
-        if (max_turns_ == 0) max_turns_ = 70;  // Default for Dominion if not set via config
+        // max_turns comes from config (dominion.yaml); 0 = no limit
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }

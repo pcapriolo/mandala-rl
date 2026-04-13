@@ -190,6 +190,8 @@ def main():
         'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
         'disabled_basic_supply': config.get('disabled_basic_supply', []),
         'province_supply': config.get('province_supply', 8),
+        'max_turns': config.get('max_turns', 0),
+        'draw_penalty': config.get('draw_penalty', 0.0),
     }
 
     # Create trainer
