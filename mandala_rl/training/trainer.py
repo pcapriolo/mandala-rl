@@ -82,6 +82,7 @@ class Trainer:
             forced_kingdom_cards=config.get('forced_kingdom_cards', []),
             disabled_basic_supply=config.get('disabled_basic_supply', []),
             province_supply=config.get('province_supply', 8),
+            draw_penalty=config.get('draw_penalty', 0.0),
         )
 
         # Log curriculum params at startup to catch silent config drops
@@ -203,7 +204,8 @@ class Trainer:
                 setattr(self.selfplay_worker, attr, new_val)
                 changes.append(f"{attr} {old_val} → {new_val}")
         # Also reload top-level keys passed directly to worker
-        for top_key, attr in [('big_money_force_rate', 'big_money_force_rate')]:
+        for top_key, attr in [('big_money_force_rate', 'big_money_force_rate'),
+                               ('draw_penalty', 'draw_penalty')]:
             new_val = raw.get(top_key)
             if new_val is None:
                 continue
