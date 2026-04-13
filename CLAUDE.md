@@ -123,6 +123,16 @@ python3 serve.py --port 8888 --host 0.0.0.0
 python scripts/create_deploy_checkpoint.py
 ```
 
+## Dominion Configuration (`configs/dominion.yaml`)
+
+Dominion uses a separate config with curriculum learning parameters:
+- **Network**: 280 input channels, 131 actions, 10 res blocks, 128 channels
+- **MCTS**: 800 sims, c_puct 1.5, dirichlet_epsilon 0.50
+- **Curriculum**: `province_supply`, `max_action_cards`, `disabled_basic_supply`, `max_turns`, `draw_penalty`
+- **max_turns**: Turn cap (default 70 for Dominion, 0 = no limit). Configured in YAML, passed through trainer → worker → C++ BatchedMCTS
+- **draw_penalty**: Training-only penalty for draws (e.g. 0.2). Applied to value targets, NOT to MCTS search
+- **Training plan**: `.context/plans/dominion-training-plan.md`
+
 ## Critical Warnings
 
 **Overtraining is the #1 failure mode.** Each iteration generates ~3,000 examples. With a 100K buffer and 1 epoch, each example is seen ~1.3x — safe. At 3 epochs / 50K buffer, the model memorizes the buffer within ~150 iterations → value head saturation → Elo collapse (DEVLOG #19). **Never increase `epochs_per_iteration` or decrease `replay_buffer_size` without understanding the ratio.**

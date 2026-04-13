@@ -81,6 +81,8 @@ province_supply: 3  # Low count = depletes fast, forces decisive games (Stage 1 
 max_action_cards: 0                   # No action cards in kingdom
 forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
 big_money_force_rate: 0.0
+draw_penalty: 0.2              # Training-only: teaches draws are slightly bad (NOT applied in MCTS)
+max_turns: 70                  # Cut games at economic peak, before Province equalization
 
 # Reproducibility
 seed: 42

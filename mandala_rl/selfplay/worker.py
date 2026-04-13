@@ -56,7 +56,9 @@ class SelfPlayWorker:
         big_money_force_rate: float = 0.0,
         forced_kingdom_cards: list = None,
         disabled_basic_supply: list = None,
-        province_supply: int = 8
+        province_supply: int = 8,
+        draw_penalty: float = 0.0,
+        max_turns: int = 0
     ):
         self.game = game
         self.network = network.to(device)
@@ -78,6 +80,8 @@ class SelfPlayWorker:
         self.forced_kingdom_cards = forced_kingdom_cards or []
         self.disabled_basic_supply = disabled_basic_supply or []
         self.province_supply = province_supply
+        self.draw_penalty = draw_penalty
+        self.max_turns = max_turns
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -123,6 +127,10 @@ class SelfPlayWorker:
             # Score margin gave tiny ±0.07 targets (Province = Estate at same VP) → value head blind.
             # Binary outcome: +1 win / -1 loss / 0 draw → strong gradient for Province-buying strategies.
             value = outcome if player == 0 else -outcome
+            # Draw penalty: teach both players that draws are slightly bad,
+            # preventing the "Silver-spam → safe draw" equilibrium (training targets only, not MCTS).
+            if value == 0.0 and self.draw_penalty > 0:
+                value = -self.draw_penalty
 
             # Policy target pruning: zero out actions with <2% visits
             policy = policy.copy()
@@ -164,6 +172,7 @@ class SelfPlayWorker:
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
+            max_turns=self.max_turns,
         )
         mgr.init_games(num_games)
 
@@ -229,7 +238,7 @@ class SelfPlayWorker:
                                 on_game_complete=None) -> List[SelfPlayGame]:
         """Play games with current network vs an opponent network.
 
-        Game layout: even game_idx → current=P0, odd → current=P1.
+        Game layout: even game_idx -> current=P0, odd -> current=P1.
         Both players' positions are recorded for training (value targets are
         always correct; diverse policy targets aid exploration).
         """
@@ -252,6 +261,7 @@ class SelfPlayWorker:
             forced_kingdom_cards=self.forced_kingdom_cards,
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
+            max_turns=self.max_turns,
         )
         mgr.init_games(num_games)
 
