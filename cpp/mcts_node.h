@@ -14,6 +14,7 @@ public:
     double prior;
     int virtual_losses = 0;  // In-flight evaluations through this node
     int availability_count = 0;  // ISMCTS: times this action was legal when parent visited
+    int player = -1;  // Player who acts at this node (-1 = unset)
 
     MCTSNode(double prior, MCTSNode* parent = nullptr);
 

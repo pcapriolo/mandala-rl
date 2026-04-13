@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dominion - Training Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+        .header { background: #16213e; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.5em; color: #e94560; }
+        .header a { color: #888; text-decoration: none; font-size: 0.9em; }
+        .header a:hover { color: #e94560; }
+
+        .stats-bar { display: flex; gap: 20px; padding: 15px 20px; background: #0f3460; flex-wrap: wrap; }
+        .stat { text-align: center; min-width: 100px; }
+        .stat .label { font-size: 0.75em; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat .value { font-size: 1.4em; font-weight: bold; color: #f1c40f; }
+        .stat .value.ok { color: #27ae60; }
+        .stat .value.warn { color: #e67e22; }
+        .stat .value.crit { color: #e74c3c; }
+
+        .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; }
+        .chart-card { background: #16213e; border-radius: 12px; padding: 20px; }
+        .chart-card h2 { font-size: 1em; color: #e94560; margin-bottom: 12px; }
+        .chart-card canvas { width: 100% !important; }
+
+        .full-width { grid-column: 1 / -1; }
+
+        .table-card { background: #16213e; border-radius: 12px; padding: 20px; margin: 0 20px 20px; }
+        .table-card h2 { font-size: 1em; color: #e94560; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        th { text-align: left; padding: 8px 10px; background: #0f3460; color: #888; font-weight: 600; text-transform: uppercase; font-size: 0.75em; letter-spacing: 0.5px; }
+        td { padding: 8px 10px; border-bottom: 1px solid #222; }
+        tr:hover td { background: #1a3a6e; }
+
+        @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+    <div class="header">
+        <h1>Dominion Training</h1>
+        <span style="color: #666; font-size: 0.85em;"><span id="live-status"></span> &mdash; <span id="last-updated"></span></span>
+        <a href="/">All Games</a>
+    </div>
+
+    <div class="stats-bar" id="stats-bar">
+        <div class="stat"><div class="label">Iteration</div><div class="value" id="s-iter">--</div></div>
+        <div class="stat"><div class="label">Total Games</div><div class="value" id="s-games">--</div></div>
+        <div class="stat"><div class="label">Policy Loss</div><div class="value" id="s-policy">--</div></div>
+        <div class="stat"><div class="label">Avg Provinces</div><div class="value" id="s-provinces">--</div></div>
+        <div class="stat"><div class="label">Avg Game Len</div><div class="value" id="s-len">--</div></div>
+        <div class="stat"><div class="label">Draw Rate</div><div class="value" id="s-draws">--</div></div>
+        <div class="stat"><div class="label">$/Buy Wasted</div><div class="value" id="s-waste">--</div></div>
+        <div class="stat"><div class="label">Health</div><div class="value ok" id="s-health">--</div></div>
+    </div>
+
+    <div class="charts">
+        <div class="chart-card">
+            <h2>Loss Curves</h2>
+            <canvas id="chart-loss"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Game Quality</h2>
+            <canvas id="chart-quality"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Buying Behavior</h2>
+            <canvas id="chart-buys"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Game Length & Turns</h2>
+            <canvas id="chart-length"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Buy Curve (Latest Iteration)</h2>
+            <canvas id="chart-buycurve"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Buy Timing Over Training</h2>
+            <canvas id="chart-buytiming"></canvas>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <h2>Per-Iteration Details</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Iter</th>
+                    <th>Policy</th>
+                    <th>Value</th>
+                    <th>Belief</th>
+                    <th>Score L</th>
+                    <th>Total Loss</th>
+                    <th>Score</th>
+                    <th>Prov</th>
+                    <th>Duchy</th>
+                    <th>Estate</th>
+                    <th>Copper</th>
+                    <th>Silver</th>
+                    <th>Gold</th>
+                    <th>Smithy</th>
+                    <th>Gardens</th>
+                    <th>Market</th>
+                    <th>Curse</th>
+                    <th>Total</th>
+                    <th>Waste</th>
+                    <th>Len</th>
+                    <th>Turns</th>
+                    <th>Draw%</th>
+                    <th>MCTS Prov%</th>
+                </tr>
+            </thead>
+            <tbody id="iter-table"></tbody>
+        </table>
+    </div>
+
+<script>
+const API = '{{ api_base }}';
+let lossChart, qualityChart, buysChart, lengthChart, buyCurveChart, buyTimingChart;
+
+let iterData = []; // store for tooltip lookups
+
+const chartOpts = (yLabel) => ({
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+    scales: {
+        x: { title: { display: true, text: 'Iteration', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } },
+        y: { title: { display: true, text: yLabel, color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
+    }
+});
+
+const buysChartOpts = () => ({
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+        legend: { labels: { color: '#888', font: { size: 11 } } },
+        tooltip: {
+            callbacks: {
+                title: (items) => items.length ? `Iteration ${items[0].label}` : '',
+                afterBody: (items) => {
+                    if (!items.length) return '';
+                    const idx = items[0].dataIndex;
+                    const d = iterData[idx];
+                    if (!d) return '';
+                    const tb = d.top_buys || {};
+                    const silver = d.avg_silver ?? d.avg_treasures ?? 0;
+                    const gold = d.avg_gold ?? 0;
+                    const lines = [
+                        '',
+                        '── Buy Breakdown ──',
+                        `Provinces:    ${(d.avg_provinces||0).toFixed(2)}`,
+                        `Duchies:      ${(d.avg_duchies||0).toFixed(2)}`,
+                        `Estates:      ${(d.avg_estates||0).toFixed(2)}`,
+                        `Copper:       ${(d.avg_copper||0).toFixed(2)}`,
+                        `Silver:       ${silver.toFixed(2)}${d.avg_silver == null ? ' *' : ''}`,
+                        `Gold:         ${gold.toFixed(2)}`,
+                        `Smithy:       ${(tb.Smithy||0).toFixed(2)}`,
+                        `Gardens:      ${(tb.Gardens||0).toFixed(2)}`,
+                        `Market:       ${(tb.Market||0).toFixed(2)}`,
+                        `Curses:       ${(d.avg_curses||0).toFixed(2)}`,
+                        `────────────`,
+                        `Total Buys:   ${d.avg_buys.toFixed(2)}`,
+                        ...(d.avg_silver == null ? ['', '* Silver = Ag+Au combined (old data)'] : []),
+                    ];
+                    return lines.join('\n');
+                },
+                label: () => null,  // hide per-dataset lines, afterBody has everything
+            },
+            bodyFont: { family: 'monospace', size: 12 },
+            footerFont: { family: 'monospace', size: 12 },
+        }
+    },
+    scales: {
+        x: { title: { display: true, text: 'Iteration', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } },
+        y: { title: { display: true, text: 'Count', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
+    }
+});
+
+function makeDataset(label, color, data) {
+    return { label, borderColor: color, backgroundColor: color + '33', data, tension: 0.3, pointRadius: 3, fill: false };
+}
+
+function getHiddenState(chart) {
+    const state = {};
+    if (chart.data.datasets) {
+        chart.data.datasets.forEach((ds, i) => {
+            if (chart.getDatasetMeta(i).hidden) state[ds.label] = true;
+        });
+    }
+    return state;
+}
+
+function updateChart(chart, labels, datasets) {
+    const state = getHiddenState(chart);
+    chart.data.labels = labels;
+    chart.data.datasets = datasets;
+    datasets.forEach((ds, i) => {
+        if (state[ds.label]) chart.getDatasetMeta(i).hidden = true;
+    });
+    chart.update();
+}
+
+function initCharts() {
+    lossChart = new Chart(document.getElementById('chart-loss'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Loss')
+    });
+    qualityChart = new Chart(document.getElementById('chart-quality'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Value')
+    });
+    buysChart = new Chart(document.getElementById('chart-buys'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: buysChartOpts()
+    });
+    lengthChart = new Chart(document.getElementById('chart-length'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Moves / Turns')
+    });
+    buyCurveChart = new Chart(document.getElementById('chart-buycurve'), {
+        type: 'bar', data: { labels: [], datasets: [] }, options: {
+            responsive: true,
+            plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+            scales: {
+                x: { stacked: true, ticks: { color: '#666' }, grid: { color: '#222' } },
+                y: { stacked: true, title: { display: true, text: 'Avg Buys', color: '#888' }, ticks: { color: '#666' }, grid: { color: '#222' } }
+            }
+        }
+    });
+    buyTimingChart = new Chart(document.getElementById('chart-buytiming'), {
+        type: 'line', data: { labels: [], datasets: [] }, options: chartOpts('Avg Turn Bought')
+    });
+}
+
+async function refresh() {
+    const res = await fetch(`${API}/api/training`);
+    const data = await res.json();
+    const iters = data.iterations || [];
+    if (!iters.length) return;
+
+    const labels = iters.map(d => d.iteration);
+    const latest = iters[iters.length - 1];
+    iterData = iters;
+
+    // Last updated
+    if (data.last_updated) {
+        const ago = Math.floor(Date.now() / 1000 - data.last_updated);
+        const mins = Math.floor(ago / 60);
+        const hrs = Math.floor(mins / 60);
+        const label = hrs > 0 ? `${hrs}h ${mins % 60}m ago` : mins > 0 ? `${mins}m ago` : 'just now';
+        document.getElementById('last-updated').textContent = `updated ${label}`;
+    }
+
+    // Live progress from heartbeat
+    const hb = data.heartbeat || {};
+    const phase = hb.phase === 'selfplay' ? 'Self-play' : hb.phase === 'training' ? 'Training' : hb.phase === 'checkpoint' ? 'Saving' : (hb.phase || 'idle');
+    document.getElementById('live-status').textContent = `Iter ${hb.iteration || '?'} ${phase}: ${hb.detail || ''}`;
+
+    // Stats bar
+    document.getElementById('s-iter').textContent = latest.iteration;
+    document.getElementById('s-games').textContent = (latest.iteration * 100).toLocaleString();
+    document.getElementById('s-policy').textContent = latest.policy.toFixed(4);
+    document.getElementById('s-provinces').textContent = latest.avg_provinces.toFixed(2);
+    document.getElementById('s-len').textContent = latest.avg_len.toFixed(0);
+    document.getElementById('s-draws').textContent = (latest.draw_rate * 100).toFixed(0) + '%';
+    document.getElementById('s-waste').textContent = (latest.avg_coins_wasted != null) ? latest.avg_coins_wasted.toFixed(2) : '--';
+
+    const health = latest.avg_len >= 500 ? (latest.iteration < 30 ? 'EARLY' : 'STALLED') : 'LEARNING';
+    const el = document.getElementById('s-health');
+    el.textContent = health;
+    el.className = 'value ' + (health === 'STALLED' ? 'warn' : health === 'EARLY' ? 'ok' : 'ok');
+
+    // Loss chart
+    updateChart(lossChart, labels, [
+        makeDataset('Policy', '#e94560', iters.map(d => d.policy)),
+        makeDataset('Value', '#3498db', iters.map(d => d.value)),
+        makeDataset('Total', '#f1c40f', iters.map(d => d.total)),
+    ]);
+
+    // Quality chart
+    updateChart(qualityChart, labels, [
+        makeDataset('Avg Score', '#27ae60', iters.map(d => d.avg_score)),
+        makeDataset('P0 Win Rate', '#e67e22', iters.map(d => d.p0_wr)),
+    ]);
+
+    // Buys chart
+    updateChart(buysChart, labels, [
+        makeDataset('Total Buys', '#9b59b6', iters.map(d => d.avg_buys)),
+        makeDataset('Provinces', '#e74c3c', iters.map(d => d.avg_provinces)),
+        makeDataset('Duchies', '#e67e22', iters.map(d => d.avg_duchies || 0)),
+        makeDataset('Estates', '#95a5a6', iters.map(d => d.avg_estates || 0)),
+        makeDataset('Copper', '#cd7f32', iters.map(d => d.avg_copper || 0)),
+        makeDataset('Silver', '#c0c0c0', iters.map(d => d.avg_silver ?? d.avg_treasures ?? 0)),
+        makeDataset('Gold', '#ffd700', iters.map(d => d.avg_gold ?? 0)),
+        makeDataset('Smithy', '#2ecc71', iters.map(d => (d.top_buys || {}).Smithy || 0)),
+        makeDataset('Gardens', '#27ae60', iters.map(d => (d.top_buys || {}).Gardens || 0)),
+        makeDataset('Market', '#1abc9c', iters.map(d => (d.top_buys || {}).Market || 0)),
+        makeDataset('Curses', '#8e44ad', iters.map(d => d.avg_curses || 0)),
+        makeDataset('$/Wasted', '#e74c3c', iters.map(d => d.avg_coins_wasted || 0)),
+    ]);
+
+    // Length chart
+    updateChart(lengthChart, labels, [
+        makeDataset('Game Length (moves)', '#3498db', iters.map(d => d.avg_len)),
+        makeDataset('Avg Turns', '#1abc9c', iters.map(d => d.avg_turns)),
+    ]);
+
+    // Buy Curve (stacked bar for latest iteration)
+    const CURVE_CARDS = ['Copper','Silver','Gold','Estate','Duchy','Province','Curse','Smithy','Gardens','Market'];
+    const CURVE_COLORS = ['#cd7f32','#c0c0c0','#ffd700','#95a5a6','#e67e22','#e74c3c','#8e44ad','#2ecc71','#27ae60','#1abc9c'];
+    const curve = latest.buy_curve;
+    if (curve && curve.length >= 5) {
+        const bucketLabels = curve.map((_, i) => `T${i*5+1}-${(i+1)*5}`);
+        const curveState = getHiddenState(buyCurveChart);
+        buyCurveChart.data.labels = bucketLabels;
+        buyCurveChart.data.datasets = CURVE_CARDS.map((card, i) => ({
+            label: card,
+            data: curve.map(bucket => bucket[card] || 0),
+            backgroundColor: CURVE_COLORS[i],
+        }));
+        buyCurveChart.data.datasets.forEach((ds, i) => {
+            if (curveState[ds.label]) buyCurveChart.getDatasetMeta(i).hidden = true;
+        });
+        buyCurveChart.update();
+    }
+
+    // Buy Timing over training (line chart)
+    const timingCards = ['Province','Gold','Silver','Smithy','Gardens','Market'];
+    const timingColors = ['#e74c3c','#ffd700','#c0c0c0','#2ecc71','#27ae60','#1abc9c'];
+    const timingIters = iters.filter(d => d.buy_timing);
+    if (timingIters.length) {
+        const timingLabels = timingIters.map(d => d.iteration);
+        updateChart(buyTimingChart, timingLabels, timingCards.map((card, i) => makeDataset(
+            card, timingColors[i], timingIters.map(d => d.buy_timing[card] || null)
+        )));
+    }
+
+    // Table
+    const tbody = document.getElementById('iter-table');
+    tbody.innerHTML = iters.slice().reverse().map(d => {
+        const tb = d.top_buys || {};
+        const prov = d.avg_provinces || 0;
+        const duchy = d.avg_duchies || 0;
+        const estate = d.avg_estates || 0;
+        const copper = d.avg_copper || 0;
+        const silver = d.avg_silver ?? d.avg_treasures ?? 0;
+        const gold = d.avg_gold ?? 0;
+        const smithy = tb.Smithy || 0;
+        const gardens = tb.Gardens || 0;
+        const market = tb.Market || 0;
+        const curse = d.avg_curses || 0;
+        return `<tr>
+        <td>${d.iteration}</td>
+        <td>${d.policy.toFixed(4)}</td>
+        <td>${(d.value || 0).toFixed(4)}</td>
+        <td>${(d.belief || 0).toFixed(4)}</td>
+        <td>${(d.score || 0).toFixed(4)}</td>
+        <td>${d.total.toFixed(4)}</td>
+        <td>${d.avg_score.toFixed(1)}</td>
+        <td>${prov.toFixed(2)}</td>
+        <td>${duchy.toFixed(2)}</td>
+        <td>${estate.toFixed(2)}</td>
+        <td>${copper.toFixed(2)}</td>
+        <td>${silver.toFixed(2)}</td>
+        <td>${gold.toFixed(2)}</td>
+        <td>${smithy.toFixed(2)}</td>
+        <td>${gardens.toFixed(2)}</td>
+        <td>${market.toFixed(2)}</td>
+        <td>${curse.toFixed(2)}</td>
+        <td>${d.avg_buys.toFixed(1)}</td>
+        <td>${(d.avg_coins_wasted || 0).toFixed(2)}</td>
+        <td>${d.avg_len.toFixed(0)}</td>
+        <td>${d.avg_turns.toFixed(1)}</td>
+        <td>${(d.draw_rate * 100).toFixed(0)}%</td>
+        <td>${(d.mcts_province_pct || 0).toFixed(1)}%</td>
+    </tr>`}).join('');
+}
+
+initCharts();
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

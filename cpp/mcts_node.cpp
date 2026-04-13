@@ -17,7 +17,11 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(double c_puct,
 
             int eff_visits = child->visit_count + child->virtual_losses;
             double eff_value = child->total_value - static_cast<double>(child->virtual_losses);
-            double q_value = eff_visits == 0 ? 0.0 : -(eff_value / eff_visits);
+            // Only negate Q when child is a different player (opponent's node).
+            // Same-player children: positive value = good for both parent and child.
+            bool same_player = (child->player >= 0 && child->player == this->player);
+            double q_value = eff_visits == 0 ? 0.0
+                : (same_player ? (eff_value / eff_visits) : -(eff_value / eff_visits));
             double u_value = c_puct * child->prior
                 * std::sqrt(static_cast<double>(child->availability_count))
                 / (1.0 + eff_visits);
@@ -40,7 +44,9 @@ std::pair<int, MCTSNode*> MCTSNode::select_child(double c_puct,
         for (auto& [action, child] : children) {
             int eff_visits = child->visit_count + child->virtual_losses;
             double eff_value = child->total_value - static_cast<double>(child->virtual_losses);
-            double q_value = eff_visits == 0 ? 0.0 : -(eff_value / eff_visits);
+            bool same_player = (child->player >= 0 && child->player == this->player);
+            double q_value = eff_visits == 0 ? 0.0
+                : (same_player ? (eff_value / eff_visits) : -(eff_value / eff_visits));
             double u_value = c_puct * child->prior * sqrt_total / (1.0 + eff_visits);
             double score = q_value + u_value;
 
@@ -93,7 +99,14 @@ void MCTSNode::backup(double value) {
     while (node != nullptr) {
         node->visit_count++;
         node->total_value += value;
-        value = -value;
+        // Only negate when player changes between child and parent.
+        // Same-player consecutive moves (e.g. Dominion ACTION→BUY→BUY)
+        // must NOT negate, or winning looks like losing.
+        if (node->parent != nullptr
+            && node->parent->player >= 0 && node->player >= 0
+            && node->parent->player != node->player) {
+            value = -value;
+        }
         node = node->parent;
     }
 }
