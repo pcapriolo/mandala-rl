@@ -7,8 +7,8 @@ network:
   num_res_blocks: 10
   channels: 128
   belief_size: 31
-  phase_aware_policy: true   # Route policy through phase-specific sub-heads
-  factored_policy: true      # Decompose policy into control + type + card logits
+  phase_aware_policy: false  # Not yet trained — checkpoint uses simple fc_policy head
+  factored_policy: false     # Not yet trained — checkpoint uses simple fc_policy head
 
 # MCTS Parameters
 mcts:
