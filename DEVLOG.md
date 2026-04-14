@@ -4,6 +4,19 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #142 — 2026-04-14: Sync config to Phase 0a reality + create curriculum plan
+
+**Context:** Fresh start (DEVLOG #141) running well at iter 869. Win rate trending up: 47.6% -> 50.0% -> 54.7%. Training is healthy.
+
+**Changes:**
+1. **Config synced to match RunPod reality:** `province_supply: 3` -> `1`, `opponent_diversity_ratio: 0.7` -> `0.0`, cleared stale opponent iter bounds. The repo config was out of date with what's actually running since the fresh start.
+2. **Created `.context/plans/dominion-training-plan.md`:** 5-phase curriculum from single Province (current) through full Dominion. Defines graduation criteria for each phase with specific metric thresholds. Phase 0a -> 0b (supply 3) -> Phase 1 (full VP cards) -> Phase 2 (action cards) -> Phase 3 (full game).
+3. **Graduation gate for Phase 0a:** Win rate >52%, Province/player ~0.5, game length <30, draw rate <5%, policy loss <0.10 — all for 20 consecutive iterations. Estimated ~iter 1000-1200.
+
+**No training restart needed.** Config changes are documentation-only (RunPod already runs with these values).
+
+---
+
 ## DEVLOG #141 — 2026-04-11: Fresh start — Gold/Silver/1 Province, pure self-play
 
 **Problem:** Province buying plateaued at 1/player with 82% draws despite 30x explore boost and +2.0 bias nudge. Both players buy exactly 1 Province → symmetric VP → zero gradient signal. The explore boost was doing all the work; raw network prior stayed at ~0.5%. No amount of nudging would escape the draw equilibrium with province_supply=3.
