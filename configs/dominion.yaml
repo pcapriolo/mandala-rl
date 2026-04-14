@@ -28,9 +28,9 @@ selfplay:
   temperature: 1.0
   temperature_threshold: 25  # Stochastic through Province-buying window (turns 12-18)
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
-  opponent_diversity_ratio: 0.7  # DEVLOG #114: 70% vs healthy VP-buying opponents to break Province-race equilibrium
-  opponent_iter_min: 779  # DEVLOG #122: lock to pre-restart healthy Phase1 opponents only
-  opponent_iter_max: 796  # DEVLOG #122: exclude degraded iters 797-800 from opponent pool
+  opponent_diversity_ratio: 0.0  # DEVLOG #141: pure self-play for fresh Phase 0 start
+  opponent_iter_min: 0
+  opponent_iter_max: 0
 
 
 # Training Parameters
@@ -74,15 +74,15 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 0: Silver/Gold/Province ONLY
-# !! DO NOT CHANGE THIS WITHOUT CEO APPROVAL — see DEVLOG #122+ for Phase reversion incidents !!
-disabled_basic_supply: [0, 3, 4, 6, 16]  # Phase 0: Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 3  # Low count = depletes fast, forces decisive games (Stage 1 curriculum)
-max_action_cards: 0                   # No action cards in kingdom
-forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
+# Curriculum Learning — Phase 0a: Silver/Gold/Province ONLY, supply=1
+# See .context/plans/dominion-training-plan.md for full curriculum
+disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
+province_supply: 1  # DEVLOG #141: single Province = first buyer wins decisively, no draws
+max_action_cards: 0
+forced_kingdom_cards: []
 big_money_force_rate: 0.0
-draw_penalty: 0.2              # Training-only: teaches draws are slightly bad (NOT applied in MCTS)
-max_turns: 70                  # Cut games at economic peak, before Province equalization
+draw_penalty: 0.2
+max_turns: 70
 
 # Reproducibility
 seed: 42
