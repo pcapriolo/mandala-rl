@@ -33,8 +33,8 @@ These are non-negotiable. Check before every response:
 ## Project Links
 
 - **[DEVLOG.md](DEVLOG.md)** — Chronological technical changelog. Every significant change is logged here.
-- **[Dominion Training Plan](.context/plans/dominion-training-plan.md)** — Current plan for fixing the draw-trap collapse via 2-phase curriculum.
-- **[CEO Inbox](.context/ceo_inbox.md)** — Communication log between CEO and agents. Check at session start.
+- **[Dominion Training Plan](docs/plans/dominion-training-plan.md)** — Phased curriculum for Dominion training. Check current phase before making changes.
+- **[CEO Inbox](docs/ceo_inbox.md)** — Communication log between CEO and agents. Check at session start.
 - **[Config: `configs/default.yaml`](configs/default.yaml)** — All hyperparameters. Read this, don't guess.
 - **[Config: `configs/dominion.yaml`](configs/dominion.yaml)** — Dominion-specific config.
 
@@ -46,7 +46,7 @@ AlphaZero-style reinforcement learning system for training game-playing bots thr
 
 **Lost Cities** — 2-player card game, 60 cards, expeditions with ascending-value constraints. Action space: 96 moves. Input: 86 tensor channels.
 
-**Dominion** — Deck-building card game. Simplified supply (Gold/Silver/Province). Currently training with province_supply=1 curriculum.
+**Dominion** — Deck-building card game. Simplified supply (Gold/Silver/Province). Currently training with province_supply=3 curriculum (Phase 0).
 
 ## Key Commands
 
@@ -131,7 +131,7 @@ Dominion uses a separate config with curriculum learning parameters:
 - **Curriculum**: `province_supply`, `max_action_cards`, `disabled_basic_supply`, `max_turns`, `draw_penalty`
 - **max_turns**: Turn cap (default 70 for Dominion, 0 = no limit). Configured in YAML, passed through trainer → worker → C++ BatchedMCTS
 - **draw_penalty**: Training-only penalty for draws (e.g. 0.2). Applied to value targets, NOT to MCTS search
-- **Training plan**: `.context/plans/dominion-training-plan.md`
+- **Training plan**: `docs/plans/dominion-training-plan.md`
 
 ## Critical Warnings
 
