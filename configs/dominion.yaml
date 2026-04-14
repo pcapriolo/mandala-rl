@@ -26,7 +26,7 @@ selfplay:
   parallel_games: 256
   leaves_per_game: 8
   temperature: 1.0
-  temperature_threshold: 25  # Stochastic through Province-buying window (turns 12-18)
+  temperature_threshold: 15  # Reduced from 25 — endgame Province decisions (turns 15-25) now deterministic
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
   opponent_diversity_ratio: 0.0  # DEVLOG #141: pure self-play for fresh Phase 0 start
   opponent_iter_min: 0
@@ -46,7 +46,7 @@ training:
   min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
   checkpoint_frequency: 1
   checkpoint_every_n_games: 0  # Disabled — was filling /workspace (50MB × 5/iter)
-  entropy_weight: 0.15        # Higher for fresh training — encourages exploration of buy space
+  entropy_weight: 0.05        # Reduced from 0.15 at iter 1019 — 1000+ iters of exploration is sufficient
   policy_weight: 3.0          # Start 3x, decays to 1.0 over 256 iters
 
 # Evaluation Parameters
@@ -77,7 +77,7 @@ save_replay_frequency: 1
 # Curriculum Learning — Phase 0a: Silver/Gold/Province ONLY, supply=1
 # See .context/plans/dominion-training-plan.md for full curriculum
 disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 1  # DEVLOG #141: single Province = first buyer wins decisively, no draws
+province_supply: 3  # Synced to RunPod reality — supply=1 was never deployed, RunPod runs supply=3
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0

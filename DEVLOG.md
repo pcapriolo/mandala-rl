@@ -4,6 +4,34 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #143 — 2026-04-14: Break Phase 0 plateau at iter 1019 — entropy + temperature reduction
+
+**Problem:** Training plateaued for 200+ iterations (iter 800-1019). Key graduation metrics flat:
+- MCTS province buy %: stuck at 35-38% (target >90%)
+- Coins wasted: stuck at 3.5-4.1 (target <2)
+- Draw rate: 7-13% (target <5%)
+- Policy loss: 0.31-0.39 (target <0.10)
+
+The model explored broadly for 1000+ iterations but can't converge on Province-buying as the dominant strategy.
+
+**Root cause:** Two config values are keeping the policy too diffuse:
+1. `entropy_weight: 0.15` — after 1000+ iterations, this forces too much exploration. The policy never sharpens enough for MCTS to concentrate visits on Province.
+2. `temperature_threshold: 25` — games average 25 turns, so nearly ALL moves are sampled stochastically. Province buying decisions (turns 15-25) are randomized, adding noise to training signal.
+
+**Also fixed:** `province_supply: 1` in repo config was wrong — RunPod has been running `province_supply: 3` since the fresh start. avg_provinces=1.36/player confirms supply=3 (impossible with supply=1, max would be 0.5).
+
+**Changes:**
+- `entropy_weight: 0.15 → 0.05` — let policy sharpen
+- `temperature_threshold: 25 → 15` — endgame Province decisions now deterministic
+- `province_supply: 1 → 3` — sync repo to RunPod reality
+- Training plan status updated (iter 869 → 1019, metrics reflect plateau)
+
+**Expected:** Within 50-100 iterations, MCTS province buy % should start climbing above 50%. Policy loss should begin declining. If no improvement by iter 1120, next intervention: bring forward LR milestone from 1500 to 1100.
+
+**Rollback:** Revert entropy_weight to 0.15, temperature_threshold to 25. No risk of collapse — these are conservative tightening changes.
+
+---
+
 ## DEVLOG #142 — 2026-04-14: Sync config to Phase 0a reality + create curriculum plan
 
 **Context:** Fresh start (DEVLOG #141) running well at iter 869. Win rate trending up: 47.6% -> 50.0% -> 54.7%. Training is healthy.

@@ -5,13 +5,14 @@
 | Field | Value |
 |-------|-------|
 | **Phase** | 0 — Gold/Silver/Province |
-| **Iteration** | ~869 |
+| **Iteration** | ~1019 |
 | **Province Supply** | 3 |
-| **Key Metrics** | Win rate trending up (47.6% -> 50.0% -> 54.7%) |
+| **Key Metrics** | Plateaued — MCTS prov% ~36%, waste ~3.7, draw rate ~8% |
 | **Last Updated** | 2026-04-14 |
 
 ### Notes
-- 2026-04-14: Phase 0 training healthy. Win rate trending up. Graduation target: waste <2 coins + MCTS province buy % >90%.
+- 2026-04-14 (iter 1019): Training plateaued. Metrics flat for 200+ iterations. Config changes applied: entropy_weight 0.15→0.05, temperature_threshold 25→15. Goal: sharpen policy on Province buying to break plateau.
+- 2026-04-14 (iter 869): Phase 0 training healthy. Win rate trending up. Graduation target: waste <2 coins + MCTS province buy % >90%.
 
 ---
 
