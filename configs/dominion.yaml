@@ -76,7 +76,7 @@ save_replay_frequency: 1
 
 # Curriculum Learning — Phase 0: Silver/Gold/Province ONLY
 # !! DO NOT CHANGE THIS WITHOUT CEO APPROVAL — see DEVLOG #122+ for Phase reversion incidents !!
-disabled_basic_supply: [0, 3, 6, 16]  # Phase 0+Duchy: Copper(0), Estate(3), Curse(6), Gardens(16) DISABLED
+disabled_basic_supply: [0, 3, 4, 6, 16]  # Phase 0: Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
 province_supply: 3  # Low count = depletes fast, forces decisive games (Stage 1 curriculum)
 max_action_cards: 0                   # No action cards in kingdom
 forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
