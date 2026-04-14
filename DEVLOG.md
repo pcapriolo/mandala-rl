@@ -4,6 +4,20 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #143 — 2026-04-13: Fix max_turns/draw_penalty config wiring + remove C++ hardcoded default
+
+**Problem:** Training startup logged `max_turns: 0` despite `dominion.yaml` having `max_turns: 70`. Hot-reload corrected it to 70 after the first iteration, but the first iteration ran without a turn cap. Same issue affected `draw_penalty`.
+
+**Root cause:** `scripts/train.py` builds a `training_config` dict by pulling specific keys from YAML sections. `province_supply`, `max_action_cards`, etc. were included, but `max_turns` and `draw_penalty` (both top-level YAML keys) were never added. So `trainer.py`'s `config.get('max_turns', 0)` returned 0 — the key didn't exist. Hot-reload worked because it reads the full YAML directly.
+
+**Also fixed:** Removed hardcoded `if (max_turns_ == 0) max_turns_ = 70;` in `batched_mcts.cpp`. This masked the config bug — even when Python sent 0, C++ defaulted to 70 for Dominion. Config is now the single source of truth.
+
+**Files:** `scripts/train.py` (added max_turns + draw_penalty to training_config), `cpp/batched_mcts.cpp` (removed hardcoded default)
+
+**Verified:** Restart at iter 456 shows `[CONFIG] Curriculum params: {..., 'max_turns': 70}` from first line.
+
+---
+
 ## DEVLOG #142 — 2026-04-13: Fix 3 MCTS bugs causing Dominion training drift
 
 **Problem:** Dominion training drifted backward over 260 iterations of Phase 2 (province_supply=3). Provinces per game declined (1.26→1.17), draw rate rose (14%→21%), mcts_province_pct fell (76%→71%). The draw penalty slowed the collapse but didn't prevent it.
