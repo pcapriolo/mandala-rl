@@ -28,9 +28,9 @@ selfplay:
   temperature: 1.0
   temperature_threshold: 25  # Stochastic through Province-buying window (turns 12-18)
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
-  opponent_diversity_ratio: 0.0  # DEVLOG #141: pure self-play for fresh Phase 0 start
-  opponent_iter_min: 0
-  opponent_iter_max: 0
+  opponent_diversity_ratio: 0.7  # 70% games vs healthy VP-buying opponents
+  opponent_iter_min: 779  # Pre-restart healthy Phase 0 opponents only
+  opponent_iter_max: 796  # Exclude degraded iters 797+
 
 
 # Training Parameters
@@ -74,10 +74,10 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 0a: Silver/Gold/Province ONLY, supply=1
-# See .context/plans/dominion-training-plan.md for full curriculum
+# Curriculum Learning — Phase 0: Silver/Gold/Province ONLY, supply=3
+# See docs/plans/dominion-training-plan.md for full curriculum
 disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 1  # DEVLOG #141: single Province = first buyer wins decisively, no draws
+province_supply: 3  # Low count = depletes fast, forces decisive games
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0

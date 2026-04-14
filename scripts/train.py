@@ -7,6 +7,7 @@ Usage:
     python scripts/train.py --config configs/default.yaml --resume data/checkpoints/model_latest.pt
 """
 import argparse
+import hashlib
 import yaml
 import torch
 import numpy as np
@@ -48,7 +49,8 @@ def main():
 
     # Load config
     config = load_config(args.config)
-    print(f"Loaded config from {args.config}")
+    config_hash = hashlib.sha256(yaml.dump(config, sort_keys=True).encode()).hexdigest()[:12]
+    print(f"Loaded config from {args.config} (hash: {config_hash})")
 
     # Set random seed
     seed = config.get('seed', 42)

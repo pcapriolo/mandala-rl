@@ -4,6 +4,27 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #143 — 2026-04-14: Config divergence cleanup + sync tooling
+
+**Problem:** RunPod config diverged from repo in multiple ways. Agents edited configs in both places independently with no sync mechanism. Key divergences discovered:
+- `phase_aware_policy`/`factored_policy` set to `true` on RunPod disk but running process uses `false` (checkpoint is flat fc_policy). A pod restart would have created an architecture mismatch and crashed.
+- `opponent_diversity_ratio` 0.0 in repo vs 0.7 on RunPod (completely different training regime)
+- `opponent_iter_min/max` 0/0 in repo vs 779/796 on RunPod
+- `province_supply` 1 in repo vs 3 on RunPod
+
+**Root cause:** No GitHub → RunPod config sync. Data flows RunPod → local → GitHub, but config changes in the repo never reach RunPod.
+
+**Fix:**
+1. Synced repo config to match RunPod running reality (4 params)
+2. Fixed RunPod disk config (policy flags `true` → `false` to match running process)
+3. Created `scripts/sync_config_to_runpod.sh` — manual push with diff preview + restart-required warnings
+4. Added config drift detection to `sync_from_runpod.sh`
+5. Added config hash to `train.py` startup log for future verification
+
+**Rule:** Repo is source of truth for config. RunPod is source of truth for data. Use `sync_config_to_runpod.sh` to push config changes.
+
+---
+
 ## DEVLOG #142 — 2026-04-14: Sync config to Phase 0a reality + create curriculum plan
 
 **Context:** Fresh start (DEVLOG #141) running well at iter 869. Win rate trending up: 47.6% -> 50.0% -> 54.7%. Training is healthy.

@@ -195,6 +195,14 @@ CMDS
     local dom_lines=$(wc -l < "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | tr -d ' ')
     echo "[$(date +%H:%M:%S)] Synced (M:${m_lines} LC:${lc_lines} DOM:${dom_lines} loss entries, ${new} checkpoints updated)"
 
+    # Config drift detection (warn only, never auto-fix)
+    local remote_dom_config local_dom_config
+    remote_dom_config=$($SSH $REMOTE "cat /root/mandala-dom/configs/dominion.yaml" 2>/dev/null) || true
+    local_dom_config=$(cat "$HOME/GG/mandala-rl/configs/dominion.yaml" 2>/dev/null) || true
+    if [ -n "$remote_dom_config" ] && [ -n "$local_dom_config" ] && [ "$remote_dom_config" != "$local_dom_config" ]; then
+        echo "[$(date +%H:%M:%S)] CONFIG DRIFT: RunPod dominion.yaml differs from repo. Run: ./scripts/sync_config_to_runpod.sh"
+    fi
+
     # Auto-push data files to git for Railway deployment (throttled)
     local now
     now=$(date +%s)
