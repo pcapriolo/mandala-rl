@@ -474,6 +474,34 @@ class TrainingObserver:
 
             return jsonify(data)
 
+        @self.app.route('/dominion')
+        def dominion_dashboard():
+            return render_template('dashboard_dominion.html', api_base='')
+
+        @self.app.route('/api/training')
+        def api_training():
+            """Get Dominion training data for dashboard."""
+            import time as _time
+            path = self.data_dir / 'dominion' / 'losses.jsonl'
+            iterations = []
+            if path.exists():
+                for line in open(path):
+                    line = line.strip()
+                    if line:
+                        try:
+                            iterations.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+            hb = {}
+            hb_path = self.data_dir / 'dominion' / 'heartbeat.json'
+            if hb_path.exists():
+                try:
+                    with open(hb_path) as f:
+                        hb = json.load(f)
+                except (json.JSONDecodeError, IOError):
+                    pass
+            return jsonify({'iterations': iterations, 'heartbeat': hb, 'last_updated': _time.time()})
+
         @self.app.route('/api/losses')
         def api_losses():
             """Get training loss history for all games."""

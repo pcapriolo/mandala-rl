@@ -20,7 +20,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          double big_money_force_rate,
                          std::vector<int> forced_kingdom_cards,
                          std::vector<int> disabled_basic_supply,
-                         int province_supply)
+                         int province_supply,
+                         int max_turns)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
@@ -30,7 +31,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
       action_play_force_rate_(action_play_force_rate),
       big_money_force_rate_(big_money_force_rate),
       forced_kingdom_cards_(forced_kingdom_cards),
-      disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply), rng_(seed)
+      disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply),
+      max_turns_(max_turns), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -43,7 +45,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
         game_ = std::move(dom);
-        max_turns_ = 70;   // DEVLOG #127: cut game at economic peak, before Province equalization
+        if (max_turns_ == 0) max_turns_ = 70;  // Default for Dominion if not set via config
     } else {
         throw std::runtime_error("Unknown game type: " + game_type);
     }
@@ -115,6 +117,7 @@ py::list BatchedMCTS::begin_move() {
     for (int idx : active_indices_) {
         auto& g = games_[idx];
         g.root = std::make_unique<MCTSNode>(1.0);
+        g.root->player = g.state->current_player();
 
         // Get canonical state tensor for NN
         auto canonical = g.state->get_canonical();
@@ -210,6 +213,7 @@ py::list BatchedMCTS::simulate_step() {
 
                 state = game_->get_next_state(*state, action);
                 node = child;
+                node->player = state->current_player();
             }
 
             if (game_->is_terminal(*state)) {
@@ -217,15 +221,44 @@ py::list BatchedMCTS::simulate_step() {
                 float value = game_->get_reward(*state, state->current_player());
                 node->backup(value);
             } else if (node->is_leaf()) {
-                // Leaf: needs NN evaluation
-                node->apply_virtual_loss();
+                // Auto-play forced moves: if only 1 valid action, apply it
+                // without NN evaluation. This prevents spurious intermediate
+                // evaluations (e.g., forced END_BUYS after buying) from biasing
+                // Q-values. Walk forward until we hit a real decision (2+ valid
+                // actions) or a terminal state.
+                int autoplay_depth = 0;
+                while (!game_->is_terminal(*state) && autoplay_depth < 20) {
+                    std::vector<float> valid;
+                    game_->get_valid_moves(*state, valid);
+                    int num_valid = 0;
+                    int forced_action = -1;
+                    for (int a = 0; a < static_cast<int>(valid.size()); a++) {
+                        if (valid[a] > 0.0f) {
+                            num_valid++;
+                            forced_action = a;
+                        }
+                    }
+                    if (num_valid != 1) break;  // Real decision point or no valid moves
+                    // Auto-play the single forced action
+                    state = game_->get_next_state(*state, forced_action);
+                    autoplay_depth++;
+                }
 
-                auto canonical = state->get_canonical();
-                std::vector<float> tensor_data;
-                canonical->to_tensor(tensor_data);
-                leaf_tensors.append(tensor_to_numpy(tensor_data, channels));
+                if (game_->is_terminal(*state)) {
+                    // Reached terminal via forced moves — backup true reward
+                    float value = game_->get_reward(*state, state->current_player());
+                    node->backup(value);
+                } else {
+                    // Real decision point — queue for NN evaluation
+                    node->apply_virtual_loss();
 
-                pending_leaves_.push_back({idx, node, std::move(state)});
+                    auto canonical = state->get_canonical();
+                    std::vector<float> tensor_data;
+                    canonical->to_tensor(tensor_data);
+                    leaf_tensors.append(tensor_to_numpy(tensor_data, channels));
+
+                    pending_leaves_.push_back({idx, node, std::move(state)});
+                }
             } else {
                 // Internal node with no valid children in this determinization.
                 // Backup neutral value — this determinization is uninformative here.
@@ -253,6 +286,7 @@ void BatchedMCTS::apply_nn_results(py::array_t<float> policies, py::array_t<floa
         // Expand with valid moves from actual (non-canonical) state
         std::vector<float> valid;
         game_->get_valid_moves(*leaf.state, valid);
+        leaf.node->player = leaf.state->current_player();
         leaf.node->expand(policy, valid);
 
         // Remove virtual loss, then backup with real value

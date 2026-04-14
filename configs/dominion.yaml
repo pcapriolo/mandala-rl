@@ -7,15 +7,15 @@ network:
   num_res_blocks: 10
   channels: 128
   belief_size: 31
-  phase_aware_policy: true   # Route policy through phase-specific sub-heads
-  factored_policy: true      # Decompose policy into control + type + card logits
+  phase_aware_policy: false  # Not yet trained — checkpoint uses simple fc_policy head
+  factored_policy: false     # Not yet trained — checkpoint uses simple fc_policy head
 
 # MCTS Parameters
 mcts:
   num_simulations: 800
   c_puct: 1.5
   dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
-  dirichlet_epsilon: 0.25
+  dirichlet_epsilon: 0.50
   action_explore_boost: 0.0
   action_buy_force_rate: 0.0
   action_play_force_rate: 0.0
@@ -76,11 +76,13 @@ save_replay_frequency: 1
 
 # Curriculum Learning — Phase 0: Silver/Gold/Province ONLY
 # !! DO NOT CHANGE THIS WITHOUT CEO APPROVAL — see DEVLOG #122+ for Phase reversion incidents !!
-disabled_basic_supply: [0, 3, 6, 16]  # Phase 0+Duchy: Copper(0), Estate(3), Curse(6), Gardens(16) DISABLED
+disabled_basic_supply: [0, 3, 4, 6, 16]  # Phase 0: Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
 province_supply: 3  # Low count = depletes fast, forces decisive games (Stage 1 curriculum)
 max_action_cards: 0                   # No action cards in kingdom
 forced_kingdom_cards: []              # Random (but 0 action cards = Gardens only, if any)
 big_money_force_rate: 0.0
+draw_penalty: 0.2              # Training-only: teaches draws are slightly bad (NOT applied in MCTS)
+max_turns: 70                  # Cut games at economic peak, before Province equalization
 
 # Reproducibility
 seed: 42

@@ -4,6 +4,142 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #141 — 2026-04-11: Fresh start — Gold/Silver/1 Province, pure self-play
+
+**Problem:** Province buying plateaued at 1/player with 82% draws despite 30x explore boost and +2.0 bias nudge. Both players buy exactly 1 Province → symmetric VP → zero gradient signal. The explore boost was doing all the work; raw network prior stayed at ~0.5%. No amount of nudging would escape the draw equilibrium with province_supply=3.
+
+**Solution:** Complete fresh start with province_supply=1. With only 1 Province, the first buyer wins decisively (9 VP vs 3 VP). MCTS trivially finds this 1-deep terminal. No draws possible. Clean, learnable signal.
+
+**Config changes:**
+- `province_supply: 1` (was 3)
+- `province_explore_boost: 0.0` (was 30.0)
+- `seed_reinject_frequency: 0` (was 3)
+- `opponent_diversity_ratio: 0.0` (was 0.5)
+- `disabled_basic_supply: [0, 3, 4, 6, 16]` (unchanged — Gold/Silver/Province only)
+- Fresh network, no --resume, no --seed-buffer
+
+**Phase 0 backup:** `/workspace/dominion_data/backup_phase0/` (model_latest.pt, elo_ratings.json, losses.jsonl)
+
+**Success criteria:** Province/player = 1.0, avg turns < 30, draws < 5% within 20 iterations.
+
+---
+
+## DEVLOG #140 — 2026-04-08: Province bias wrong AGAIN + MCTS Province explore boost
+
+**Problem:** DEVLOG #139's "fix" used Python card ordering (Province=3, Estate=5) but C++ uses (Estate=3, Province=5). We set idx 37 (Estate) to +1.5 and idx 39 (Province) to -3.0 — the EXACT OPPOSITE of intended. Province buying declined from 0.7 to 0.5/player over 100 iters while we thought we were helping.
+
+C++ ordering: `Copper=0, Silver=1, Gold=2, Estate=3, Duchy=4, Province=5, Curse=6`. BUY_OFFSET=34. BUY[Province]=idx 39, BUY[Estate]=idx 37.
+
+**Fix 1:** Province bias idx 39 set to +2.0, Estate idx 37 to -3.0. Adam state reset for both.
+
+**Fix 2:** Added `province_explore_boost` parameter to C++ BatchedMCTS. Multiplies Province's prior by 10x at ALL MCTS nodes (root + internal), not just root. This ensures both players explore Province-buying paths in search, enabling MCTS to discover Province depletion terminal states (supply=3, only 3 buys deep). Applied in `set_root_policies()` and `apply_nn_results()`.
+
+**Root cause analysis:** MCTS with 800 sims and BF=4 CAN search 3 Province buys deep. But the opponent's Province prior was ~1%, so MCTS rarely simulated the opponent buying Province. Supply never depleted in search → value head never saw Province depletion outcomes → chicken-and-egg trap.
+
+---
+
+## DEVLOG #139 — 2026-04-05: Wrong bias index "fixed" (actually made worse)
+
+**Problem:** Province bias nudge (DEVLOG #137) targeted idx 39 which was ACTUALLY correct (C++ CARD_PROVINCE=5, idx=34+5=39). We incorrectly "fixed" it by swapping: set idx 37 (Estate) to +1.5, idx 39 (Province) to -3.0. This actively suppressed Province buying.
+
+**Lesson:** Always verify card ID ordering against C++ source (`dominion_game.h`), not Python assumptions. The C++ ordering (Estate=3, Province=5) differs from the intuitive ordering (Province=3, Estate=5).
+
+---
+
+## DEVLOG #138 — 2026-04-05: Seed shape fixes, watchdog, Province recovery to 1.0/player
+
+Seed injection blocked by tensor mismatch (Python 156ch vs C++ 280ch), OOM (116K padded=9GB), and interference. Fixed: zero-padded to 280ch/31-belief, reduced to 30K (2.1GB), watchdog auto-restarts. Reverted bad config (province_supply 1->3). Province recovered 0.21->1.00 for 24+ iters. Next: opponent diversity to break draw equilibrium.
+
+---
+
+## DEVLOG #137 — 2026-04-04: Revert weight transplant, flush buffer, BM seed injection (iter 2122)
+
+**Problem:** The weight transplant (DEVLOG #136) backfired catastrophically. After transplanting Gold's weight row to Province at iter 2140:
+- MCTS Province% collapsed from ~6% to 0.4% within 5 iterations
+- Province/game dropped from ~0.9 to 0.2
+- Duchy/game also collapsed to 0.0 by iter 2152
+- Draw rate spiked to 59%, games hitting 70-turn cap
+- Coins wasted rose to 6.7 (from 5.4 pre-transplant)
+
+**Root cause:** Gold and Province encode fundamentally different strategic decisions. Cosine similarity between their original weight rows was only 0.39 — they activate on different features. Gold = "economy needs more treasure" (fires at 6+ coins, mid-game). Province = "economy is ready to score VP" (fires at 8+ coins, late-game). Only 3/10 of their top activating features overlapped. Transplanting Gold's row made Province fire in Gold-buying contexts (too early, wrong states). MCTS consistently found Province was bad in those states → strong negative training signal → Province prior crashed to near-zero. The transplanted row was essentially frozen (0.9989 cosine sim with Gold after 13 iterations of training — insufficient gradient from <1% visits to move a 34.5-norm weight vector).
+
+**Fix (three-part recovery):**
+1. **Model revert:** Restored `model_pre_nudge.pt` (iter 2122, before any intervention) as `model_latest.pt`. This preserves the original Province weight row which, despite being weak, at least encoded Province-relevant features.
+2. **Buffer flush + BM seed injection:** Deleted `buffer_latest.pkl` (contaminated with 100+ iterations of degraded play). Generated 500 Big Money heuristic games (116,663 training examples) via `seed_dominion_bigmoney.py`. These encode correct Province>Gold>Silver buy priority. Trainer started with `--seed-buffer /workspace/dominion_data/bm_seed.pkl` to pre-fill the replay buffer.
+3. **Modest bias nudge:** Set `fc_policy.bias[39]` from -0.77 to +0.50 (just above Silver's +0.47, NOT the aggressive +1.5 that contributed to the transplant failure). Reset Adam state for this parameter.
+
+**Why BM seeds work when weight surgery doesn't:** The BM seed approach doesn't modify the network — it modifies the *training data*. The replay buffer gets 116K examples where Province is bought optimally (Province>Gold>Silver priority). The network learns from these examples through normal gradient descent, developing its own Province-relevant features organically. This is the same approach that successfully bootstrapped Province discovery in DEVLOG #124.
+
+**Gate:** Province% should exceed 20% within 15 iterations (by iter 2137). If not, consider: (a) generating more seed games, (b) increasing dirichlet_epsilon above 0.50, (c) checking if seed examples are being trained on vs diluted by self-play.
+
+**RULE:** Never transplant weight rows between actions that encode different strategic decisions. Bias-only nudges are safe (additive, easily corrected by training). Weight surgery destroys learned features that took hundreds of iterations to develop. The right intervention for a dead prior is seed data injection, not network surgery.
+
+**Files changed:** `model_latest.pt` on RunPod (reverted to pre-nudge, bias nudged to +0.50), `buffer_latest.pkl` deleted, training restarted with `--seed-buffer`.
+
+---
+
+## DEVLOG #136 — 2026-04-03: Province weight transplant from BUY[Gold] (iter 2140)
+
+**Problem:** DEVLOG #133's epsilon revert (0.25→0.50) and DEVLOG #135's bias-only nudge (bias -0.77→+1.0) both failed to recover Province buying. After 17 post-nudge iterations (2123-2139), MCTS Province% averaged 6% and was still declining (4.8% at iter 2122 → 5.6% at iter 2139). The bias nudge was insufficient because the 2048-dimensional weight row for BUY[Province] had been trained away by 50+ iterations of contaminated buffer data — the network had unlearned which features correlate with "should buy Province."
+
+**Diagnosis:** Cosine similarity between BUY[Gold] and BUY[Province] weight rows was only 0.38 (should be high — both fire on "big economy, buy expensive card"). Gold's weight row correctly encodes "buy when economy is strong" with bias -0.21. Province's weight row had diverged into noise (bias +0.94 after nudge, but weights pointing nowhere useful). The replay buffer was fully saturated with 100K examples of "waste coins, don't buy Province."
+
+**Fix:** One-time surgical weight transplant on the `model_latest.pt` checkpoint (iter 2139):
+1. Copied `fc_policy.weight[36]` (BUY[Gold]) → `fc_policy.weight[39]` (BUY[Province]), scaled 1.1x
+2. Set `fc_policy.bias[39]` to +1.5 (highest of all buy actions — Province should be preferred over Gold/Silver when affordable)
+3. Reset Adam optimizer exp_avg and exp_avg_sq for Province weight row + bias to 0.0 (clean slate)
+4. Backup saved as `model_pre_weight_transplant.pt`
+
+**Rationale:** Gold and Province share the same trigger condition (strong economy), but Province costs 8 vs Gold's 6. By transplanting Gold's learned feature pattern, Province immediately fires in the same states as Gold. The valid-move mask prevents illegal Province buys (< 8 coins), and the +1.5 bias ensures Province is preferred over Gold when both are legal. Training refines from here — no permanent crutch.
+
+**Expected:** MCTS Province% should jump to 30%+ within first few iterations as the transplanted weights make Province a strong prior in buy phase. Games should shorten (Province depletes supply faster). If Province% doesn't exceed 20% after 10 iters (by iter 2150), the contaminated replay buffer is overwhelming the transplant — consider buffer flush or BM seed re-injection.
+
+**Files changed:** `scripts/nudge_province_bias.py` (rewritten as transplant script), checkpoint `model_latest.pt` on RunPod (weight row + bias + optimizer state modified).
+
+---
+
+## DEVLOG #135 — 2026-04-03: Province bias-only nudge — insufficient (iter 2123)
+
+**Problem:** Province prior collapsed (MCTS Province% at 4.8%). DEVLOG #133 gate failed (Province% did not reach 20% by iter 2110). Escalation to explicit Province prior boosting triggered.
+
+**Action:** One-time bias nudge: `fc_policy.bias[39]` (BUY[Province]) set from -0.77 to +1.0. Adam optimizer momentum/variance reset for that parameter. Backup saved as `model_pre_nudge.pt`.
+
+**Result:** Failed. After 17 iterations (2123-2139), Province% averaged 6%, worse than pre-nudge (~10%). The bias alone couldn't overcome the weight row — 2048 learned features were pointing away from Province. Training quickly eroded the bias nudge (1.0 → 0.94 in 17 iters). Escalated to weight transplant (DEVLOG #136).
+
+**Files changed:** `scripts/nudge_province_bias.py` (created), checkpoint `model_latest.pt` on RunPod (bias only).
+
+---
+
+## DEVLOG #134 — 2026-04-02: Add hot-reload for tunable config values (iter 2097)
+
+**Problem:** Every hyperparameter change required restarting the Dominion trainer, which risks buffer corruption and wastes iteration time. The dirichlet_epsilon revert (#133) required yet another restart.
+
+**Fix:** `mandala_rl/training/trainer.py` now re-reads the YAML config file at the top of each iteration and updates tunable SelfPlayWorker attributes if values changed. Tunable params: `dirichlet_epsilon`, `dirichlet_alpha`, `c_puct`, `temperature`, `temperature_threshold`, `explore_epsilon`, `action_explore_boost`, `action_buy_force_rate`, `action_play_force_rate`, `big_money_force_rate`. Structural params (network arch, LR, buffer size) are NOT reloaded.
+
+**How it works:** BatchedMCTS is already recreated every iteration from SelfPlayWorker attributes. The new `_hot_reload_config()` method just updates those attributes from the YAML before self-play begins. Wrapped in try/except — malformed YAML won't crash training. Logs only changed values (e.g., "Config reload: dirichlet_epsilon 0.25 → 0.50").
+
+**Also added:** Buffer save/load size logging, and a loud WARNING if buffer is empty at iter > 0.
+
+**Files changed:** `mandala_rl/training/trainer.py` (hot-reload method, buffer logging), `scripts/train.py` (passes config path to Trainer).
+
+---
+
+## DEVLOG #133 — 2026-04-02: Revert dirichlet_epsilon 0.25→0.50 to fix dead Province prior (iter 2097)
+
+**Problem:** After DEVLOG #132 lowered epsilon from 0.50→0.25, Province buying collapsed. Buffer analysis of 100K examples confirmed: in 7,382 positions where the bot had 8+ coins and Provinces remained in supply, MCTS gave Province exactly 0.0 visits. The network's Province prior dropped to ~0.0, creating a feedback loop: zero prior → zero visits → zero policy target → zero gradient → network never recovers. At ε=0.25 with 131 actions, Dirichlet noise contributes only ~0.19% to Province — insufficient to overcome a dead prior.
+
+**Root cause:** The epsilon reduction (DEVLOG #132) combined with a trainer restart at iter 2071 (for the temperature_threshold change, DEVLOG #9). The restart disrupted the network's fragile Province signal, and the lower noise couldn't compensate.
+
+**Fix:** `configs/dominion.yaml`: `dirichlet_epsilon: 0.25 → 0.50`. At ε=0.50, Province gets ~0.38% noise — enough for MCTS to occasionally visit and rediscover that Province is valuable. Training restarted at iter 2097 with full 100K buffer preserved.
+
+**Gate:** mcts_province_pct should recover toward 40%+ within 10-20 iterations. If Province visits don't rise above 20% by iter 2110, escalate to explicit Province prior boosting in the network.
+
+**RULE:** Do not lower dirichlet_epsilon below 0.50 until the network Province prior is stable (>10% in buy phase with 8+ coins) for at least 20 consecutive iterations.
+
+**Files changed:** `configs/dominion.yaml` (dirichlet_epsilon: 0.25→0.50).
+
+---
+
 ## DEVLOG #132 — 2026-04-01: Reduce dirichlet_epsilon 0.50→0.25 — shift from exploration to exploitation (iter 2045)
 
 **Trigger:** mcts_province_pct plateaued at 47-49% for 11 consecutive iters (2034-2045) despite Province buying being fully mastered. All 3 Provinces deplete every game (1.5/player), avg_turns=19, coins_wasted=1.79, value_loss=0.336. The high epsilon (set in DEVLOG #125 to discover Province buying) is now the bottleneck: 50% of the root prior is Dirichlet noise, capping Province visit share at ~48% even when the network policy is correct. This adds noise to policy training targets and likely contributes to the ~25% draw rate.
