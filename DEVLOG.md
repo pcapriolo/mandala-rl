@@ -4,6 +4,22 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #144 — 2026-04-15: Disable opponent diversity for Phase 0 — wrong-game opponents causing plateau
+
+**Problem:** Training plateaued at iter ~500 with no improvement through iter 1097 (600+ iterations flat). MCTS Province%=36.8% (target >90%), waste=3.75 (target <2.0), draw=8.2% (target <5%), win rate=49.4% (target >52%). All four graduation criteria failing.
+
+**Root cause:** `opponent_diversity_ratio=0.7` meant 70% of training games were against checkpoints from iters 779-796. Those checkpoints are **Phase 1 models** — trained with Estate, Duchy, and Province all enabled (`disabled_basic_supply=[0,6,16]`). Current training is Phase 0 (`disabled_basic_supply=[0,3,4,6,16]`) — only Gold/Silver/Province exist. The Phase 1 opponents were playing out-of-distribution: their policies were optimized for cards that aren't in the supply. The model spent 70% of its training energy learning to beat confused opponents instead of learning optimal Gold/Silver/Province play.
+
+**Fix:** `opponent_diversity_ratio: 0.7 → 0.0` in `configs/dominion.yaml`. Pure self-play for Phase 0. The game has only 3 buyable cards — there's one correct strategy (Province > Gold > Silver when affordable). Self-play spiral is not a risk here because the optimal strategy is dominant, not a Nash equilibrium that requires opponent modeling.
+
+**Rule:** `opponent_diversity_ratio` must be 0.0 for Phase 0. Re-evaluate when entering Phase 1+ where opponent modeling matters.
+
+**Files changed:** `configs/dominion.yaml` (diversity 0.7→0.0), `docs/plans/dominion-training-plan.md` (status update + Phase 0 diversity rule).
+
+**Expected:** Province% should climb toward 90%+ as the buffer fills with pure self-play data. Waste should drop below 2.0 as a consequence. Config must be synced to RunPod via `scripts/sync_config_to_runpod.sh` and training restarted for changes to take effect.
+
+---
+
 ## DEVLOG #143 — 2026-04-14: Config divergence cleanup + sync tooling
 
 **Problem:** RunPod config diverged from repo in multiple ways. Agents edited configs in both places independently with no sync mechanism. Key divergences discovered:
