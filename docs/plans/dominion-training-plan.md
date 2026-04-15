@@ -5,12 +5,13 @@
 | Field | Value |
 |-------|-------|
 | **Phase** | 0 — Gold/Silver/Province |
-| **Iteration** | ~869 |
+| **Iteration** | ~1097 |
 | **Province Supply** | 3 |
-| **Key Metrics** | Win rate trending up (47.6% -> 50.0% -> 54.7%) |
-| **Last Updated** | 2026-04-14 |
+| **Key Metrics** | Plateaued — Province%=36.8%, waste=3.75, draw=8.2%, wr=49.4% |
+| **Last Updated** | 2026-04-15 |
 
 ### Notes
+- 2026-04-15: Switched to pure self-play (diversity=0.0). Opponent pool (iters 779-796) were Phase 1 models — wrong game. Metrics plateaued for 600+ iters. See DEVLOG #144.
 - 2026-04-14: Phase 0 training healthy. Win rate trending up. Graduation target: waste <2 coins + MCTS province buy % >90%.
 
 ---
@@ -28,7 +29,10 @@ disabled_basic_supply: [0, 3, 4, 6, 16]
 max_action_cards: 0
 draw_penalty: 0.2
 max_turns: 70
+opponent_diversity_ratio: 0.0  # Pure self-play — no opponent diversity in Phase 0
 ```
+
+**Phase 0 rule:** `opponent_diversity_ratio` must be 0.0. The opponent pool (iters 779-796) are Phase 1 models trained on a different game (Estate/Duchy enabled). Playing against them produces out-of-distribution noise, not useful signal. Pure self-play is correct for a 3-card game. Re-evaluate diversity when entering Phase 1+.
 
 **Graduation criteria (all must hold for 20 consecutive iterations):**
 - Waste < 2 coins per game (efficient buying)

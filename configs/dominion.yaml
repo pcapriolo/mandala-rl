@@ -28,9 +28,9 @@ selfplay:
   temperature: 1.0
   temperature_threshold: 25  # Stochastic through Province-buying window (turns 12-18)
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
-  opponent_diversity_ratio: 0.7  # 70% games vs healthy VP-buying opponents
-  opponent_iter_min: 779  # Pre-restart healthy Phase 0 opponents only
-  opponent_iter_max: 796  # Exclude degraded iters 797+
+  opponent_diversity_ratio: 0.0  # Pure self-play for Phase 0 (DEVLOG #144)
+  opponent_iter_min: 779  # Unused while diversity=0.0
+  opponent_iter_max: 796  # Unused while diversity=0.0
 
 
 # Training Parameters
