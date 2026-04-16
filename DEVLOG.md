@@ -4,6 +4,46 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #148 — 2026-04-16: Remove draw_penalty and max_turns, lower temperature_threshold
+
+**Problem:** After fixing config passthrough (DEVLOG #147), draw_penalty=0.2 and max_turns=70 were correctly applied — but they caused a training collapse. Over 90 iterations: province% dropped 68→47%, draw% rose 3→55%, avg turns rose 24→46. The value head loss collapsed from 0.38 to 0.08 (overconfident, predicting symmetric negative outcomes).
+
+**Root cause:** draw_penalty is symmetric — both players receive -0.2 for draws. In a symmetric 2-player game, this carries zero differential signal. The value head learned "all states are bad" without learning "buy Province to avoid draws." max_turns=70 amplified this by manufacturing draws in games that naturally end in ~23 turns.
+
+**Fix:** (1) draw_penalty=0.0 — remove symmetric penalty. (2) max_turns=0 — games end naturally when provinces are bought. (3) temperature_threshold 25→15 — Province buys happen around turn 12-18; moves 15+ now use deterministic argmax, giving the value head cleaner training targets for the critical Province-vs-Gold decision.
+
+**Pre-fix baseline (iters 105-117):** Province%=38.5%, draw%=3.6%, turns=23.6, provs=1.45/player. Three of four graduation gates met — province% was the only blocker. The temperature change directly targets this.
+
+**Files:** `configs/dominion.yaml`, `docs/plans/dominion-training-plan.md`. Config-only change, applied via hot reload.
+
+---
+
+## DEVLOG #147 — 2026-04-16: Fix silent config passthrough bug in train.py
+
+**Bug:** `scripts/train.py` manually constructs a 90-line `training_config` dict by picking specific keys from YAML. Any key not listed is silently dropped. `draw_penalty` (0.2) and `max_turns` (70) from `configs/dominion.yaml` were never included, so Trainer defaulted to `0.0` and `0` respectively. This caused 117 iterations to run with no draw penalty and no turn limit. Also `deploy_frequency` (25) was dropped, silently disabling deploy checkpoint exports.
+
+**Fix:** (1) Explicitly added `draw_penalty`, `max_turns`, and `deploy_frequency` to the manual dict. (2) Added a catch-all loop after the dict that merges all top-level scalar/list keys from YAML not already present. This prevents the entire class of bug for future top-level config additions.
+
+**Root cause:** The manual dict pattern requires a code change in `train.py` for every new YAML key. No validation warned about unrecognized keys. The catch-all eliminates this failure mode for top-level keys.
+
+**Files:** `scripts/train.py` (added 3 explicit keys + 4-line catch-all loop).
+
+---
+
+## DEVLOG #146 — 2026-04-16: Add mcts_province_argmax_pct metric
+
+**Problem:** `mcts_province_pct` stuck at ~37% after 65+ iterations (and 700+ in prior run). Graduation gate requires >90%. Deep investigation revealed the metric captures MCTS visit share AFTER temperature=1.0 normalization. With temp=1.0 and only 4 legal buy actions, even perfect play caps at ~60-70%. The >90% target was implicitly calibrated for temp=0 (deterministic argmax).
+
+**Fix:** Added `mcts_province_argmax_pct` — measures what % of the time Province has the MOST raw visits when affordable, ignoring temperature softening. This tells us if MCTS actually prefers Province in deterministic mode.
+
+**Files:** `cpp/batched_mcts.h` (2 counters), `cpp/batched_mcts.cpp` (argmax tracking + summary reporting), `mandala_rl/training/trainer.py` (aggregation), `templates/dashboard_dominion.html` (display column).
+
+**Next steps:** Run 5-10 iterations. If argmax >80%, the bot has learned and the graduation gate needs recalibration. If argmax ≈37%, the value network genuinely can't differentiate Province from Gold, and we'll lower `temperature_threshold` or re-enable `explore_epsilon`.
+
+**Also confirmed:** Dirichlet noise (epsilon=0.50) has negligible effect on 4 valid buy actions despite looking aggressive — noise spreads over 131 dims and gets discarded on masking. Game logic is correct (all 3 provinces bought every game).
+
+---
+
 ## DEVLOG #145 — 2026-04-16: Remove 50-sim fast games + reduce entropy + fix policy_weight
 
 **Problem:** Province% stuck at 35-40% after 706 iterations of pure self-play. Graduation target is >90%.

@@ -62,6 +62,10 @@ private:
         float mcts_province_visit_sum = 0.0f;  // sum of Province visit fractions
         int mcts_province_visit_count = 0;       // number of buy-phase decisions at $8+
 
+        // Track Province argmax: does Province have the most visits when affordable?
+        int mcts_province_argmax_count = 0;      // times Province had most visits
+        int mcts_province_decision_count = 0;    // total affordable Province decisions
+
         // Per-move
         std::unique_ptr<MCTSNode> root;
     };

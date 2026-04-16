@@ -865,6 +865,10 @@ class Trainer:
         # Raw MCTS Province visit % (before epsilon blend) — tracks organic learning
         mcts_prov_vals = [s.get('mcts_province_pct', 0) for s in summaries if s.get('mcts_province_pct') is not None]
         self._game_quality['mcts_province_pct'] = round(sum(mcts_prov_vals) / max(len(mcts_prov_vals), 1) * 100, 1)
+        # Province argmax %: how often Province has the MOST visits when affordable (deterministic preference)
+        argmax_vals = [s.get('mcts_province_argmax_pct', 0) for s in summaries if s.get('mcts_province_argmax_pct') is not None]
+        if argmax_vals:
+            self._game_quality['mcts_province_argmax_pct'] = round(sum(argmax_vals) / len(argmax_vals) * 100, 1)
         self._game_quality['avg_cards_trashed'] = round(avg_cards_trashed, 2)
         self._game_quality['avg_cellar_discards'] = round(avg_cellar_discards, 2)
         self._game_quality['avg_empty_selects'] = round(avg_empty_selects, 2)

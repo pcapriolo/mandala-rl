@@ -356,6 +356,14 @@ std::vector<int> BatchedMCTS::finish_move() {
                     // Province is affordable — record raw MCTS visit fraction
                     g.mcts_province_visit_sum += action_probs[prov_action];
                     g.mcts_province_visit_count++;
+
+                    // Track argmax: does Province have the most raw visits?
+                    int prov_visits = static_cast<int>(visit_counts[prov_action]);
+                    int max_visits = static_cast<int>(*std::max_element(visit_counts.begin(), visit_counts.end()));
+                    if (prov_visits == max_visits && prov_visits > 0) {
+                        g.mcts_province_argmax_count++;
+                    }
+                    g.mcts_province_decision_count++;
                 }
             }
         }
@@ -760,6 +768,12 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
             ? g.mcts_province_visit_sum / g.mcts_province_visit_count
             : 0.0f;
         summary["mcts_province_pct"] = mcts_prov_pct;
+
+        // Province argmax: % of times Province had most visits when affordable
+        float mcts_prov_argmax = (g.mcts_province_decision_count > 0)
+            ? static_cast<float>(g.mcts_province_argmax_count) / g.mcts_province_decision_count
+            : 0.0f;
+        summary["mcts_province_argmax_pct"] = mcts_prov_argmax;
     }
 
     return summary;
