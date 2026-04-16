@@ -4,6 +4,29 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #145 — 2026-04-16: Remove 50-sim fast games + reduce entropy + fix policy_weight
+
+**Problem:** Province% stuck at 35-40% after 706 iterations of pure self-play. Graduation target is >90%.
+
+**Root cause:** Three compounding issues:
+
+1. **75% of games used only 50 MCTS simulations** (`trainer.py:359`). With 50 sims and 50% Dirichlet noise over ~4 valid buy-phase actions, MCTS couldn't produce clean policy targets. Province captured only 35-45% of visits vs 85-95% at 800 sims. These noisy targets dominated training data and capped Province% around 50-60%.
+
+2. **entropy_weight=0.15** — 15x higher than KataGo. Actively penalized the policy from sharpening toward Province buying.
+
+3. **policy_weight decayed from 3.0→1.0** via a hidden schedule in `_get_policy_weight()` (not in config or training plan). By iter 256, policy gradient signal was equal to the noisier value loss.
+
+**Fix:**
+- Removed playout cap randomization. All games now run at full `num_simulations` (800)
+- `entropy_weight: 0.15 → 0.03`
+- `policy_weight: 3.0 → 1.0` (fixed, no decay). Removed hidden decay schedule from `_get_policy_weight()`
+
+**Files changed:** `mandala_rl/training/trainer.py` (removed fast/full split in `_generate_selfplay_games()`, simplified `_get_policy_weight()`), `configs/dominion.yaml` (entropy 0.03, policy_weight 1.0), `docs/plans/dominion-training-plan.md` (documented params).
+
+**Expected:** Province% should climb within 50-100 iterations. Iteration time ~3-4x slower (acceptable). Graduation by iter 300-500.
+
+---
+
 ## DEVLOG #144 — 2026-04-15: Disable opponent diversity for Phase 0 — wrong-game opponents causing plateau
 
 **Problem:** Training plateaued at iter ~500 with no improvement through iter 1097 (600+ iterations flat). MCTS Province%=36.8% (target >90%), waste=3.75 (target <2.0), draw=8.2% (target <5%), win rate=49.4% (target >52%). All four graduation criteria failing.
