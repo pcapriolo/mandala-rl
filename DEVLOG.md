@@ -2377,6 +2377,16 @@ This gives the value head something to learn FROM in draws (where the raw outcom
 
 **RULE REINFORCED:** Do NOT re-enable big_money_force_rate or explore_epsilon under any circumstances. Province decline post-crutch-removal is expected turbulence. Wait for 5+ consecutive iters before diagnosing failure. If provinces fall below 2.0 for 5 consecutive iters with no trend reversal, the fix is structural (reward signal, state representation) — never force overrides.
 
+## DEVLOG #153 — 2026-04-16: Fix yaml.dump destroying config comments on graduation
+
+**Problem:** `_write_config_to_yaml()` (added in DEVLOG #152) used `yaml.safe_load` + `yaml.dump` to update the config file. This works for values but `yaml.dump` strips all inline comments, reformats flow-style lists (e.g. `[0, 3, 4, 6, 16]` becomes multi-line block), and loses all formatting. Every DEVLOG reference and rationale note in `configs/dominion.yaml` would be destroyed the first time graduation fires.
+
+**Fix:** Replaced `yaml.safe_load`/`yaml.dump` with regex line replacement. For each key being updated, a regex matches `key: <value>` at the start of a line and swaps only the value portion, preserving inline comments and all other formatting. Only scalar graduation values (`province_supply`, `max_turns`) are written this way — no full-file parse/dump needed.
+
+**Files changed:** `mandala_rl/training/trainer.py` (`_write_config_to_yaml` rewritten, added `import re`).
+
+---
+
 ## DEVLOG #152 — 2026-04-16: Config-driven curriculum graduation (no workarounds)
 
 **Problem:** Previous PRs (#25, #26) implemented stepped auto-graduation but used a workaround: excluding `max_turns` from hot-reload when curriculum is active. This made the in-memory config diverge from the YAML file on disk — the opposite of "config as source of truth."

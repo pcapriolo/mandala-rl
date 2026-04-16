@@ -11,6 +11,7 @@
 | **Last Updated** | 2026-04-16 |
 
 ### Notes
+- 2026-04-16: **Fixed yaml.dump destroying config comments.** Graduation write-back now uses regex line replacement instead of yaml.dump. Preserves all inline comments and formatting. See DEVLOG #153.
 - 2026-04-16: **Config-driven curriculum graduation.** Graduation now writes province_supply and max_turns back to YAML config on disk. Config file is the single source of truth — hot-reload reads correct values with no exclusions or workarounds. See DEVLOG #152.
 - 2026-04-16: **Switched to stepped auto-graduation curriculum.** supply=3 was stuck at Province%=47%, draw%=49% after 245 iters. Jump from supply=1→3 was too large. New approach: auto-graduate 1→2→3 with criteria checks in trainer. No seeding, no bias nudges — pure self-play only.
 - 2026-04-16: **Reverted temp_threshold and max_turns, kept draw_penalty=0.** Lowering temp_threshold to 15 amplified the bad policy (province% crashed 45→7%). Restored temp_threshold=25 and max_turns=70. Only net change: draw_penalty=0.0.

@@ -1,5 +1,6 @@
 """Main training loop."""
 import json
+import re
 import time
 import torch
 import torch.nn.functional as F
@@ -228,20 +229,21 @@ class Trainer:
     def _write_config_to_yaml(self, updates: dict):
         """Write updated values back to the YAML config file on disk.
 
-        The config file is the single source of truth. When curriculum
-        graduation changes province_supply or max_turns, those changes
-        must be persisted to YAML so hot-reload reads the correct values.
+        Uses regex line replacement to preserve comments and formatting.
+        The config file is the single source of truth.
         """
         config_path = Path(self._config_path)
         if not config_path.exists():
             return
         try:
-            with open(config_path) as f:
-                raw = yaml.safe_load(f)
+            text = config_path.read_text()
             for key, value in updates.items():
-                raw[key] = value
-            with open(config_path, 'w') as f:
-                yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+                # Replace scalar value on matching line, preserve inline comments
+                pattern = rf'^({re.escape(key)}:\s*)\S+(.*?)$'
+                text, n = re.subn(pattern, rf'\g<1>{value}\2', text, count=1, flags=re.MULTILINE)
+                if n == 0:
+                    print(f"[CONFIG] WARNING: key '{key}' not found in {config_path}")
+            config_path.write_text(text)
             print(f"[CONFIG] Wrote to {config_path}: {updates}")
         except Exception as e:
             print(f"[CONFIG] WARNING: failed to write {config_path}: {e}")
