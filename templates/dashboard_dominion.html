@@ -112,6 +112,7 @@
                     <th>Turns</th>
                     <th>Draw%</th>
                     <th>MCTS Prov%</th>
+                    <th>Prov Argmax%</th>
                 </tr>
             </thead>
             <tbody id="iter-table"></tbody>
@@ -374,6 +375,7 @@ async function refresh() {
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
         <td>${(d.mcts_province_pct || 0).toFixed(1)}%</td>
+        <td>${(d.mcts_province_argmax_pct || 0).toFixed(1)}%</td>
     </tr>`}).join('');
 }
 
