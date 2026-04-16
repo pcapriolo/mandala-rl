@@ -26,7 +26,7 @@ selfplay:
   parallel_games: 256
   leaves_per_game: 8
   temperature: 1.0
-  temperature_threshold: 15  # DEVLOG #148: lowered from 25 — Province buys (turn 15+) now deterministic
+  temperature_threshold: 25  # DEVLOG #149: reverted from 15 — lower threshold amplified bad policy
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
   opponent_diversity_ratio: 0.0  # Pure self-play for Phase 0 (DEVLOG #144)
   opponent_iter_min: 779  # Unused while diversity=0.0
@@ -82,7 +82,7 @@ max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
 draw_penalty: 0.0   # DEVLOG #148: removed — symmetric penalty destabilized training (draw% 3→55%)
-max_turns: 0        # DEVLOG #148: removed — games end naturally in ~23 turns; cap created artificial draws
+max_turns: 70       # DEVLOG #149: restored — without cap, bad policy creates 60+ turn games
 
 # Reproducibility
 seed: 42
