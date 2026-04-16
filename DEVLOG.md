@@ -2376,3 +2376,35 @@ This gives the value head something to learn FROM in draws (where the raw outcom
 **Files changed:** `configs/dominion.yaml` on RunPod (force_rate 0.4→0.0, net no-op).
 
 **RULE REINFORCED:** Do NOT re-enable big_money_force_rate or explore_epsilon under any circumstances. Province decline post-crutch-removal is expected turbulence. Wait for 5+ consecutive iters before diagnosing failure. If provinces fall below 2.0 for 5 consecutive iters with no trend reversal, the fix is structural (reward signal, state representation) — never force overrides.
+
+## DEVLOG #153 — 2026-04-16: Fix yaml.dump destroying config comments on graduation
+
+**Problem:** `_write_config_to_yaml()` (added in DEVLOG #152) used `yaml.safe_load` + `yaml.dump` to update the config file. This works for values but `yaml.dump` strips all inline comments, reformats flow-style lists (e.g. `[0, 3, 4, 6, 16]` becomes multi-line block), and loses all formatting. Every DEVLOG reference and rationale note in `configs/dominion.yaml` would be destroyed the first time graduation fires.
+
+**Fix:** Replaced `yaml.safe_load`/`yaml.dump` with regex line replacement. For each key being updated, a regex matches `key: <value>` at the start of a line and swaps only the value portion, preserving inline comments and all other formatting. Only scalar graduation values (`province_supply`, `max_turns`) are written this way — no full-file parse/dump needed.
+
+**Files changed:** `mandala_rl/training/trainer.py` (`_write_config_to_yaml` rewritten, added `import re`).
+
+---
+
+## DEVLOG #152 — 2026-04-16: Config-driven curriculum graduation (no workarounds)
+
+**Problem:** Previous PRs (#25, #26) implemented stepped auto-graduation but used a workaround: excluding `max_turns` from hot-reload when curriculum is active. This made the in-memory config diverge from the YAML file on disk — the opposite of "config as source of truth."
+
+**Root cause:** Curriculum graduation updated in-memory config and worker attributes, but never wrote back to the YAML file. Hot-reload then re-read the stale YAML values and overwrote the graduated values every iteration.
+
+**Fix:** Added `_write_config_to_yaml()` method to `Trainer`. When curriculum graduates, it:
+1. Updates in-memory config (as before)
+2. Writes `province_supply` and `max_turns` back to `configs/dominion.yaml` on disk
+3. Updates the worker (as before)
+
+Hot-reload now reads the correct values naturally — no exclusion logic, no special cases. The YAML config file is always the single source of truth.
+
+Also added `province_supply` to the hot-reload top-level keys so it can be changed from the config file at any time (not just on graduation).
+
+**Config changes:**
+- `province_supply`: 3 → 1 (start of stepped curriculum)
+- `max_turns`: 70 → 30 (tight cap for supply=1)
+- Added `curriculum_steps` block defining the 1→2→3 progression with graduation criteria
+
+**Files changed:** `mandala_rl/training/trainer.py` (added `_write_config_to_yaml`, `_check_curriculum_graduation`, province_supply in hot-reload), `configs/dominion.yaml` (province_supply=1, max_turns=30, curriculum_steps), `docs/plans/dominion-training-plan.md` (updated to reflect stepped curriculum).

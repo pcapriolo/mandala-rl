@@ -46,7 +46,7 @@ AlphaZero-style reinforcement learning system for training game-playing bots thr
 
 **Lost Cities** — 2-player card game, 60 cards, expeditions with ascending-value constraints. Action space: 96 moves. Input: 86 tensor channels.
 
-**Dominion** — Deck-building card game. Simplified supply (Gold/Silver/Province). Currently training with province_supply=3 curriculum (Phase 0).
+**Dominion** — Deck-building card game. Simplified supply (Gold/Silver/Province). Currently training with stepped curriculum: province_supply auto-graduates 1→2→3 (Phase 0).
 
 ## Key Commands
 
