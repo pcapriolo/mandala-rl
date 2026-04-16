@@ -199,6 +199,9 @@ def main():
 
         # Deploy
         'deploy_frequency': config.get('deploy_frequency', 0),
+
+        # Curriculum auto-graduation steps (Dominion Phase 0)
+        'curriculum_steps': config.get('curriculum_steps', []),
     }
 
     # Catch-all: merge top-level scalar/list keys from YAML not already in training_config.

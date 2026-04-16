@@ -4,6 +4,31 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #150 — 2026-04-16: Stepped auto-graduation curriculum (self-play only, no seeding)
+
+**Problem:** Phase 0 training stuck at supply=3 for 245 iterations. Province%=47%, draw%=49%. The model learned Province-buying at supply=1 (DEVLOG #141) but the jump to supply=3 was too large. At supply=3, self-play mirrors the Gold-preference on both sides, producing zero differential signal. Multiple config tweaks (DEVLOG #144-149) failed to unstick it.
+
+**Root cause:** supply=1 teaches "Province ends the game" (1-deep signal). supply=3 requires "buy Province every time you can afford it, repeatedly" — a different skill. The model needed intermediate steps to build Province-buying priors incrementally.
+
+**Solution:** Stepped curriculum with auto-graduation: supply 1 → 2 → 3. Each level has graduation criteria checked automatically by the trainer. No seeding, no bias nudges, no weight surgery — pure self-play only.
+
+| Step | Supply | max_turns | Graduation: prov/player | Graduation: draw% | Consec iters |
+|------|--------|-----------|------------------------|--------------------|--------------|
+| 0a   | 1      | 30        | ≥ 0.9                  | < 5%               | 10           |
+| 0b   | 2      | 50        | ≥ 1.5                  | < 10%              | 15           |
+| 0c   | 3      | 70        | (existing Phase 0 criteria)                          |              |
+
+**Implementation:**
+- `trainer.py`: Added `_check_curriculum_graduation()` method. Tracks metrics per iteration, checks criteria over a sliding window, auto-advances `province_supply` and `max_turns` in worker when criteria met. Saves graduation checkpoint.
+- `configs/dominion.yaml`: `province_supply: 3→1`, `max_turns: 70→30`, added `curriculum_steps` list with graduation criteria per level.
+- `scripts/train.py`: Passes `curriculum_steps` through to Trainer config.
+
+**Estimated timeline:** ~200-300 iterations total (supply=1 ~20, supply=2 ~50-100, supply=3 ~100-200). At ~5 min/iter on A100, ~16-25 hours.
+
+**Training restart required.** Fresh start recommended (no --resume) since existing buffer is supply=3 data with bad Province behavior. Existing model weights are trained on a different game shape.
+
+---
+
 ## DEVLOG #149 — 2026-04-16: Revert temperature_threshold and max_turns (keep draw_penalty=0)
 
 **Problem:** DEVLOG #148 changes caused immediate collapse. Province% crashed 45→7%, draws spiked to 92%. Lowering temperature_threshold to 15 made the existing bad policy deterministic — the model already preferred Gold over Province, so removing exploration guaranteed it picked Gold. Removing max_turns let games run 60+ turns.

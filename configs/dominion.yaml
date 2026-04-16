@@ -77,12 +77,35 @@ save_replay_frequency: 1
 # Curriculum Learning — Phase 0: Silver/Gold/Province ONLY, supply=3
 # See docs/plans/dominion-training-plan.md for full curriculum
 disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 3  # Low count = depletes fast, forces decisive games
+province_supply: 1  # DEVLOG #150: reset to 1 for stepped curriculum (auto-graduates 1→2→3)
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
 draw_penalty: 0.0   # DEVLOG #148: removed — symmetric penalty destabilized training (draw% 3→55%)
-max_turns: 70       # DEVLOG #149: restored — without cap, bad policy creates 60+ turn games
+max_turns: 30       # DEVLOG #150: tighter cap for supply=1 (games should end in ~15-20 turns)
+
+# Curriculum auto-graduation: stepped province supply with automatic advancement.
+# Each step defines province_supply, max_turns, and graduation criteria.
+# Trainer checks criteria each iteration and advances when met.
+curriculum_steps:
+  - province_supply: 1
+    max_turns: 30
+    graduation:
+      min_iters: 20          # Don't check before iteration 20
+      consecutive_iters: 10  # Must pass for 10 straight iterations
+      province_per_player_min: 0.9   # Nearly every game has the province bought
+      draw_rate_max: 0.05            # Almost no draws (supply=1 → decisive)
+  - province_supply: 2
+    max_turns: 50
+    graduation:
+      min_iters: 30
+      consecutive_iters: 15
+      province_per_player_min: 1.5   # Both provinces bought most games
+      draw_rate_max: 0.10
+  - province_supply: 3
+    max_turns: 70
+    # No graduation block — this is Phase 0's target level.
+    # Phase 0 graduation criteria (existing) apply at this level.
 
 # Reproducibility
 seed: 42

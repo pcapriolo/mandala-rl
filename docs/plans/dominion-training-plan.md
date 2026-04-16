@@ -5,12 +5,13 @@
 | Field | Value |
 |-------|-------|
 | **Phase** | 0 — Gold/Silver/Province |
-| **Iteration** | ~204 (run 6) |
-| **Province Supply** | 3 |
-| **Key Metrics** | Recovering from collapse — Province%=~47%, draw%=~49%, waste=0 |
+| **Iteration** | Fresh start (auto-graduation) |
+| **Province Supply** | 1 (auto-graduates → 2 → 3) |
+| **Key Metrics** | Starting stepped curriculum — pure self-play, no seeding |
 | **Last Updated** | 2026-04-16 |
 
 ### Notes
+- 2026-04-16: **Switched to stepped auto-graduation curriculum.** supply=3 was stuck at Province%=47%, draw%=49% after 245 iters. Jump from supply=1→3 was too large. New approach: auto-graduate 1→2→3 with criteria checks in trainer. No seeding, no bias nudges — pure self-play only. See DEVLOG #150.
 - 2026-04-16: **Reverted temp_threshold and max_turns, kept draw_penalty=0.** Lowering temp_threshold to 15 amplified the bad policy (province% crashed 45→7%). Restored temp_threshold=25 and max_turns=70. Only net change: draw_penalty=0.0. Buffer needs ~30 iters to recover. See DEVLOG #149.
 - 2026-04-16: Removed draw_penalty/max_turns/temp_threshold. See DEVLOG #148. **Partially reverted — see above.**
 - 2026-04-16: Fixed config passthrough bug in train.py — draw_penalty and max_turns were silently dropped for 117 iterations. See DEVLOG #147.
@@ -23,27 +24,42 @@
 
 ## Phase 0: Gold/Silver/Province (CURRENT)
 
-**Supply:** Gold, Silver, Province (supply=3)
+**Supply:** Gold, Silver, Province — **stepped curriculum** (supply 1 → 2 → 3)
 **Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards
-**Goal:** Learn that Province > Gold > Silver in buy priority when affordable. With 3 Provinces, both players can buy — winner is whoever accumulates more.
+**Goal:** Learn that Province > Gold > Silver in buy priority when affordable.
+
+### Stepped Curriculum (auto-graduation)
+
+The model auto-graduates through supply levels. Each step builds Province-buying
+priors that transfer to the next. No seeding, no bias nudges — pure self-play only.
+
+```
+supply=1 (max_turns=30) → supply=2 (max_turns=50) → supply=3 (max_turns=70)
+```
+
+| Step | Supply | Why | Graduation Criteria | Est. Iters |
+|------|--------|-----|---------------------|------------|
+| 0a | 1 | Province = game-ender. Trivial to learn. | prov/player ≥ 0.9, draw% < 5%, 10 consec | ~20-30 |
+| 0b | 2 | Must buy Province repeatedly. Reinforces habit. | prov/player ≥ 1.5, draw% < 10%, 15 consec | ~50-100 |
+| 0c | 3 | Full Phase 0 target. Model arrives with strong priors. | Phase 0 graduation criteria below | ~100-200 |
 
 **Config:**
 ```yaml
-province_supply: 3
+province_supply: 1             # Auto-graduates 1→2→3 (DEVLOG #150)
 disabled_basic_supply: [0, 3, 4, 6, 16]
 max_action_cards: 0
-draw_penalty: 0.0              # Symmetric penalty destabilizes training — removed (DEVLOG #148)
-max_turns: 70                  # Safety net restored — bad policy needs cap (DEVLOG #149)
-temperature_threshold: 25      # Exploration needed while policy recovers (DEVLOG #149)
+draw_penalty: 0.0
+max_turns: 30                  # Tighter for supply=1 (auto-adjusts on graduation)
+temperature_threshold: 25
 opponent_diversity_ratio: 0.0  # Pure self-play — no opponent diversity in Phase 0
-entropy_weight: 0.03           # Low — let policy sharpen toward Province
-policy_weight: 1.0             # Fixed, no decay
-# All games at full MCTS sims (800) — no fast/full split
+entropy_weight: 0.03
+policy_weight: 1.0
+# All games at full MCTS sims (800)
 ```
 
-**Phase 0 rule:** `opponent_diversity_ratio` must be 0.0. The opponent pool (iters 779-796) are Phase 1 models trained on a different game (Estate/Duchy enabled). Playing against them produces out-of-distribution noise, not useful signal. Pure self-play is correct for a 3-card game. Re-evaluate diversity when entering Phase 1+.
+**Phase 0 rule:** `opponent_diversity_ratio` must be 0.0. Pure self-play is correct for Phase 0.
 
-**Graduation criteria (all must hold for 20 consecutive iterations):**
+**Phase 0 graduation criteria (supply=3, all must hold for 20 consecutive iterations):**
 - Waste < 2 coins per game (efficient buying)
 - MCTS province buy % > 90% (when Province is affordable, bot buys it)
 - Draw rate < 5%
