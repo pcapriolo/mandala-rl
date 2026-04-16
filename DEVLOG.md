@@ -4,6 +4,20 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #148 — 2026-04-16: Remove draw_penalty and max_turns, lower temperature_threshold
+
+**Problem:** After fixing config passthrough (DEVLOG #147), draw_penalty=0.2 and max_turns=70 were correctly applied — but they caused a training collapse. Over 90 iterations: province% dropped 68→47%, draw% rose 3→55%, avg turns rose 24→46. The value head loss collapsed from 0.38 to 0.08 (overconfident, predicting symmetric negative outcomes).
+
+**Root cause:** draw_penalty is symmetric — both players receive -0.2 for draws. In a symmetric 2-player game, this carries zero differential signal. The value head learned "all states are bad" without learning "buy Province to avoid draws." max_turns=70 amplified this by manufacturing draws in games that naturally end in ~23 turns.
+
+**Fix:** (1) draw_penalty=0.0 — remove symmetric penalty. (2) max_turns=0 — games end naturally when provinces are bought. (3) temperature_threshold 25→15 — Province buys happen around turn 12-18; moves 15+ now use deterministic argmax, giving the value head cleaner training targets for the critical Province-vs-Gold decision.
+
+**Pre-fix baseline (iters 105-117):** Province%=38.5%, draw%=3.6%, turns=23.6, provs=1.45/player. Three of four graduation gates met — province% was the only blocker. The temperature change directly targets this.
+
+**Files:** `configs/dominion.yaml`, `docs/plans/dominion-training-plan.md`. Config-only change, applied via hot reload.
+
+---
+
 ## DEVLOG #147 — 2026-04-16: Fix silent config passthrough bug in train.py
 
 **Bug:** `scripts/train.py` manually constructs a 90-line `training_config` dict by picking specific keys from YAML. Any key not listed is silently dropped. `draw_penalty` (0.2) and `max_turns` (70) from `configs/dominion.yaml` were never included, so Trainer defaulted to `0.0` and `0` respectively. This caused 117 iterations to run with no draw penalty and no turn limit. Also `deploy_frequency` (25) was dropped, silently disabling deploy checkpoint exports.
