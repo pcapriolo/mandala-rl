@@ -4,6 +4,16 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #149 — 2026-04-16: Revert temperature_threshold and max_turns (keep draw_penalty=0)
+
+**Problem:** DEVLOG #148 changes caused immediate collapse. Province% crashed 45→7%, draws spiked to 92%. Lowering temperature_threshold to 15 made the existing bad policy deterministic — the model already preferred Gold over Province, so removing exploration guaranteed it picked Gold. Removing max_turns let games run 60+ turns.
+
+**Fix:** Reverted temperature_threshold to 25 and max_turns to 70. Kept draw_penalty=0.0 (symmetric penalty analysis confirmed correct). Net change from original config: only draw_penalty 0.2→0.0.
+
+**Lesson:** Cannot lower temperature_threshold when the policy is wrong — it amplifies the error. Temperature reduction is only safe once the policy already prefers Province. Buffer needs ~30 iterations to recover from poisoned data.
+
+---
+
 ## DEVLOG #148 — 2026-04-16: Remove draw_penalty and max_turns, lower temperature_threshold
 
 **Problem:** After fixing config passthrough (DEVLOG #147), draw_penalty=0.2 and max_turns=70 were correctly applied — but they caused a training collapse. Over 90 iterations: province% dropped 68→47%, draw% rose 3→55%, avg turns rose 24→46. The value head loss collapsed from 0.38 to 0.08 (overconfident, predicting symmetric negative outcomes).

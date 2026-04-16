@@ -11,7 +11,8 @@
 | **Last Updated** | 2026-04-16 |
 
 ### Notes
-- 2026-04-16: **Removed draw_penalty and max_turns.** draw_penalty=0.2 created a symmetric penalty that destabilized training: draw% rose from 3% to 55% over 90 iters (death spiral). max_turns=70 manufactured artificial draws in games that naturally end in ~23 turns. Also lowered temperature_threshold 25→15 so Province buys (turn 15+) use deterministic argmax. See DEVLOG #148.
+- 2026-04-16: **Reverted temp_threshold and max_turns, kept draw_penalty=0.** Lowering temp_threshold to 15 amplified the bad policy (province% crashed 45→7%). Restored temp_threshold=25 and max_turns=70. Only net change: draw_penalty=0.0. Buffer needs ~30 iters to recover. See DEVLOG #149.
+- 2026-04-16: Removed draw_penalty/max_turns/temp_threshold. See DEVLOG #148. **Partially reverted — see above.**
 - 2026-04-16: Fixed config passthrough bug in train.py — draw_penalty and max_turns were silently dropped for 117 iterations. See DEVLOG #147.
 - 2026-04-16: Added mcts_province_argmax_pct metric. See DEVLOG #146.
 - 2026-04-16: Removed 50-sim fast games, reduced entropy 0.15→0.03, fixed policy_weight to 1.0. See DEVLOG #145.
@@ -32,8 +33,8 @@ province_supply: 3
 disabled_basic_supply: [0, 3, 4, 6, 16]
 max_action_cards: 0
 draw_penalty: 0.0              # Symmetric penalty destabilizes training — removed (DEVLOG #148)
-max_turns: 0                   # Games end naturally in ~23 turns — no cap needed (DEVLOG #148)
-temperature_threshold: 15      # Province buys (turn 15+) use deterministic argmax (DEVLOG #148)
+max_turns: 70                  # Safety net restored — bad policy needs cap (DEVLOG #149)
+temperature_threshold: 25      # Exploration needed while policy recovers (DEVLOG #149)
 opponent_diversity_ratio: 0.0  # Pure self-play — no opponent diversity in Phase 0
 entropy_weight: 0.03           # Low — let policy sharpen toward Province
 policy_weight: 1.0             # Fixed, no decay
