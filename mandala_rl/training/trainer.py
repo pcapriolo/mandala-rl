@@ -141,6 +141,11 @@ class Trainer:
         self.games_in_current_iteration = 0  # Track progress within iteration
         self.best_checkpoint = None
 
+        # Curriculum auto-graduation (Dominion Phase 0 only)
+        # Stepped supply: 1 → 2 → 3. Each step builds Province-buying priors.
+        self._curriculum_steps = config.get('curriculum_steps', [])
+        self._graduation_history = []  # rolling window of per-iteration metrics
+
     def _init_heartbeat_path(self):
         """Cache the heartbeat path once at startup."""
         if not hasattr(self, '_heartbeat_path'):
@@ -208,7 +213,8 @@ class Trainer:
         # Also reload top-level keys passed directly to worker
         for top_key, attr in [('big_money_force_rate', 'big_money_force_rate'),
                                ('draw_penalty', 'draw_penalty'),
-                               ('max_turns', 'max_turns')]:
+                               ('max_turns', 'max_turns'),
+                               ('province_supply', 'province_supply')]:
             new_val = raw.get(top_key)
             if new_val is None:
                 continue
@@ -218,6 +224,134 @@ class Trainer:
                 changes.append(f"{attr} {old_val} → {new_val}")
         if changes:
             print(f"Config reload: {', '.join(changes)}")
+
+    def _write_config_to_yaml(self, updates: dict):
+        """Write updated values back to the YAML config file on disk.
+
+        The config file is the single source of truth. When curriculum
+        graduation changes province_supply or max_turns, those changes
+        must be persisted to YAML so hot-reload reads the correct values.
+        """
+        config_path = Path(self._config_path)
+        if not config_path.exists():
+            return
+        try:
+            with open(config_path) as f:
+                raw = yaml.safe_load(f)
+            for key, value in updates.items():
+                raw[key] = value
+            with open(config_path, 'w') as f:
+                yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+            print(f"[CONFIG] Wrote to {config_path}: {updates}")
+        except Exception as e:
+            print(f"[CONFIG] WARNING: failed to write {config_path}: {e}")
+
+    def _check_curriculum_graduation(self):
+        """Check if current curriculum step's graduation criteria are met.
+
+        Uses self._game_quality (populated by _log_game_quality each iteration)
+        and self._curriculum_steps (from config). When criteria are met for the
+        required number of consecutive iterations, advances province_supply to
+        the next step, updates the worker, and writes back to YAML config.
+        """
+        if not self._curriculum_steps:
+            return
+
+        current_supply = self.config.get('province_supply', 8)
+
+        # Find current step in curriculum
+        current_step = None
+        next_step = None
+        for i, step in enumerate(self._curriculum_steps):
+            if step['province_supply'] == current_supply:
+                current_step = step
+                if i + 1 < len(self._curriculum_steps):
+                    next_step = self._curriculum_steps[i + 1]
+                break
+
+        if current_step is None or next_step is None:
+            return  # Not in a graduatable step
+
+        grad = current_step.get('graduation', {})
+        min_iters = grad.get('min_iters', 20)
+        consec_required = grad.get('consecutive_iters', 10)
+
+        if self.iteration < min_iters:
+            return
+
+        # Record this iteration's metrics
+        gq = self._game_quality
+        self._graduation_history.append({
+            'iteration': self.iteration,
+            'province_supply': current_supply,
+            'avg_provinces': gq.get('avg_provinces', 0),
+            'draw_rate': gq.get('draw_rate', 1.0),
+            'avg_coins_wasted': gq.get('avg_coins_wasted', 99),
+        })
+
+        # Only check recent history for current supply level
+        recent = [h for h in self._graduation_history
+                  if h['province_supply'] == current_supply]
+        recent = recent[-consec_required:]
+
+        if len(recent) < consec_required:
+            return
+
+        # Check all criteria across the window
+        prov_min = grad.get('province_per_player_min', 0)
+        draw_max = grad.get('draw_rate_max', 1.0)
+        waste_max = grad.get('waste_max', 999)
+
+        all_pass = all(
+            h['avg_provinces'] >= prov_min
+            and h['draw_rate'] <= draw_max
+            and h['avg_coins_wasted'] <= waste_max
+            for h in recent
+        )
+
+        if not all_pass:
+            # Log progress toward graduation
+            passing = sum(
+                1 for h in recent
+                if h['avg_provinces'] >= prov_min
+                and h['draw_rate'] <= draw_max
+                and h['avg_coins_wasted'] <= waste_max
+            )
+            print(f"[CURRICULUM] supply={current_supply}: {passing}/{consec_required} "
+                  f"consecutive iters passing (need {consec_required})")
+            return
+
+        # GRADUATION — advance to next step
+        new_supply = next_step['province_supply']
+        new_max_turns = next_step.get('max_turns', self.config.get('max_turns', 0))
+
+        print(f"\n{'='*60}")
+        print(f"[CURRICULUM] GRADUATING: province_supply {current_supply} → {new_supply}")
+        print(f"[CURRICULUM] max_turns → {new_max_turns}")
+        print(f"{'='*60}\n")
+
+        # Update in-memory config
+        self.config['province_supply'] = new_supply
+        self.config['max_turns'] = new_max_turns
+
+        # Write back to YAML — config file is the single source of truth
+        self._write_config_to_yaml({
+            'province_supply': new_supply,
+            'max_turns': new_max_turns,
+        })
+
+        # Update worker
+        self.selfplay_worker.province_supply = new_supply
+        self.selfplay_worker.max_turns = new_max_turns
+
+        # Save graduation checkpoint
+        self._save_checkpoint(suffix=f"_graduated_supply{current_supply}")
+
+        # Log to tensorboard
+        self.writer.add_scalar('Curriculum/ProvinceSupply', new_supply, self.iteration)
+
+        # Clear graduation history for fresh tracking at new level
+        self._graduation_history = []
 
     def train(self, num_iterations: int):
         """
@@ -255,6 +389,9 @@ class Trainer:
             all_games = getattr(self, '_all_games_for_quality', games)
             print(f"Generated {len(all_games)} games ({len(games)} full-sim for training)")
             self._log_game_quality(all_games)
+
+            # 1b. Check curriculum graduation (auto-advance province_supply)
+            self._check_curriculum_graduation()
 
             # 2. Filter degenerate games + add to replay buffer
             print("\n[2/3] Adding examples to replay buffer...")
