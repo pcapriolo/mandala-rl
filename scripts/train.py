@@ -192,7 +192,21 @@ def main():
         'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
         'disabled_basic_supply': config.get('disabled_basic_supply', []),
         'province_supply': config.get('province_supply', 8),
+
+        # Game rules (Dominion curriculum)
+        'draw_penalty': config.get('draw_penalty', 0.0),
+        'max_turns': config.get('max_turns', 0),
+
+        # Deploy
+        'deploy_frequency': config.get('deploy_frequency', 0),
     }
+
+    # Catch-all: merge top-level scalar/list keys from YAML not already in training_config.
+    # This prevents silent config drops (e.g., draw_penalty, max_turns, deploy_frequency)
+    # when new keys are added to YAML but not manually listed above.
+    for key, value in config.items():
+        if not isinstance(value, dict) and key not in training_config:
+            training_config[key] = value
 
     # Create trainer
     trainer = Trainer(

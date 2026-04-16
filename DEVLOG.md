@@ -4,6 +4,18 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #147 — 2026-04-16: Fix silent config passthrough bug in train.py
+
+**Bug:** `scripts/train.py` manually constructs a 90-line `training_config` dict by picking specific keys from YAML. Any key not listed is silently dropped. `draw_penalty` (0.2) and `max_turns` (70) from `configs/dominion.yaml` were never included, so Trainer defaulted to `0.0` and `0` respectively. This caused 117 iterations to run with no draw penalty and no turn limit. Also `deploy_frequency` (25) was dropped, silently disabling deploy checkpoint exports.
+
+**Fix:** (1) Explicitly added `draw_penalty`, `max_turns`, and `deploy_frequency` to the manual dict. (2) Added a catch-all loop after the dict that merges all top-level scalar/list keys from YAML not already present. This prevents the entire class of bug for future top-level config additions.
+
+**Root cause:** The manual dict pattern requires a code change in `train.py` for every new YAML key. No validation warned about unrecognized keys. The catch-all eliminates this failure mode for top-level keys.
+
+**Files:** `scripts/train.py` (added 3 explicit keys + 4-line catch-all loop).
+
+---
+
 ## DEVLOG #146 — 2026-04-16: Add mcts_province_argmax_pct metric
 
 **Problem:** `mcts_province_pct` stuck at ~37% after 65+ iterations (and 700+ in prior run). Graduation gate requires >90%. Deep investigation revealed the metric captures MCTS visit share AFTER temperature=1.0 normalization. With temp=1.0 and only 4 legal buy actions, even perfect play caps at ~60-70%. The >90% target was implicitly calibrated for temp=0 (deterministic argmax).
