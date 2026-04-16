@@ -214,6 +214,8 @@ CMDS
             dom_iter=$(tail -1 "$LOCAL_BASE/dominion/losses.jsonl" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('iteration','?'))" 2>/dev/null || echo "$dom_lines")
             git add $data_files 2>/dev/null
             git commit -m "data: update dominion training data (iter $dom_iter)" 2>/dev/null
+            # Rebase on remote first to handle PRs merged from other workspaces
+            git pull --rebase origin main 2>/dev/null
             if git push origin main 2>&1; then
                 LAST_PUSH=$now
                 echo "[$(date +%H:%M:%S)] Pushed training data to git (iter $dom_iter)"
