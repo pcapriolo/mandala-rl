@@ -346,9 +346,9 @@ class Trainer:
     def _generate_selfplay_games(self) -> list:
         """Generate self-play games using batched parallel play.
 
-        Uses playout cap randomization (KataGo): 75% of games run at reduced
-        MCTS sims for game diversity, 25% run at full sims. All games are
-        used for training (fast games have noisier policies but valid outcomes).
+        All games run at full MCTS simulations (DEVLOG #145: playout cap
+        removed — 50-sim fast games produced noisy policy targets that
+        capped Province% at ~50-60%).
         """
         num_games = self.config.get('games_per_iteration', 100)
         replay_dir = Path(self.config.get('replay_dir', 'data/replays'))
@@ -356,11 +356,6 @@ class Trainer:
         checkpoint_every_n_games = self.config.get("checkpoint_every_n_games", 10)
         parallel_games = self.config.get('parallel_games', 8)
         full_sims = self.config.get('mcts_simulations', 800)
-        fast_sims = 50  # DEVLOG #106: 50 sims (was 200) to break symmetric Province-race equilibrium
-
-        # Playout cap: 25% full, 75% fast
-        n_full = max(num_games // 4, 10)
-        n_fast = num_games - n_full
 
         # Update worker's network to latest
         self.selfplay_worker.network.load_state_dict(self._unwrapped_network.state_dict())
@@ -372,7 +367,7 @@ class Trainer:
         if start_game > 0:
             print(f"Resuming from game {start_game + 1}/{num_games} in current iteration")
 
-        all_games = []  # All games (for quality metrics)
+        all_games = []
         progress = tqdm(total=num_games, desc="Self-play", initial=start_game)
 
         def on_game_complete(game_idx, game_record):
@@ -385,33 +380,19 @@ class Trainer:
                 tqdm.write(f"Checkpoint after game {self.games_in_current_iteration}/{num_games}")
                 self._save_checkpoint(suffix=f"_game{self.total_games}")
 
-        # Phase 1: Fast games (diversity)
-        if n_fast > 0 and remaining_total > n_full:
-            fast_remaining = min(n_fast, remaining_total - n_full)
-            self.selfplay_worker.mcts_simulations = fast_sims
-            fast_games = self.selfplay_worker.play_games_batched(
-                num_games=fast_remaining,
-                batch_size=parallel_games,
-                save_dir=replay_dir,
-                iteration=self.iteration,
-                save_replay_freq=save_replay_freq,
-                on_game_complete=on_game_complete,
-            )
-            all_games.extend(fast_games)
-
-        # Phase 2: Full-sim games
+        # All games at full simulations
         self.selfplay_worker.mcts_simulations = full_sims
-        full_games = self.selfplay_worker.play_games_batched(
-            num_games=min(n_full, remaining_total),
+        games = self.selfplay_worker.play_games_batched(
+            num_games=remaining_total,
             batch_size=parallel_games,
             save_dir=replay_dir,
             iteration=self.iteration,
             save_replay_freq=save_replay_freq,
             on_game_complete=on_game_complete,
         )
-        all_games.extend(full_games)
+        all_games.extend(games)
 
-        # Phase 3: Opponent diversity games (older checkpoint as opponent)
+        # Opponent diversity games (older checkpoint as opponent)
         n_opponent = 0
         opp_ratio = self.config.get('opponent_diversity_ratio', 0.0)
         if opp_ratio > 0 and self.iteration > 20:
@@ -431,7 +412,6 @@ class Trainer:
                         save_replay_freq=save_replay_freq,
                         on_game_complete=on_game_complete,
                     )
-                    full_games.extend(opp_games)
                     all_games.extend(opp_games)
                     del opp_network  # Free GPU memory
 
@@ -441,11 +421,8 @@ class Trainer:
         self.games_in_current_iteration = 0
 
         self.writer.add_scalar('Training/TotalGames', self.total_games, self.iteration)
-        self.writer.add_scalar('Training/FastGames', n_fast, self.iteration)
-        self.writer.add_scalar('Training/FullGames', n_full, self.iteration)
         self.writer.add_scalar('Training/OpponentGames', n_opponent, self.iteration)
 
-        # Train on ALL games (KataGo: fast games have noisier policies but valid outcomes)
         self._all_games_for_quality = all_games
         return all_games
 
@@ -460,11 +437,8 @@ class Trainer:
         self.writer.add_scalar('Training/BufferSize', len(self.replay_buffer), self.iteration)
 
     def _get_policy_weight(self) -> float:
-        """Policy weight schedule: 3.0 → 1.0 linear decay over first 256 iterations."""
-        base = self.config.get('policy_weight', 1.0)
-        if base <= 1.0:
-            return base
-        return max(1.0, base - (base - 1.0) * self.iteration / 256)
+        """Return policy weight from config (no decay — DEVLOG #145)."""
+        return self.config.get('policy_weight', 1.0)
 
     def _get_force_rate(self) -> float:
         """Decay big_money_force_rate linearly from config value to 0.

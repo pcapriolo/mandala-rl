@@ -46,8 +46,8 @@ training:
   min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
   checkpoint_frequency: 1
   checkpoint_every_n_games: 0  # Disabled — was filling /workspace (50MB × 5/iter)
-  entropy_weight: 0.15        # Higher for fresh training — encourages exploration of buy space
-  policy_weight: 3.0          # Start 3x, decays to 1.0 over 256 iters
+  entropy_weight: 0.03        # DEVLOG #145: 0.15 was too high, fought policy sharpening
+  policy_weight: 1.0          # DEVLOG #145: fixed, no decay
 
 # Evaluation Parameters
 evaluation:

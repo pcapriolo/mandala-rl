@@ -11,6 +11,7 @@
 | **Last Updated** | 2026-04-15 |
 
 ### Notes
+- 2026-04-16: Removed 50-sim fast games, reduced entropy 0.15→0.03, fixed policy_weight to 1.0. See DEVLOG #145.
 - 2026-04-15: Switched to pure self-play (diversity=0.0). Opponent pool (iters 779-796) were Phase 1 models — wrong game. Metrics plateaued for 600+ iters. See DEVLOG #144.
 - 2026-04-14: Phase 0 training healthy. Win rate trending up. Graduation target: waste <2 coins + MCTS province buy % >90%.
 
@@ -30,6 +31,9 @@ max_action_cards: 0
 draw_penalty: 0.2
 max_turns: 70
 opponent_diversity_ratio: 0.0  # Pure self-play — no opponent diversity in Phase 0
+entropy_weight: 0.03           # Low — let policy sharpen toward Province
+policy_weight: 1.0             # Fixed, no decay
+# All games at full MCTS sims (800) — no fast/full split
 ```
 
 **Phase 0 rule:** `opponent_diversity_ratio` must be 0.0. The opponent pool (iters 779-796) are Phase 1 models trained on a different game (Estate/Duchy enabled). Playing against them produces out-of-distribution noise, not useful signal. Pure self-play is correct for a 3-card game. Re-evaluate diversity when entering Phase 1+.
