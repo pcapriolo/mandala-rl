@@ -211,9 +211,12 @@ class Trainer:
                 setattr(self.selfplay_worker, attr, new_val)
                 changes.append(f"{attr} {old_val} → {new_val}")
         # Also reload top-level keys passed directly to worker
-        for top_key, attr in [('big_money_force_rate', 'big_money_force_rate'),
-                               ('draw_penalty', 'draw_penalty'),
-                               ('max_turns', 'max_turns')]:
+        # max_turns is excluded when curriculum steps are active — graduation owns that value
+        top_keys = [('big_money_force_rate', 'big_money_force_rate'),
+                    ('draw_penalty', 'draw_penalty')]
+        if not self._curriculum_steps:
+            top_keys.append(('max_turns', 'max_turns'))
+        for top_key, attr in top_keys:
             new_val = raw.get(top_key)
             if new_val is None:
                 continue

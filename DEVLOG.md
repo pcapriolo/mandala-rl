@@ -4,6 +4,18 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #151 — 2026-04-16: Fix hot-reload overwriting graduated max_turns
+
+**Problem:** `_hot_reload_config()` reloads `max_turns` from the YAML file every iteration. When curriculum graduation fires (e.g., supply 1→2, max_turns 30→50), the next iteration's hot-reload reads `max_turns: 30` from disk and silently clobbers the graduated value. Supply=2 games then run with a 30-turn cap instead of 50, causing excessive draws and poisoning the replay buffer.
+
+**Root cause:** `max_turns` was in the hot-reload top-level key list (trainer.py:214-216) alongside `big_money_force_rate` and `draw_penalty`. The hot-reload path had no awareness of curriculum graduation.
+
+**Fix:** When `curriculum_steps` is configured, `max_turns` is excluded from hot-reload. The curriculum owns that value. To override, edit the curriculum steps in YAML, not the top-level `max_turns`. 3 lines changed in `trainer.py`.
+
+**Impact:** Without this fix, every graduation would be immediately reverted, making the stepped curriculum non-functional.
+
+---
+
 ## DEVLOG #150 — 2026-04-16: Stepped auto-graduation curriculum (self-play only, no seeding)
 
 **Problem:** Phase 0 training stuck at supply=3 for 245 iterations. Province%=47%, draw%=49%. The model learned Province-buying at supply=1 (DEVLOG #141) but the jump to supply=3 was too large. At supply=3, self-play mirrors the Gold-preference on both sides, producing zero differential signal. Multiple config tweaks (DEVLOG #144-149) failed to unstick it.

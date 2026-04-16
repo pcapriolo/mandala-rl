@@ -11,6 +11,7 @@
 | **Last Updated** | 2026-04-16 |
 
 ### Notes
+- 2026-04-16: **Fixed hot-reload overwriting graduated max_turns.** `_hot_reload_config()` was clobbering curriculum-graduated max_turns with the YAML default every iteration. max_turns now excluded from hot-reload when curriculum steps are active. See DEVLOG #151.
 - 2026-04-16: **Switched to stepped auto-graduation curriculum.** supply=3 was stuck at Province%=47%, draw%=49% after 245 iters. Jump from supply=1→3 was too large. New approach: auto-graduate 1→2→3 with criteria checks in trainer. No seeding, no bias nudges — pure self-play only. See DEVLOG #150.
 - 2026-04-16: **Reverted temp_threshold and max_turns, kept draw_penalty=0.** Lowering temp_threshold to 15 amplified the bad policy (province% crashed 45→7%). Restored temp_threshold=25 and max_turns=70. Only net change: draw_penalty=0.0. Buffer needs ~30 iters to recover. See DEVLOG #149.
 - 2026-04-16: Removed draw_penalty/max_turns/temp_threshold. See DEVLOG #148. **Partially reverted — see above.**
