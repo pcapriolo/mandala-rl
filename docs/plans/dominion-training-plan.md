@@ -5,12 +5,13 @@
 | Field | Value |
 |-------|-------|
 | **Phase** | 0 — Gold/Silver/Province |
-| **Iteration** | Fresh start (auto-graduation) |
-| **Province Supply** | 1 (auto-graduates 1 → 2 → 3) |
-| **Key Metrics** | Starting stepped curriculum — pure self-play, no seeding |
-| **Last Updated** | 2026-04-16 |
+| **Iteration** | Running (config drift — see DEVLOG #154) |
+| **Province Supply** | Config: 1 (stepped curriculum). RunPod: still 3 (never synced). |
+| **Key Metrics** | avg_turns 52-56, draw% ~49%, province >1/player — confirms supply=3 active on RunPod |
+| **Last Updated** | 2026-04-17 |
 
 ### Notes
+- 2026-04-17: **Config drift discovered.** RunPod never received DEVLOG #152 config changes (province_supply: 3→1, max_turns: 70→30). Sync script was never run. Also fixed sync script bug: province_supply was incorrectly listed as requiring restart (it's hot-reloadable). See DEVLOG #154.
 - 2026-04-16: **Fixed yaml.dump destroying config comments.** Graduation write-back now uses regex line replacement instead of yaml.dump. Preserves all inline comments and formatting. See DEVLOG #153.
 - 2026-04-16: **Config-driven curriculum graduation.** Graduation now writes province_supply and max_turns back to YAML config on disk. Config file is the single source of truth — hot-reload reads correct values with no exclusions or workarounds. See DEVLOG #152.
 - 2026-04-16: **Switched to stepped auto-graduation curriculum.** supply=3 was stuck at Province%=47%, draw%=49% after 245 iters. Jump from supply=1→3 was too large. New approach: auto-graduate 1→2→3 with criteria checks in trainer. No seeding, no bias nudges — pure self-play only.

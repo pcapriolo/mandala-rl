@@ -95,6 +95,7 @@ class Trainer:
                       "forced_kingdom_cards": config.get("forced_kingdom_cards", []),
                       "max_turns": config.get("max_turns", 0)}
         print(f"[CONFIG] Curriculum params: {curriculum}")
+        print(f"[CONFIG] Source of truth: {config_path} — sync with sync_config_to_runpod.sh after repo changes")
 
         # Optimizer
         self.optimizer = optim.AdamW(

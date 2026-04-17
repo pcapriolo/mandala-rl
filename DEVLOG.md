@@ -4,6 +4,26 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #154 — 2026-04-17: Config drift — RunPod still training at province_supply=3
+
+**Problem:** CEO noticed bots buying >1 province per game. Investigation confirmed RunPod is still training with `province_supply=3`, `max_turns=70` — the pre-DEVLOG #152 values. The stepped curriculum config (`province_supply: 1`, `max_turns: 30`) was committed to the repo but `sync_config_to_runpod.sh` was never run. All iterations since DEVLOG #152 trained on the wrong supply level.
+
+**Evidence:**
+- `avg_turns` at recent iterations: 52-56 (impossible if max_turns=30 were active)
+- Draw rate ~49% (impossible with supply=1 where first buyer wins decisively)
+- Bots buying >1 province per game (impossible with supply=1)
+
+**Additional bug:** `sync_config_to_runpod.sh` listed `province_supply` in RESTART_KEYS, but `trainer.py:218` already hot-reloads it. This false warning may have discouraged syncing. Fixed: removed `province_supply` from RESTART_KEYS.
+
+**Fix:**
+1. Removed `province_supply` from sync script's RESTART_KEYS (it IS hot-reloadable)
+2. Added startup log reminding to sync config after repo changes
+3. Training plan updated to reflect that RunPod is at supply=3, not supply=1
+
+**Action required:** Run `sync_config_to_runpod.sh` to push the correct config to RunPod. province_supply and max_turns will take effect via hot-reload at the next iteration — no restart needed.
+
+---
+
 ## DEVLOG #149 — 2026-04-16: Revert temperature_threshold and max_turns (keep draw_penalty=0)
 
 **Problem:** DEVLOG #148 changes caused immediate collapse. Province% crashed 45→7%, draws spiked to 92%. Lowering temperature_threshold to 15 made the existing bad policy deterministic — the model already preferred Gold over Province, so removing exploration guaranteed it picked Gold. Removing max_turns let games run 60+ turns.

@@ -46,9 +46,9 @@ diff <(echo "$REMOTE_YAML") <(echo "$LOCAL_YAML") || true
 # Hot-reloadable: dirichlet_epsilon, dirichlet_alpha, c_puct, temperature,
 #   temperature_threshold, explore_epsilon, action_explore_boost,
 #   action_buy_force_rate, action_play_force_rate, big_money_force_rate,
-#   draw_penalty, max_turns
+#   draw_penalty, max_turns, province_supply
 # Everything else requires restart.
-RESTART_KEYS="input_channels|num_actions|num_res_blocks|channels|belief_size|phase_aware|factored|learning_rate|lr_milestones|lr_gamma|replay_buffer|min_buffer|entropy_weight|policy_weight|epochs_per|batch_size|province_supply|opponent_diversity|opponent_iter|disabled_basic|max_action_cards|num_simulations"
+RESTART_KEYS="input_channels|num_actions|num_res_blocks|channels|belief_size|phase_aware|factored|learning_rate|lr_milestones|lr_gamma|replay_buffer|min_buffer|entropy_weight|policy_weight|epochs_per|batch_size|opponent_diversity|opponent_iter|disabled_basic|max_action_cards|num_simulations"
 RESTART_CHANGES=$(diff <(echo "$REMOTE_YAML") <(echo "$LOCAL_YAML") | grep '^[<>]' | grep -E "$RESTART_KEYS" || true)
 
 if [ -n "$RESTART_CHANGES" ]; then
