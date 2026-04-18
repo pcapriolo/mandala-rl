@@ -83,6 +83,7 @@ class Trainer:
             disabled_basic_supply=config.get('disabled_basic_supply', []),
             province_supply=config.get('province_supply', 8),
             draw_penalty=config.get('draw_penalty', 0.0),
+            drop_draws=config.get('drop_draws', False),
             max_turns=config.get('max_turns', 0),
         )
 
