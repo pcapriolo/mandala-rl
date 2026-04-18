@@ -4,6 +4,35 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #154 — 2026-04-17: Collapse Phase 0 to supply=1, drop win-rate gate, retire curriculum_steps
+
+**Problem:** The training plan had stepped subphases (0a/0b/0c) inside Phase 0 with auto-graduation through `province_supply: 1 → 2 → 3` driven by `_check_curriculum_graduation` (added DEVLOG #152, patched #153). Two issues made this the wrong abstraction:
+
+1. **Win rate as a gate signal in symmetric self-play is meaningless.** p0 win rate tends to 50% by construction; high-draw runs (iter 693: 76% draws) show p0 at 14–17% despite no real strength gap. Graduating on win-rate thresholds would either never fire or fire on noise.
+2. **The stepped mechanism never ran.** The Apr 12 pod used the older `buffer_fill_watchdog.sh` that sed-jumped supply=1→3 at iter 48. The trainer-driven `curriculum_steps` path was built Apr 16 and crashed Apr 17 (disk full) before first live execution. Meanwhile supply=3 got stuck in the same draw attractor DEVLOG #141 originally diagnosed, for the second time.
+
+**Fix:** Collapsed Phase 0 to single-stage `province_supply: 1`. New graduation gates (all must hold for 20 consecutive iterations):
+- MCTS province buy % > 90%
+- Avg coins wasted < 2.0
+- Avg turns < 13
+
+No win-rate gate at any phase. Advancement between phases is a human decision — edit `province_supply` in `configs/dominion.yaml`, trainer hot-reloads on next iter.
+
+**Code removed from `mandala_rl/training/trainer.py`:**
+- `_curriculum_steps` / `_graduation_history` init state
+- `_check_curriculum_graduation` method (~100 lines)
+- `_write_config_to_yaml` method (~20 lines)
+- `import re` (only used by `_write_config_to_yaml`)
+- Graduation call site in `train()` loop
+
+**Config removed from `configs/dominion.yaml`:** entire `curriculum_steps:` block.
+
+**Operational note:** pod-only `scripts/buffer_fill_watchdog.sh` is retired. It was never committed. Future training restarts run the trainer's native loop with no curriculum helper.
+
+**Files changed:** `docs/plans/dominion-training-plan.md` (rewrite), `configs/dominion.yaml` (delete curriculum_steps), `mandala_rl/training/trainer.py` (remove graduation code), `DEVLOG.md` (this entry).
+
+---
+
 ## DEVLOG #149 — 2026-04-16: Revert temperature_threshold and max_turns (keep draw_penalty=0)
 
 **Problem:** DEVLOG #148 changes caused immediate collapse. Province% crashed 45→7%, draws spiked to 92%. Lowering temperature_threshold to 15 made the existing bad policy deterministic — the model already preferred Gold over Province, so removing exploration guaranteed it picked Gold. Removing max_turns let games run 60+ turns.
