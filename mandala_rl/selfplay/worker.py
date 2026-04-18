@@ -58,6 +58,7 @@ class SelfPlayWorker:
         disabled_basic_supply: list = None,
         province_supply: int = 8,
         draw_penalty: float = 0.0,
+        drop_draws: bool = False,
         max_turns: int = 0
     ):
         self.game = game
@@ -81,6 +82,7 @@ class SelfPlayWorker:
         self.disabled_basic_supply = disabled_basic_supply or []
         self.province_supply = province_supply
         self.draw_penalty = draw_penalty
+        self.drop_draws = drop_draws
         self.max_turns = max_turns
 
         # Detect game type for C++ engine
@@ -109,6 +111,9 @@ class SelfPlayWorker:
         """
         examples = []
         outcome = game.outcome
+
+        if self.drop_draws and outcome == 0.0:
+            return []
 
         # Normalize score margin to ~[-1, 1]
         score_margin = game.score_p0 - game.score_p1

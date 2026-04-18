@@ -82,6 +82,7 @@ max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
 draw_penalty: 0.0   # DEVLOG #148: removed — symmetric penalty destabilized training (draw% 3→55%)
+drop_draws: true    # Draws carry zero differential signal in symmetric self-play — exclude their trajectories from the replay buffer entirely
 max_turns: 30       # Tight cap for supply=1 (games should end in ~15-20 turns)
 
 # Reproducibility

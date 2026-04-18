@@ -4,6 +4,31 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #155 — 2026-04-18: Drop draw trajectories from Dominion training signal
+
+**Problem:** ~7% of Phase 0 self-play games end in a draw. Their trajectories were added to the replay buffer with `value=0.0` for every state. DEVLOG #148 already established that draws carry zero differential signal in symmetric 2-player self-play — a symmetric penalty applied to both sides cancels out. Same logic applies to the value=0 training target: it teaches the value head "this state was neither good nor bad" regardless of which line was played, diluting the Province-vs-Silver distinction the network is trying to learn.
+
+**Fix:** New `drop_draws` flag on `SelfPlayWorker`. When true, `get_training_examples()` early-returns `[]` if `game.outcome == 0.0`. The trajectory is discarded at the Python layer before reaching the buffer — no policy targets, no value targets, no buffer slots consumed.
+
+**Files touched:**
+- `configs/dominion.yaml`: added `drop_draws: true` (Dominion opts in).
+- `mandala_rl/selfplay/worker.py`: added `drop_draws` constructor param, stored as `self.drop_draws`, early-return in `get_training_examples`.
+- `mandala_rl/training/trainer.py`: passes `drop_draws=config.get('drop_draws', False)` to `SelfPlayWorker`.
+
+**Defaults:** `drop_draws=False` in the worker signature. Mandala and Lost Cities configs don't set it → behavior unchanged.
+
+**Tradeoffs:**
+- Buffer refills ~7% slower (per current draw rate). Minor — ~33 iters to fill becomes ~35.
+- Value head now only sees ±outcome targets, never 0. Intentional sharpening.
+- Selection bias toward decisive lines. A draw-tending line gets zero weight; a winning line gets full weight. For Phase 0 (supply=1, goal = "buy Province") this is the right bias.
+- Pre-change draws in the buffer linger until rotated out (~33 iters on 100K buffer, 100 games/iter). Not flushing.
+
+**Dead code:** `worker.py:132-133` (`if value == 0.0 and self.draw_penalty > 0: value = -self.draw_penalty`) is unreachable when `drop_draws=True` since we've already returned. Left in place — removal is cleanup, separate scope.
+
+**Verification gate:** after deploy, buffer growth per iter should track `games_per_iter × avg_len × (1 - draw_rate)`. MCTS province % gate (> 90% for 20 iters) should converge faster than it was trending pre-change.
+
+---
+
 ## DEVLOG #154 — 2026-04-17: Collapse Phase 0 to supply=1, drop win-rate gate, retire curriculum_steps
 
 **Problem:** The training plan had stepped subphases (0a/0b/0c) inside Phase 0 with auto-graduation through `province_supply: 1 → 2 → 3` driven by `_check_curriculum_graduation` (added DEVLOG #152, patched #153). Two issues made this the wrong abstraction:
