@@ -74,16 +74,16 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 2: Silver/Gold/Province, supply=5
+# Curriculum Learning — Phase 0: Silver/Gold/Province ONLY
 # See docs/plans/dominion-training-plan.md for full curriculum
 disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 5  # Phase 2: same card set (Silver/Gold/Province), supply bumped 3→5. Gates must hold 20 consec iters before Phase 3.
+province_supply: 3  # Phase 1: same card set (Silver/Gold/Province), supply bumped 1→3. Gates must hold 20 consec iters before Phase 2.
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
 draw_penalty: 0.0   # DEVLOG #148: removed — symmetric penalty destabilized training (draw% 3→55%)
 drop_draws: true    # Draws carry zero differential signal in symmetric self-play — exclude their trajectories from the replay buffer entirely
-max_turns: 50       # Headroom for supply=5 (expect ~22-30 turns per game)
+max_turns: 30       # Tight cap for supply=1 (games should end in ~15-20 turns)
 
 # Reproducibility
 seed: 42

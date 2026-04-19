@@ -4,35 +4,6 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
-## DEVLOG #157 — 2026-04-18: Dominion Phase 1 → Phase 2 transition (supply 3 → 5), restructure Phase 2/3
-
-**Transition:** Manual graduation from Phase 1 (`province_supply: 3`) to Phase 2 (`province_supply: 5`). Same card set (Silver/Gold/Province), same `disabled_basic_supply`, same `drop_draws`. Single-variable change in supply per plan Rule #2. Coincident: `max_turns: 30 → 50` (mechanical scaling for longer games at supply=5, not a curriculum variable).
-
-**Why now (formal Phase 1 gates not held):** Three-gate check over last 30 iters (1155–1184): MCTS province % held 85–92% (mostly ≥88), coins wasted held 2.2–2.6 (<3.0 throughout), but `avg_turns` sat at 15.1–17.2, well above the `<13` gate. That gate was likely stale: Phase 0's turns gate was relaxed to `<17` in #34 (commit 0ef29d7), but Phase 1's was left at `<13` despite supply=3 mechanically producing longer games (more Provinces to accumulate → longer horizon). Rather than relax the Phase 1 gate in place, took a smaller supply step (3→5 instead of the original 3→7) to reduce adaptation shock, and re-derived gates for the new Phase 2.
-
-**Plan restructure:** Phase 2 and Phase 3 swapped supply values. Rationale: a supply=5 rung between Phase 1 (supply=3) and Phase 3 (full VP clutter) gives a gentler progression. Phase 3 now raises supply AND enables VP clutter, inverting the old "drop supply while enabling VP clutter" idea — the new reasoning is that a larger horizon (7 Provinces) gives the engine room to build Gold first before committing to VP buying under new clutter.
-
-| | Before | After |
-|---|--------|-------|
-| Phase 2 supply | 7 | **5** |
-| Phase 3 supply | 5 | **7** |
-
-**Re-derived gates:**
-- Phase 2 @ supply=5: Province/player > 2.0 *(max possible 2.5 — old 2.5 was unreachable)*, game length 20–35 turns, draw rate < 5%.
-- Phase 3 @ supply=7: Province/player > 2.5 *(old 1.5 was trivial at the new supply)*, Duchy > 0.3/player (unchanged), Copper < 0.1/player (unchanged), draw rate < 5% (unchanged).
-
-**Operational steps:**
-1. Edited `configs/dominion.yaml` locally (`province_supply: 3 → 5`, `max_turns: 30 → 50`, refreshed comments).
-2. RunPod mirror + checkpoint backup: deferred to user (Rule #3). Expected pattern: `cp configs/dominion.yaml configs/dominion.yaml.bak_phase1_<timestamp>` on pod, mirror edit, rely on hot-reload.
-3. Plan doc (`docs/plans/dominion-training-plan.md`) updated: status block, recent-changes, Phase 2 rewrite, Phase 3 rewrite.
-4. No code changes. No checkpoint changes. No buffer clear. No training restart.
-
-**Expectation:** Short-term: `avg_turns` jumps from ~16 to ~22–28, `avg_provinces` climbs from ~0.9 toward ~2.0, MCTS province % dips briefly then recovers. Buffer fully rotates in ~30 iters at supply=5 game lengths.
-
-**Verification:** Watch `data/dominion/losses.jsonl` for next 40 iters. Gate check resumes after adaptation settles — target: 20 consecutive iters where Province/player > 2.0, 20 ≤ turns ≤ 35, draws < 5%. If games start hitting `max_turns: 50` cap (truncated-episode signal in logs), bump further; if <5% of games are truncated, leave it.
-
----
-
 ## DEVLOG #156 — 2026-04-18: Dominion Phase 0 → Phase 1 transition (supply 1 → 3)
 
 **Transition:** Manual graduation from Phase 0 (`province_supply: 1`) to Phase 1 (`province_supply: 3`). Same card set (Silver/Gold/Province only), same disabled basic supply, same `max_turns: 30`, same `draw_penalty: 0.0`. Single-variable change per plan rule #2.
