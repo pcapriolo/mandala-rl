@@ -44,7 +44,7 @@ training:
   lr_gamma: 0.3
   replay_buffer_size: 100000  # 218-ch tensors are large; saved to /workspace (100GB) which has plenty of room
   min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
-  checkpoint_frequency: 1
+  checkpoint_frequency: 25
   checkpoint_every_n_games: 0  # Disabled — was filling /workspace (50MB × 5/iter)
   entropy_weight: 0.03        # DEVLOG #145: 0.15 was too high, fought policy sharpening
   policy_weight: 1.0          # DEVLOG #145: fixed, no decay
