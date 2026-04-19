@@ -4,12 +4,13 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 0 — Gold/Silver/Province |
-| **Province Supply** | 1 |
+| **Phase** | 2 — Gold/Silver/Province, supply=5 |
+| **Province Supply** | 5 |
 | **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
 | **Last Updated** | 2026-04-18 |
 
 ### Recent changes
+- 2026-04-18: **Phase 1 → Phase 2 transition (supply 3 → 5).** Phase 1 gates held on MCTS % and coins, but `avg_turns < 13` was mechanically unreachable at supply=3 (games consistently 15–17 turns). Graduating with a smaller step than original plan (3→5, not 3→7) to reduce adaptation shock. Plan restructured: **Phase 2 now supply=5, Phase 3 now supply=7** (swapped from earlier 7/5 layout). Gates re-derived for both. `max_turns` 30 → 50 to accommodate longer supply=5 games. See DEVLOG #157.
 - 2026-04-18: **Inserted new Phase 1 (supply=3, same cards as Phase 0).** VP-card enablement pushed to Phase 3. Smithy → Phase 4. Full Dominion → Phase 5. Motivation: isolate supply changes from card enablement per Rule #2. Phase 0 coins-wasted threshold relaxed to <3.0.
 - 2026-04-17: **Collapsed Phase 0 to single stage (supply=1).** Removed stepped subphases (0a/0b/0c) and auto-graduation through supply=1→2→3. Dropped win-rate gate at every phase — symmetric self-play makes p0/p1 win rate a noisy ~50% signal that can't distinguish "learning" from "converging on the same equilibrium more confidently." Graduation between phases is now a human decision triggered when gate metrics hold. See DEVLOG #154.
 - 2026-04-16: Fixed yaml.dump destroying config comments (DEVLOG #153).
@@ -89,41 +90,42 @@ province_supply: 3
 
 ---
 
-## Phase 2: More Provinces
+## Phase 2: Supply=5 (CURRENT)
 
-**Supply:** Full basic cards, Province (`province_supply: 7`)
-**Disabled:** Action cards only
-**Goal:** Deeper economy/VP tradeoff decisions. With 7 Provinces, build Gold engine first, then pivot to Province buying at the right moment.
+**Supply:** Gold, Silver, Province — `province_supply: 5`
+**Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards (same as Phase 1)
+**Goal:** Transfer Phase 1's Province > Gold > Silver priority to a larger terminal state (5 Provinces) with longer game horizon. Intermediate rung before introducing VP clutter.
 
 **Config changes from Phase 1:**
 ```yaml
-province_supply: 7
+province_supply: 5
+max_turns: 50
 ```
 
-**Graduation criteria:**
-- Province/player > 2.5
-- Avg game length 25–45 turns
+**Graduation criteria (all must hold for 20 consecutive iterations):**
+- Province/player > 2.0  *(max possible 2.5 at supply=5; ≥2.0 means both sides buying decisively)*
+- Avg game length 20–35 turns
 - Draw rate < 5%
 
 ---
 
-## Phase 3: Full VP Cards
+## Phase 3: Full VP Cards, Supply=7
 
-**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 5`)
+**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 7`)
 **Disabled:** Action cards only
-**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution).
+**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution), now with a larger horizon so the engine can build Gold first before committing to VP buying.
 
 **Config changes from Phase 2:**
 ```yaml
 disabled_basic_supply: []
-province_supply: 5
+province_supply: 7
 max_turns: 70
 ```
 
-Note: This transition changes both `province_supply` (7→5) and `disabled_basic_supply` simultaneously, which is a knowing exception to Rule #2. Dropping supply while enabling VP clutter lets the model re-learn terminal priorities in a smaller-horizon setting before scaling back up.
+Note: This transition changes both `province_supply` (5→7) and `disabled_basic_supply` simultaneously — a knowing exception to Rule #2. Raising supply while enabling VP clutter gives the model enough horizon to absorb the new cards (Copper/Estate/Duchy) without panic-buying VP on a tight terminal.
 
 **Graduation criteria:**
-- Province/player > 1.5
+- Province/player > 2.5
 - Duchy buying present (> 0.3/player)
 - Copper buying < 0.1/player
 - Draw rate < 5%
