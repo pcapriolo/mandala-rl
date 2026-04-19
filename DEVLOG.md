@@ -4,6 +4,29 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #156 — 2026-04-18: Dominion Phase 0 → Phase 1 transition (supply 1 → 3)
+
+**Transition:** Manual graduation from Phase 0 (`province_supply: 1`) to Phase 1 (`province_supply: 3`). Same card set (Silver/Gold/Province only), same disabled basic supply, same `max_turns: 30`, same `draw_penalty: 0.0`. Single-variable change per plan rule #2.
+
+**Evidence Phase 0 exit criteria met:** Verified from `data/dominion/losses.jsonl`, iters 1025–1064 (40 consecutive iterations) all three gates passing:
+- MCTS province % > 90 — range 93–100, median ~97
+- Avg coins wasted < 3.0 — range 2.41–2.71
+- Avg turns < 13 — range 10.3–11.9
+
+Required: 20 consecutive. Achieved: 40+. Live pod metrics at iter 1110 (immediately pre-transition): MCTS 98%, coins_wasted 2.55, avg_turns 11.1, avg_provinces 0.49 — converged on single-Province terminal.
+
+**Operational steps:**
+1. Edited `/root/mandala-dom/configs/dominion.yaml` on RunPod (`province_supply: 1 → 3`); backup saved as `configs/dominion.yaml.bak_phase0_20260418_212612`.
+2. Mirrored edit to repo `configs/dominion.yaml`.
+3. Hot-reload triggered on iter 1111: log confirms `Config reload: province_supply 1 → 3`.
+4. No training restart. No buffer clear. No checkpoint change.
+
+**Expectation:** Short-term dip in gates while policy adapts to 3-Province terminal (more Province buys needed per game, longer horizon). Gates should re-stabilize above thresholds within ~20–40 iterations. Buffer rotates naturally; 100K-slot buffer fully refreshes in ~30 iters at 100 games × ~11 turns.
+
+**Verification:** Monitor `losses.jsonl` for next ~40 iterations. If MCTS province %, coins_wasted, or avg_turns fail to re-stabilize under Phase 0 thresholds, investigate before considering Phase 2 (adding Copper/Estate/Duchy). Phase 2 change per plan: `province_supply: 3 → 7`, re-enable full basic supply.
+
+---
+
 ## DEVLOG #155 — 2026-04-18: Drop draw trajectories from Dominion training signal
 
 **Problem:** ~7% of Phase 0 self-play games end in a draw. Their trajectories were added to the replay buffer with `value=0.0` for every state. DEVLOG #148 already established that draws carry zero differential signal in symmetric 2-player self-play — a symmetric penalty applied to both sides cancels out. Same logic applies to the value=0 training target: it teaches the value head "this state was neither good nor bad" regardless of which line was played, diluting the Province-vs-Silver distinction the network is trying to learn.
