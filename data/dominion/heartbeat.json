@@ -1,1 +1,1 @@
-{"iteration": 1191, "phase": "training", "detail": "gradient updates", "game": 0, "games_total": 100, "total_games": 119100, "timestamp": 1776567008.647099}
+{"iteration": 1195, "phase": "checkpoint", "detail": "saving", "game": 0, "games_total": 100, "total_games": 119500, "timestamp": 1776567266.9416294}
