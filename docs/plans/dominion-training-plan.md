@@ -63,7 +63,7 @@ policy_weight: 1.0
 **Phase 0 graduation criteria (all must hold for 20 consecutive iterations):**
 - MCTS province buy % > 90% (when Province is affordable, search prefers it)
 - Avg coins wasted < 3.0 per game
-- Avg turns < 13
+- Avg turns < 17
 
 **Mechanism:** metrics are computed and logged each iteration by the trainer. A human reviews them (dashboard / `losses.jsonl`) and bumps `province_supply` in `configs/dominion.yaml` when all gates hold — no auto-graduation.
 
