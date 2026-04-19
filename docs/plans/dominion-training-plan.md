@@ -7,9 +7,10 @@
 | **Phase** | 0 — Gold/Silver/Province |
 | **Province Supply** | 1 |
 | **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
-| **Last Updated** | 2026-04-17 |
+| **Last Updated** | 2026-04-18 |
 
 ### Recent changes
+- 2026-04-18: **Inserted new Phase 1 (supply=3, same cards as Phase 0).** VP-card enablement pushed to Phase 3. Smithy → Phase 4. Full Dominion → Phase 5. Motivation: isolate supply changes from card enablement per Rule #2. Phase 0 coins-wasted threshold relaxed to <3.0.
 - 2026-04-17: **Collapsed Phase 0 to single stage (supply=1).** Removed stepped subphases (0a/0b/0c) and auto-graduation through supply=1→2→3. Dropped win-rate gate at every phase — symmetric self-play makes p0/p1 win rate a noisy ~50% signal that can't distinguish "learning" from "converging on the same equilibrium more confidently." Graduation between phases is now a human decision triggered when gate metrics hold. See DEVLOG #154.
 - 2026-04-16: Fixed yaml.dump destroying config comments (DEVLOG #153).
 - 2026-04-16: Config-driven curriculum graduation landed (DEVLOG #152) — then retired 2026-04-17 with the simplification above.
@@ -61,31 +62,30 @@ policy_weight: 1.0
 
 **Phase 0 graduation criteria (all must hold for 20 consecutive iterations):**
 - MCTS province buy % > 90% (when Province is affordable, search prefers it)
-- Avg coins wasted < 2.0 per game
+- Avg coins wasted < 3.0 per game
 - Avg turns < 13
 
 **Mechanism:** metrics are computed and logged each iteration by the trainer. A human reviews them (dashboard / `losses.jsonl`) and bumps `province_supply` in `configs/dominion.yaml` when all gates hold — no auto-graduation.
 
 ---
 
-## Phase 1: Full VP Cards
+## Phase 1: Bump Province Supply to 3
 
-**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 5`)
-**Disabled:** Action cards only
-**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution).
+**Supply:** Gold, Silver, Province — `province_supply: 3`
+**Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards
+**Goal:** Transfer Phase 0's Province > Gold > Silver priority to a larger terminal state (3 provinces to accumulate).
 
 **Config changes from Phase 0:**
 ```yaml
-disabled_basic_supply: []
-province_supply: 5
-max_turns: 70
+province_supply: 3
 ```
 
-**Graduation criteria:**
-- Province/player > 1.5
-- Duchy buying present (> 0.3/player)
-- Copper buying < 0.1/player
-- Draw rate < 15%
+**Graduation criteria (all must hold for 20 consecutive iterations):**
+- MCTS province buy % > 90% (when Province is affordable, search prefers it)
+- Avg coins wasted < 3.0 per game
+- Avg turns < 13
+
+(Gates mirror Phase 0 — same behavioral signals apply with larger terminal state.)
 
 ---
 
@@ -103,26 +103,50 @@ province_supply: 7
 **Graduation criteria:**
 - Province/player > 2.5
 - Avg game length 25–45 turns
-- Draw rate < 15%
+- Draw rate < 5%
 
 ---
 
-## Phase 3: Smithy
+## Phase 3: Full VP Cards
+
+**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 5`)
+**Disabled:** Action cards only
+**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution).
+
+**Config changes from Phase 2:**
+```yaml
+disabled_basic_supply: []
+province_supply: 5
+max_turns: 70
+```
+
+Note: This transition changes both `province_supply` (7→5) and `disabled_basic_supply` simultaneously, which is a knowing exception to Rule #2. Dropping supply while enabling VP clutter lets the model re-learn terminal priorities in a smaller-horizon setting before scaling back up.
+
+**Graduation criteria:**
+- Province/player > 1.5
+- Duchy buying present (> 0.3/player)
+- Copper buying < 0.1/player
+- Draw rate < 5%
+
+---
+
+## Phase 4: Smithy
 
 **Supply:** Full basic cards + Smithy, Province (`province_supply: 7`)
 **Goal:** Learn draw engine basics. Smithy (+3 cards) is the simplest engine card — teaches that action cards can accelerate economy.
 
-**Config changes from Phase 2:**
+**Config changes from Phase 3:**
 ```yaml
+province_supply: 7
 max_action_cards: 1
 forced_kingdom_cards: []  # TBD — may force Smithy
 ```
 
-**Graduation criteria:** TBD based on Phase 2 results.
+**Graduation criteria:** TBD based on Phase 3 results.
 
 ---
 
-## Phase 4: Full Dominion
+## Phase 5: Full Dominion
 
 **Supply:** Standard 10-card kingdom, Province (`province_supply: 8`)
 **Goal:** Competitive play across varied kingdoms.
