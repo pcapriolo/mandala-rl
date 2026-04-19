@@ -74,10 +74,10 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 2: Silver/Gold/Province, supply=5
+# Curriculum Learning — Phase 3: Silver/Gold/Province only, supply=7
 # See docs/plans/dominion-training-plan.md for full curriculum
 disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 5  # Phase 2: same card set (Silver/Gold/Province), supply bumped 3→5. Gates must hold 20 consec iters before Phase 3.
+province_supply: 7  # Phase 3: same card set (Silver/Gold/Province), supply bumped 5→7. Gates must hold 20 consec iters before Phase 4 (re-enable VP clutter).
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0

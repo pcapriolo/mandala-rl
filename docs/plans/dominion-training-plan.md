@@ -4,12 +4,13 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 2 — Gold/Silver/Province, supply=5 |
-| **Province Supply** | 5 |
+| **Phase** | 3 — Silver/Gold/Province only, supply=7 |
+| **Province Supply** | 7 |
 | **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
-| **Last Updated** | 2026-04-18 |
+| **Last Updated** | 2026-04-19 |
 
 ### Recent changes
+- 2026-04-19: **Phase 2 → Phase 3 transition (supply 5 → 7, single-variable).** Phase 2 gates saturated at iter 1754–1783: provinces/p = 2.5 (mechanical max), draw_rate = 0.0, avg_turns 18–20 (same mechanical-saturation pattern that retired Phase 1's turns-floor gate). Taking a strict single-variable supply step to restore Rule #2 compliance — card set, `max_turns: 50`, `draw_penalty`, `drop_draws` all unchanged. The old Phase 3 (bundled supply+VP-clutter) is now Phase 4. Smithy → Phase 5. Full Dominion → Phase 6. See DEVLOG #158.
 - 2026-04-18: **Phase 1 → Phase 2 transition (supply 3 → 5).** Phase 1 gates held on MCTS % and coins, but `avg_turns < 13` was mechanically unreachable at supply=3 (games consistently 15–17 turns). Graduating with a smaller step than original plan (3→5, not 3→7) to reduce adaptation shock. Plan restructured: **Phase 2 now supply=5, Phase 3 now supply=7** (swapped from earlier 7/5 layout). Gates re-derived for both. `max_turns` 30 → 50 to accommodate longer supply=5 games. See DEVLOG #157.
 - 2026-04-18: **Inserted new Phase 1 (supply=3, same cards as Phase 0).** VP-card enablement pushed to Phase 3. Smithy → Phase 4. Full Dominion → Phase 5. Motivation: isolate supply changes from card enablement per Rule #2. Phase 0 coins-wasted threshold relaxed to <3.0.
 - 2026-04-17: **Collapsed Phase 0 to single stage (supply=1).** Removed stepped subphases (0a/0b/0c) and auto-graduation through supply=1→2→3. Dropped win-rate gate at every phase — symmetric self-play makes p0/p1 win rate a noisy ~50% signal that can't distinguish "learning" from "converging on the same equilibrium more confidently." Graduation between phases is now a human decision triggered when gate metrics hold. See DEVLOG #154.
@@ -90,7 +91,7 @@ province_supply: 3
 
 ---
 
-## Phase 2: Supply=5 (CURRENT)
+## Phase 2: Supply=5
 
 **Supply:** Gold, Silver, Province — `province_supply: 5`
 **Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards (same as Phase 1)
@@ -109,20 +110,37 @@ max_turns: 50
 
 ---
 
-## Phase 3: Full VP Cards, Supply=7
+## Phase 3: Supply=7 (CURRENT)
 
-**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 7`)
-**Disabled:** Action cards only
-**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution), now with a larger horizon so the engine can build Gold first before committing to VP buying.
+**Supply:** Gold, Silver, Province — `province_supply: 7`
+**Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards (same as Phase 2)
+**Goal:** Transfer Phase 2's Province > Gold > Silver priority to a 7-Province terminal with longer horizon. Final pre-VP-clutter rung; isolates the supply scaling from the card-enablement change to come in Phase 4 (strict Rule #2).
 
 **Config changes from Phase 2:**
 ```yaml
-disabled_basic_supply: []
 province_supply: 7
-max_turns: 70
 ```
 
-Note: This transition changes both `province_supply` (5→7) and `disabled_basic_supply` simultaneously — a knowing exception to Rule #2. Raising supply while enabling VP clutter gives the model enough horizon to absorb the new cards (Copper/Estate/Duchy) without panic-buying VP on a tight terminal.
+`max_turns` stays at 50 — avg_turns scaling has been ~4 turns per 2-supply bump (supply 3 → 11, supply 5 → 19), so supply=7 projects to ~22–26, well under the cap.
+
+**Graduation criteria (all must hold for 20 consecutive iterations):**
+- Province/player > 3.0  *(max possible 3.5 at supply=7; ≥3.0 means both sides buying decisively)*
+- Draw rate < 5%
+- Avg turns < 40  *(upper bound only — lower bound is mechanically unreachable when terminal saturates, same pattern as Phase 1/2 per DEVLOG #157)*
+
+---
+
+## Phase 4: Full VP Cards
+
+**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 7`)
+**Disabled:** Action cards only
+**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution). Supply stays at 7 — only card-set changes — so this remains a single-variable transition.
+
+**Config changes from Phase 3:**
+```yaml
+disabled_basic_supply: []
+max_turns: 70
+```
 
 **Graduation criteria:**
 - Province/player > 2.5
@@ -132,23 +150,22 @@ Note: This transition changes both `province_supply` (5→7) and `disabled_basic
 
 ---
 
-## Phase 4: Smithy
+## Phase 5: Smithy
 
 **Supply:** Full basic cards + Smithy, Province (`province_supply: 7`)
 **Goal:** Learn draw engine basics. Smithy (+3 cards) is the simplest engine card — teaches that action cards can accelerate economy.
 
-**Config changes from Phase 3:**
+**Config changes from Phase 4:**
 ```yaml
-province_supply: 7
 max_action_cards: 1
 forced_kingdom_cards: []  # TBD — may force Smithy
 ```
 
-**Graduation criteria:** TBD based on Phase 3 results.
+**Graduation criteria:** TBD based on Phase 4 results.
 
 ---
 
-## Phase 5: Full Dominion
+## Phase 6: Full Dominion
 
 **Supply:** Standard 10-card kingdom, Province (`province_supply: 8`)
 **Goal:** Competitive play across varied kingdoms.
@@ -165,3 +182,80 @@ forced_kingdom_cards: []  # TBD — may force Smithy
 4. **No weight surgery.** Bias nudges only. Seed data injection is the approved intervention for stuck priors (DEVLOG #137).
 5. **Phase advancement is a human decision.** Gates are observable criteria in `losses.jsonl` / dashboard; the human edits `province_supply` in the YAML and the trainer picks it up via hot-reload on the next iteration.
 6. **Monitor overtraining ratio.** Each iteration ~3,000 examples. Buffer 100K, 1 epoch = each example seen ~1.3x. Safe.
+
+---
+
+## Phase transition runbook
+
+Use this for every supply/card-set graduation. Hot-reload handles `province_supply`, `max_turns`, `draw_penalty`, `big_money_force_rate` (see `trainer.py:210-213`); anything else requires a restart.
+
+### Pre-flight
+
+1. Confirm gates hold for 20+ consecutive iters via `scripts/check_phase_gates.py` (or by eyeballing `data/dominion/losses.jsonl` — the sync of the live pod file into the repo runs on the training commit cadence; for freshest data SSH directly).
+2. Pull pod connection details from memory or ask the user — RunPod SSH port rotates on pod restart. Current: `ssh root@38.147.83.30 -p 26242 -i ~/.ssh/id_ed25519`.
+3. Locate the **live** config on the pod — `python3 scripts/train.py --config configs/dominion.yaml` is relative to CWD. Find it via:
+   ```
+   ssh ... "readlink -f /proc/$(pgrep -f 'train.py.*dominion')/cwd"
+   ```
+   As of 2026-04-19 the live CWD is `/root/mandala-dom`, **not** `/workspace/mandala-rl`. Treat the workspace copy as stale; it is out of sync with the live training config.
+
+### Deploy
+
+1. Edit `configs/dominion.yaml` in the repo — change only the targeted keys.
+2. Back up the pod file: `ssh ... "cp <live>/configs/dominion.yaml <live>/configs/dominion.yaml.bak_phase<N>_<YYYYMMDD>"`.
+3. `scp` the local file to the same live path on the pod.
+4. Verify the pod file with `grep -nE 'province_supply|disabled_basic_supply|max_turns'` — the values should match the local edit.
+5. Tail training stdout at `/root/train_dom.log` (found via `/proc/<pid>/fd/1`); watch for `Config reload: <attr> <old> → <new>` at the next iter boundary. If the log says nothing, the change didn't land — re-check file path and hot-reload whitelist.
+
+### Update project artifacts
+
+Before or after the deploy (either order is fine since these don't affect the running trainer):
+- Update top-of-file status table + recent-changes bullet in this plan doc.
+- Append a new numbered entry to `DEVLOG.md` with evidence, rationale, steps, expectation, rollback.
+- Rename the working branch to something concrete (e.g., `pcapriolo/dominion-supply-7`).
+
+### Rollback
+
+Revert the YAML value in both the local repo and the pod's live config — hot-reload swaps back on the next iter. Or restore the `.bak_phase<N>_<date>` backup on the pod. No checkpoint or buffer surgery. Mixed-supply trajectories self-flush from the 100K buffer within ~33 iterations at 100 games × ~19–25 turns.
+
+---
+
+## Monitoring plan (post-transition)
+
+### What to watch
+
+| Signal | Source | Healthy band | Alarm |
+|---|---|---|---|
+| `Config reload:` stdout line | `/root/train_dom.log` | Exactly once, at the iter boundary after SCP | Missing — config didn't land |
+| `avg_provinces` | `losses.jsonl` | Phase 3: trending 3.0→3.5 over ~20–40 iters | Stuck ≤2.5 past iter 1830 (~30 iters post-transition) — policy not adapting |
+| `avg_turns` | `losses.jsonl` | 22–28 expected at supply=7 | ≥45 sustained → risk of clipping at `max_turns: 50`; bump to 60 if >5% of games clip |
+| `draw_rate` | `losses.jsonl` | <5% (Phase 3 gate) | ≥10% for 3+ iters → regression; consider rollback |
+| `std_len` vs `avg_len` | `losses.jsonl` | `std_len` << `max_turns - avg_len` | `avg_len + std_len` approaches 50 → clipping |
+| `mcts_province_argmax_pct` | `losses.jsonl` | ≥0.9 (unchanged from Phase 2) | <0.8 sustained → MCTS deprioritising Province; policy regression |
+| `value_loss` | `losses.jsonl` | Short-term spike expected (new terminal), then re-converge | Monotonic climb 10+ iters → overtraining or curriculum shock |
+| Heartbeat age | `dominion_monitor.sh` existing alert (>1800s stale) | — | Existing `scripts/dominion_monitor.sh` handles this |
+
+### Where to watch
+
+- **Live stdout:** `ssh ... "tail -f /root/train_dom.log"`. Best for first 1–2 iters after deploy to confirm hot-reload and first post-transition game quality line.
+- **Metrics file:** `/workspace/dominion_data/losses.jsonl` on the pod; the repo copy at `data/dominion/losses.jsonl` syncs via the training commits (iter ~1783 at time of writing; will catch up as the bot commits post-transition data).
+- **Dashboard:** `http://<pod>:5000` via the `start_observer.py` process already running (PID 2217583). Useful for eyeballing curves.
+- **Existing watchdog:** `scripts/dominion_monitor.sh` runs every 10 min via launchd — handles process-alive, heartbeat freshness, disk, GPU. Don't duplicate that.
+
+### Gate check
+
+Use `scripts/check_phase_gates.py` (added in this transition) to count consecutive iterations passing Phase 3 gates against the target of 20. It SSH-tails the pod `losses.jsonl`, so it always sees the freshest data — not the repo mirror. Run ad-hoc before considering Phase 4.
+
+### Gate thresholds for Phase 3 (supply=7, Silver/Gold/Province only)
+
+All three must hold for 20 consecutive iters:
+- `avg_provinces > 3.0`  *(max 3.5 at supply=7)*
+- `draw_rate < 0.05`
+- `avg_turns < 40`  *(upper-bound only — lower bound is mechanically unreachable, see DEVLOG #157 pattern)*
+
+### Watchdog cadence
+
+- **First 3 iters after deploy:** actively watch stdout. Confirm `Config reload:` line, confirm `avg_provinces` begins climbing above 2.5.
+- **Iters 4–20:** run `check_phase_gates.py` every ~30–60 min (3–6 iters per check). Any "fail" iter resets the consecutive-count.
+- **Iters 20–40:** check once per ~2 hours; if 20 consecutive passes, flag readiness for Phase 4.
+- **Rollback trigger:** any single iter with `draw_rate ≥ 0.10`, or 3 consecutive iters with `avg_turns ≥ 45`, or 10 consecutive iters with `avg_provinces ≤ 2.5` past the transition iter.
