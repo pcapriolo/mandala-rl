@@ -4,6 +4,26 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #157 — 2026-04-18: Dominion Phase 1 → Phase 2 transition (supply 3 → 5)
+
+**Transition:** Manual graduation from Phase 1 (`province_supply: 3`) to Phase 2 (`province_supply: 5`). Same card set (Silver/Gold/Province only), same `disabled_basic_supply`, same `draw_penalty: 0.0`, same `drop_draws: true`. `max_turns` bumped 30 → 50 to accommodate longer supply=5 games. Single-supply-variable change per plan rule #2.
+
+**Why not 3 → 7:** Phase 1 MCTS % and coins-wasted gates held cleanly (MCTS province % ≥ 90, coins wasted < 3.0) but `avg_turns < 13` was mechanically unreachable at supply=3 — games converged to ~15–17 turns because that's how long it takes to buy 3 Provinces under the current economy. Rather than re-jigger the Phase 1 gate in place, taking a smaller 3 → 5 step (instead of the originally planned 3 → 7) to reduce adaptation shock and give the network a true intermediate rung before Phase 3 introduces VP clutter. Plan restructured: Phase 2 is now supply=5, Phase 3 is now supply=7 with full basic supply re-enabled (swapped from the prior 7/5 layout). Gates re-derived for both.
+
+**Operational steps:**
+1. Edited `configs/dominion.yaml` in repo (`province_supply: 3 → 5`, `max_turns: 30 → 50`, header + inline comments).
+2. Mirrored to RunPod at `/workspace/mandala-rl/configs/dominion.yaml`; prior file saved as `configs/dominion.yaml.phase1.bak`.
+3. Hot-reload via `_hot_reload_config()` (`mandala_rl/training/trainer.py:190-222`) — both keys are already in the top-level tunables list, so the change propagates on the next iteration boundary without a training restart, checkpoint change, or buffer clear.
+4. Mixed-supply trajectories in the replay buffer self-flush within ~33 iterations at 100 games/iter × ~15–25 turns.
+
+**Expectation:** Short-term dip on MCTS province % and coins_wasted as the policy adapts to the larger terminal state (more Province buys needed, longer horizon). Gates should re-stabilize within ~20–40 iterations. Avg turns should land ~22–30 — well under the new 50-turn cap.
+
+**Verification:** Monitor `/workspace/dominion_data/logs/losses.jsonl` for next ~40 iterations. Phase 2 graduation gates: `Province/player > 2.0` (max 2.5 at supply=5), `Avg game length 20–35`, `Draw rate < 5%` — all must hold for 20 consecutive iterations before Phase 3. If `>5%` of games clip at `max_turns: 50`, bump to 60.
+
+**Rollback:** revert `province_supply` and `max_turns` in YAML (or restore `dominion.yaml.phase1.bak` on the pod); hot-reload swaps back on the next iteration. No checkpoint or buffer surgery needed.
+
+---
+
 ## DEVLOG #156 — 2026-04-18: Dominion Phase 0 → Phase 1 transition (supply 1 → 3)
 
 **Transition:** Manual graduation from Phase 0 (`province_supply: 1`) to Phase 1 (`province_supply: 3`). Same card set (Silver/Gold/Province only), same disabled basic supply, same `max_turns: 30`, same `draw_penalty: 0.0`. Single-variable change per plan rule #2.
