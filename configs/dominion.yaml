@@ -38,10 +38,10 @@ training:
   num_iterations: 3000
   batch_size: 256
   epochs_per_iteration: 1
-  learning_rate: 0.001
+  learning_rate: 0.0000027   # 2.7e-5 — explicit current LR after passing all milestones through iter 2500. No schedule.
   weight_decay: 0.0001
-  lr_milestones: [500, 1500, 2500]
-  lr_gamma: 0.3
+  lr_milestones: []           # no scheduled LR drops — every LR change is an explicit config edit
+  lr_gamma: 0.3               # inert without milestones; kept for code compatibility
   replay_buffer_size: 100000  # 218-ch tensors are large; saved to /workspace (100GB) which has plenty of room
   min_buffer_for_training: 10000  # Skip training until buffer has enough diversity (prevents overfit on tiny buffer)
   checkpoint_frequency: 25
