@@ -170,12 +170,20 @@ class Trainer:
             print(f"[heartbeat] write failed: {e}")
 
     def _get_lr_for_iteration(self, iteration: int) -> float:
-        """Compute LR based on absolute iteration (restart-resilient)."""
+        """Compute LR based on absolute iteration (restart-resilient).
+
+        Default lr_milestones is [] — no silent LR schedule. If milestones are
+        explicitly configured and one is crossed, print a tripwire line.
+        """
         lr = self.config.get('learning_rate', 1e-3)
         gamma = self.config.get('lr_gamma', 0.3)
-        for milestone in sorted(self.config.get('lr_milestones', [200, 500, 800])):
+        base_lr = lr
+        for milestone in sorted(self.config.get('lr_milestones', [])):
             if iteration >= milestone:
                 lr *= gamma
+        if lr != base_lr and iteration != getattr(self, '_last_logged_lr_iter', -1):
+            print(f"[LR] Milestone schedule applied at iter {iteration}: base {base_lr:.2e} → effective {lr:.2e}")
+            self._last_logged_lr_iter = iteration
         return lr
 
     # Tunable config keys: maps YAML path to SelfPlayWorker attribute name
@@ -491,17 +499,7 @@ class Trainer:
         return self.config.get('policy_weight', 1.0)
 
     def _get_force_rate(self) -> float:
-        """Decay big_money_force_rate linearly from config value to 0.
-        Starts at force_rate_decay_start, steps down 0.05 every force_rate_decay_steps iters."""
-        base = self.config.get('big_money_force_rate', 0.0)
-        if base <= 0.0:
-            return 0.0
-        decay_start = self.config.get('force_rate_decay_start', 999999)  # default: never
-        decay_steps = self.config.get('force_rate_decay_steps', 50)
-        if self.iteration < decay_start:
-            return base
-        steps_elapsed = (self.iteration - decay_start) // decay_steps
-        return max(0.0, round(base - steps_elapsed * 0.05, 2))
+        return self.config.get('big_money_force_rate', 0.0)
 
     def _train_network(self):
         """Train network on replay buffer."""

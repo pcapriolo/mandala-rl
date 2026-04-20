@@ -4,6 +4,29 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #161 — 2026-04-20: Silent-schedule removal (LR milestones + force-rate decay)
+
+**Principle locked in.** No automatic schedules for training dynamics. Every change to LR, ε, temperature, mask, supply, or force rates is a one-shot human edit to YAML or code, logged here, picked up via hot-reload or on restart. No ramps, no anneals, no "after N iters do X." Extends plan Rule #5 (human decides phase advancement) to every training-behavior variable.
+
+**Motivation.** Phase 4 investigation surfaced that the LR schedule crossed its iter-2500 milestone silently at the same time the Phase 4 regression was accelerating. The LR crossing produced no log line — only visible in TensorBoard. The running LR at iter 2515 was 2.7e-5, derived from `learning_rate × gamma³`, meaning the live value was a function of history rather than an explicit config setting. On any pod restart, the scheduler would re-derive the same value. That's silent-behavior-by-default, exactly what we want to eliminate from training config.
+
+**Change 1 — `configs/dominion.yaml`.** Set `learning_rate: 0.0000027` (explicit, what we're actually running), `lr_milestones: []` (empty — no scheduled drops). `lr_gamma: 0.3` retained as inert compat. Zero runtime effect on the live process (LR is not hot-reloadable and the scheduler arrives at the same value either way); the change binds the LR state to config rather than to iteration history.
+
+**Change 2 — `mandala_rl/training/trainer.py`.** Two edits in service of the same principle:
+
+- `_get_lr_for_iteration`: default `lr_milestones` changed from `[200, 500, 800]` → `[]` so a missing config key no longer schedules drops. Added a tripwire print — if effective LR differs from the base value at any iter, `[LR] Milestone schedule applied at iter N: base X → effective Y` logs. Fires zero times in steady state with empty milestones; fires once on restart if milestones are ever re-introduced.
+- `_get_force_rate`: deleted the step-down-0.05-every-N-iters decay logic entirely. Now returns `self.config.get('big_money_force_rate', 0.0)` — a plain config read. `force_rate_decay_start` and `force_rate_decay_steps` are no longer read anywhere in the code. `big_money_force_rate` is already hot-reloadable (in `_WORKER_TOP_KEYS`), so any future change is a one-shot YAML edit.
+
+**Verified dormant.** `force_rate_decay_start`/`_steps` were last used in early 2026 (DEVLOG #84 / #1095). All three `*_force_rate` are 0.0 in current config. The deleted code path was not firing; this is defensive removal.
+
+**Deploy.** YAML `scp`'d to `/root/mandala-dom/configs/dominion.yaml` with backup `dominion.yaml.bak_lr_cleanup_20260420`. Training (pid 3712457, iter 2545 at deploy time) continued without disruption — no `Config reload:` line, no error. trainer.py change takes effect only on next restart.
+
+**Still auto-behaviors (acceptable, not silent):** iteration-based checkpoint/eval/deploy/replay-save frequencies. These are IO cadences, not training-dynamics changes. `temperature_threshold: 25` is per-game policy, not per-iteration. Curriculum graduation was already retired (DEVLOG #154) as a human decision.
+
+**Followup parked (not in this change):** Phase 4 regression intervention itself — recommended `dirichlet_epsilon: 0.50 → 0.15` as a single explicit hot-reload edit, mask narrowing as a separate later decision if needed. Both one-shot, no schedules, consistent with the principle above.
+
+---
+
 ## DEVLOG #160 — 2026-04-20: Full hot-reload whitelist + `--warmup-to-full` restart flag
 
 **Problem context.** Phase 4 YAML (`disabled_basic_supply: [6, 16]`) sat on the pod for ~15 iters (2186→2200) with zero effect because `disabled_basic_supply` was read only at `SelfPlayWorker.__init__` — it was not in the hot-reload whitelist. Reverted to Phase 3 without harm, but the restart-required constraint would re-bite on every future curriculum phase. Also: code-change restarts contaminate gradient updates with old-regime examples still in the replay buffer.
