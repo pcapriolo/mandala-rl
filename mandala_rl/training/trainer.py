@@ -142,6 +142,10 @@ class Trainer:
         self.games_in_current_iteration = 0  # Track progress within iteration
         self.best_checkpoint = None
 
+        # Warmup target: skip gradient updates until buffer reaches this size.
+        # Set by --warmup-to-full; auto-cleared when threshold crossed.
+        self._warmup_target = 0
+
     def _init_heartbeat_path(self):
         """Cache the heartbeat path once at startup."""
         if not hasattr(self, '_heartbeat_path'):
@@ -187,6 +191,40 @@ class Trainer:
         ('selfplay', 'explore_epsilon'): 'explore_epsilon',
     }
 
+    # Top-level YAML keys that flow to SelfPlayWorker attributes.
+    # Curriculum keys change the game/supply distribution — a flip means
+    # the replay buffer now mixes examples from two distributions.
+    _WORKER_TOP_KEYS = [
+        ('big_money_force_rate', 'big_money_force_rate', False),
+        ('draw_penalty', 'draw_penalty', False),
+        ('max_turns', 'max_turns', False),
+        ('province_supply', 'province_supply', True),
+        ('max_action_cards', 'max_action_cards', True),
+        ('disabled_basic_supply', 'disabled_basic_supply', True),
+        ('forced_kingdom_cards', 'forced_kingdom_cards', True),
+        ('drop_draws', 'drop_draws', False),
+    ]
+
+    # Top-level YAML keys that are read via self.config.get(...) on every use,
+    # so updating self.config is enough to hot-reload them.
+    _CONFIG_TOP_KEYS = [
+        'min_buffer_for_training',
+        'batch_size',
+        'epochs_per_iteration',
+        'eval_frequency',
+        'checkpoint_frequency',
+        'save_replay_frequency',
+        'deploy_frequency',
+        'policy_weight',
+        'entropy_weight',
+        'max_discard_rate',
+        'checkpoint_every_n_games',
+        'opponent_diversity_ratio',
+        'opponent_iter_min',
+        'opponent_iter_max',
+        'seed_reinject_frequency',
+    ]
+
     def _hot_reload_config(self):
         """Re-read YAML and update tunable SelfPlayWorker params. No-op on error."""
         config_path = Path(self._config_path)
@@ -198,6 +236,7 @@ class Trainer:
         except Exception:
             return
         changes = []
+        curriculum_changes = []
         for (section, key), attr in self._TUNABLE_KEYS.items():
             new_val = raw.get(section, {}).get(key)
             if new_val is None:
@@ -206,20 +245,29 @@ class Trainer:
             if old_val is not None and old_val != new_val:
                 setattr(self.selfplay_worker, attr, new_val)
                 changes.append(f"{attr} {old_val} → {new_val}")
-        # Also reload top-level keys passed directly to worker
-        for top_key, attr in [('big_money_force_rate', 'big_money_force_rate'),
-                               ('draw_penalty', 'draw_penalty'),
-                               ('max_turns', 'max_turns'),
-                               ('province_supply', 'province_supply')]:
-            new_val = raw.get(top_key)
-            if new_val is None:
+        for top_key, attr, is_curriculum in self._WORKER_TOP_KEYS:
+            if top_key not in raw:
                 continue
+            new_val = raw[top_key]
             old_val = getattr(self.selfplay_worker, attr, None)
-            if old_val is not None and old_val != new_val:
+            if old_val != new_val:
                 setattr(self.selfplay_worker, attr, new_val)
                 changes.append(f"{attr} {old_val} → {new_val}")
+                if is_curriculum:
+                    curriculum_changes.append(f"{attr} {old_val} → {new_val}")
+        for cfg_key in self._CONFIG_TOP_KEYS:
+            if cfg_key not in raw:
+                continue
+            new_val = raw[cfg_key]
+            old_val = self.config.get(cfg_key)
+            if old_val != new_val:
+                self.config[cfg_key] = new_val
+                changes.append(f"config.{cfg_key} {old_val} → {new_val}")
         if changes:
             print(f"Config reload: {', '.join(changes)}")
+        if curriculum_changes:
+            print(f"[WARNING] Curriculum keys changed mid-run: {', '.join(curriculum_changes)}. "
+                  f"Replay buffer now mixes examples from two distributions.")
 
     def train(self, num_iterations: int):
         """
@@ -460,10 +508,18 @@ class Trainer:
         from .replay_buffer import augment_color_permutation_batch
 
         batch_size = self.config.get('batch_size', 256)
-        min_buffer = self.config.get('min_buffer_for_training', 10000)
-        if len(self.replay_buffer) < min_buffer:
-            print(f"Buffer too small for training ({len(self.replay_buffer)}/{min_buffer}), skipping")
+        config_min = self.config.get('min_buffer_for_training', 10000)
+        effective_min = max(config_min, self._warmup_target)
+        buf_size = len(self.replay_buffer)
+        if buf_size < effective_min:
+            if self._warmup_target > 0:
+                print(f"[WARMUP] Buffer {buf_size}/{self._warmup_target}, skipping training")
+            else:
+                print(f"Buffer too small for training ({buf_size}/{effective_min}), skipping")
             return
+        if self._warmup_target > 0 and buf_size >= self._warmup_target:
+            print(f"[WARMUP] Buffer reached capacity ({buf_size}/{self._warmup_target}), resuming gradient updates")
+            self._warmup_target = 0
 
         num_epochs = self.config.get('epochs_per_iteration', 10)
         batches_per_epoch = max(1, len(self.replay_buffer) // batch_size)
@@ -1019,6 +1075,7 @@ class Trainer:
             'iteration': self.iteration,
             'total_games': self.total_games,
             'games_in_current_iteration': self.games_in_current_iteration,
+            'warmup_target': self._warmup_target,
             'model_state_dict': self._unwrapped_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
         }
@@ -1180,6 +1237,9 @@ class Trainer:
 
         # NEW: Restore game progress within iteration
         self.games_in_current_iteration = checkpoint.get('games_in_current_iteration', 0)
+        self._warmup_target = checkpoint.get('warmup_target', 0)
+        if self._warmup_target > 0:
+            print(f"[WARMUP] Resuming warmup: target {self._warmup_target} examples")
 
         # Try loading buffer from separate file first, then legacy embedded buffer
         buffer_path = Path(filepath).parent / 'buffer_latest.pkl'

@@ -4,12 +4,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 3 — Silver/Gold/Province only, supply=7 |
+| **Phase** | 4 — Silver/Gold/Province + Copper/Estate/Duchy re-enabled, supply=7 |
 | **Province Supply** | 7 |
+| **Disabled** | Curse(6), Gardens(16), all action cards |
 | **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
 | **Last Updated** | 2026-04-19 |
 
 ### Recent changes
+- 2026-04-19: **Phase 3 → Phase 4 transition (enable Copper/Estate/Duchy in supply, single-variable).** Phase 3 gates held for 80 consecutive iters (iter 2067–2146): avg_provinces 3.46–3.50 (mechanical max 3.5), draw_rate 0.00, avg_turns 26–28. Re-enabling the three cards with real learning signal (Copper, Estate, Duchy) while holding Curse and Gardens disabled — neither has a natural buyer without attack or engine cards, so enabling them adds policy noise without signal. `disabled_basic_supply: [0, 3, 4, 6, 16] → [6, 16]`. `max_turns: 50` retained (Phase 4 expected turns 28–38; will bump to 70 via hot-reload only if clipping emerges). All other hyperparameters unchanged. Gates tightened to mastery criteria (avg_prov ≥ 3.45, avg_turns < 30). Starting deck still 7 Copper + 3 Estate regardless of supply config (`cpp/dominion_game.cpp:594-602`). See DEVLOG #159.
 - 2026-04-19: **Phase 2 → Phase 3 transition (supply 5 → 7, single-variable).** Phase 2 gates saturated at iter 1754–1783: provinces/p = 2.5 (mechanical max), draw_rate = 0.0, avg_turns 18–20 (same mechanical-saturation pattern that retired Phase 1's turns-floor gate). Taking a strict single-variable supply step to restore Rule #2 compliance — card set, `max_turns: 50`, `draw_penalty`, `drop_draws` all unchanged. The old Phase 3 (bundled supply+VP-clutter) is now Phase 4. Smithy → Phase 5. Full Dominion → Phase 6. See DEVLOG #158.
 - 2026-04-18: **Phase 1 → Phase 2 transition (supply 3 → 5).** Phase 1 gates held on MCTS % and coins, but `avg_turns < 13` was mechanically unreachable at supply=3 (games consistently 15–17 turns). Graduating with a smaller step than original plan (3→5, not 3→7) to reduce adaptation shock. Plan restructured: **Phase 2 now supply=5, Phase 3 now supply=7** (swapped from earlier 7/5 layout). Gates re-derived for both. `max_turns` 30 → 50 to accommodate longer supply=5 games. See DEVLOG #157.
 - 2026-04-18: **Inserted new Phase 1 (supply=3, same cards as Phase 0).** VP-card enablement pushed to Phase 3. Smithy → Phase 4. Full Dominion → Phase 5. Motivation: isolate supply changes from card enablement per Rule #2. Phase 0 coins-wasted threshold relaxed to <3.0.
@@ -110,7 +112,7 @@ max_turns: 50
 
 ---
 
-## Phase 3: Supply=7 (CURRENT)
+## Phase 3: Supply=7
 
 **Supply:** Gold, Silver, Province — `province_supply: 7`
 **Disabled:** Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16), all action cards (same as Phase 2)
@@ -128,25 +130,36 @@ province_supply: 7
 - Draw rate < 5%
 - Avg turns < 40  *(upper bound only — lower bound is mechanically unreachable when terminal saturates, same pattern as Phase 1/2 per DEVLOG #157)*
 
+**Outcome:** Gates held for 80 consecutive iters (2067–2146). Saturated: avg_provinces 3.46–3.50, avg_turns 26–28, draw_rate 0.0. Graduated to Phase 4 on 2026-04-19 (DEVLOG #159).
+
 ---
 
-## Phase 4: Full VP Cards
+## Phase 4: Re-enable Copper/Estate/Duchy (CURRENT)
 
-**Supply:** Gold, Silver, Copper, Estate, Duchy, Province (`province_supply: 7`)
-**Disabled:** Action cards only
-**Goal:** Learn Duchy as secondary VP source. Learn Copper/Estate are dead cards (green/copper pollution). Supply stays at 7 — only card-set changes — so this remains a single-variable transition.
+**Supply:** Gold, Silver, Copper, Estate, Duchy, Province — `province_supply: 7`
+**Disabled:** Curse(6), Gardens(16), all action cards
+**Goal:** Policy must preserve Phase 3's Province-buying mastery while correctly treating the re-enabled supply cards: ignore Copper-in-supply (anti-economy), ignore Estate-in-supply (dead 1-VP buy), treat Duchy as a potential marginal endgame VP grab. Starting deck stays 7 Copper + 3 Estate — the network has always seen those in hand; this transition is purely a supply-availability change.
+
+**Why Curse and Gardens held:** neither has a natural buyer in this supply set. Curse has cost 0 and value -1 — only bought if forced by an attack card (none in this phase). Gardens (1 VP per 10 cards) rewards big-deck engines, which don't exist without action cards. Enabling them would add argmax noise in the policy head without any learning signal. They graduate with Phase 5 (Smithy) when engine-style play starts to matter.
 
 **Config changes from Phase 3:**
 ```yaml
-disabled_basic_supply: []
-max_turns: 70
+disabled_basic_supply: [6, 16]   # was [0, 3, 4, 6, 16]
+# max_turns: 50 unchanged — bump to 70 via hot-reload only if >5% of games clip
 ```
 
-**Graduation criteria:**
-- Province/player > 2.5
-- Duchy buying present (> 0.3/player)
-- Copper buying < 0.1/player
-- Draw rate < 5%
+All other hyperparameters unchanged (temperature_threshold, dirichlet_epsilon, entropy_weight, policy_weight, drop_draws, num_simulations, draw_penalty, opponent_diversity_ratio).
+
+**Graduation criteria (all must hold for 20 consecutive iterations):**
+- `avg_provinces/player ≥ 3.45`  *(no regression — Phase 3 median was 3.48; mechanical max 3.5)*
+- `avg_turns < 30`  *(deck pollution from Copper/Estate must not slow the deck — Phase 3 baseline was 26–28)*
+- `draw_rate < 0.05`
+- `avg_estates/player < 0.1`  *(policy must ignore Estate-in-supply)*
+- `avg_copper/player < 0.1`  *(policy must ignore Copper-in-supply)*
+
+**Tracked but not blocking:** `avg_duchies/player`. Unclear whether optimal play includes Duchy (endgame grab) or pure Province racing wins. Log it; don't gate on it.
+
+**Plan reshuffle:** Phase 5 now Smithy (unchanged). Phase 6 now full basic supply with Curse + Gardens re-enabled alongside engine cards. Full Dominion → Phase 7.
 
 ---
 
@@ -165,7 +178,19 @@ forced_kingdom_cards: []  # TBD — may force Smithy
 
 ---
 
-## Phase 6: Full Dominion
+## Phase 6: Re-enable Curse + Gardens
+
+**Supply:** Full basic supply + Smithy, Province (`province_supply: 7` or `8` TBD). Re-enables Curse(6) and Gardens(16) which were held back through Phases 4–5 because they have no natural buyer without attack/engine cards.
+**Goal:** Policy learns that Curse is always bad (even available in supply) and that Gardens becomes attractive once deck-growth via Smithy is in play.
+**Config changes from Phase 5:**
+```yaml
+disabled_basic_supply: []
+```
+**Graduation criteria:** TBD based on Phase 5 results.
+
+---
+
+## Phase 7: Full Dominion
 
 **Supply:** Standard 10-card kingdom, Province (`province_supply: 8`)
 **Goal:** Competitive play across varied kingdoms.
@@ -227,11 +252,13 @@ Revert the YAML value in both the local repo and the pod's live config — hot-r
 | Signal | Source | Healthy band | Alarm |
 |---|---|---|---|
 | `Config reload:` stdout line | `/root/train_dom.log` | Exactly once, at the iter boundary after SCP | Missing — config didn't land |
-| `avg_provinces` | `losses.jsonl` | Phase 3: trending 3.0→3.5 over ~20–40 iters | Stuck ≤2.5 past iter 1830 (~30 iters post-transition) — policy not adapting |
-| `avg_turns` | `losses.jsonl` | 22–28 expected at supply=7 | ≥45 sustained → risk of clipping at `max_turns: 50`; bump to 60 if >5% of games clip |
-| `draw_rate` | `losses.jsonl` | <5% (Phase 3 gate) | ≥10% for 3+ iters → regression; consider rollback |
+| `avg_provinces` | `losses.jsonl` | Phase 4: transient dip post-transition; recover to ≥3.45 within ~40–80 iters | Stuck <3.0 past iter +60 — policy not re-mastering Province buying with clutter |
+| `avg_turns` | `losses.jsonl` | Phase 4: 28–32 expected during adaptation, then settle <30 | ≥45 sustained → risk of clipping at `max_turns: 50`; bump to 70 if >5% clip |
+| `avg_estates` / `avg_copper` | `losses.jsonl` | <0.1/player once policy converges | Sustained >0.3 → policy bought dead cards; value head needs more training on clutter-aware states |
+| `avg_duchies` | `losses.jsonl` | Any value — not a gate, just track |  |
+| `draw_rate` | `losses.jsonl` | <5% (Phase 4 gate) | ≥10% for 3+ iters → regression; consider rollback |
 | `std_len` vs `avg_len` | `losses.jsonl` | `std_len` << `max_turns - avg_len` | `avg_len + std_len` approaches 50 → clipping |
-| `mcts_province_argmax_pct` | `losses.jsonl` | ≥0.9 (unchanged from Phase 2) | <0.8 sustained → MCTS deprioritising Province; policy regression |
+| `mcts_province_argmax_pct` | `losses.jsonl` | Phase 3+ at supply≥5: typically 50–75%. **Not a regression below 90%** — mechanical drop with supply size (DEVLOG #159). | Sharp sustained drop (>20pp below recent baseline) → real regression |
 | `value_loss` | `losses.jsonl` | Short-term spike expected (new terminal), then re-converge | Monotonic climb 10+ iters → overtraining or curriculum shock |
 | Heartbeat age | `dominion_monitor.sh` existing alert (>1800s stale) | — | Existing `scripts/dominion_monitor.sh` handles this |
 
@@ -244,14 +271,25 @@ Revert the YAML value in both the local repo and the pod's live config — hot-r
 
 ### Gate check
 
-Use `scripts/check_phase_gates.py` (added in this transition) to count consecutive iterations passing Phase 3 gates against the target of 20. It SSH-tails the pod `losses.jsonl`, so it always sees the freshest data — not the repo mirror. Run ad-hoc before considering Phase 4.
+Use `scripts/check_phase_gates.py --phase <N>` to count consecutive iterations passing the gates for a given phase against the target of 20. It SSH-tails the pod `losses.jsonl`, so it always sees the freshest data — not the repo mirror. Run ad-hoc before considering the next phase.
 
-### Gate thresholds for Phase 3 (supply=7, Silver/Gold/Province only)
+### Gate thresholds for Phase 3 (supply=7, Silver/Gold/Province only) — HISTORICAL, already graduated
 
-All three must hold for 20 consecutive iters:
+All must hold for 20 consecutive iters:
 - `avg_provinces > 3.0`  *(max 3.5 at supply=7)*
 - `draw_rate < 0.05`
-- `avg_turns < 40`  *(upper-bound only — lower bound is mechanically unreachable, see DEVLOG #157 pattern)*
+- `avg_turns < 40`  *(upper-bound only)*
+
+### Gate thresholds for Phase 4 (supply=7, +Copper/Estate/Duchy) — ACTIVE
+
+All must hold for 20 consecutive iters:
+- `avg_provinces/player ≥ 3.45`  *(Phase 3 median was 3.48; no regression)*
+- `avg_turns < 30`  *(Phase 3 baseline 26–28; clutter must not slow the deck)*
+- `draw_rate < 0.05`
+- `avg_estates/player < 0.1`  *(policy ignores Estate-in-supply)*
+- `avg_copper/player < 0.1`  *(policy ignores Copper-in-supply)*
+
+**Tracked but not gated:** `avg_duchies/player` — optional strategic behavior.
 
 ### Watchdog cadence
 

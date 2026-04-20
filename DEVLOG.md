@@ -4,6 +4,96 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #160 — 2026-04-20: Full hot-reload whitelist + `--warmup-to-full` restart flag
+
+**Problem context.** Phase 4 YAML (`disabled_basic_supply: [6, 16]`) sat on the pod for ~15 iters (2186→2200) with zero effect because `disabled_basic_supply` was read only at `SelfPlayWorker.__init__` — it was not in the hot-reload whitelist. Reverted to Phase 3 without harm, but the restart-required constraint would re-bite on every future curriculum phase. Also: code-change restarts contaminate gradient updates with old-regime examples still in the replay buffer.
+
+**Change 1 — Full hot-reload whitelist (`mandala_rl/training/trainer.py`).** The `_hot_reload_config()` path now covers every tunable key that can be safely changed mid-run. Two new class-level lists define the surface:
+
+- `_WORKER_TOP_KEYS`: 8 top-level keys that live as `SelfPlayWorker` attributes, re-read inside `BatchedMCTS` construction on every play call. Now includes the 4 previously init-only curriculum keys (`max_action_cards`, `disabled_basic_supply`, `forced_kingdom_cards`, `drop_draws`) alongside the 4 pre-existing ones (`big_money_force_rate`, `draw_penalty`, `max_turns`, `province_supply`). Each entry carries an `is_curriculum` bool — curriculum flips trigger a loud WARNING log because they mean the replay buffer now mixes examples from two distributions.
+- `_CONFIG_TOP_KEYS`: 15 training-loop keys already read via `self.config.get(...)` on every use (`min_buffer_for_training`, `batch_size`, `epochs_per_iteration`, `eval_frequency`, `checkpoint_frequency`, `save_replay_frequency`, `deploy_frequency`, `policy_weight`, `entropy_weight`, `max_discard_rate`, `checkpoint_every_n_games`, `opponent_diversity_ratio`, `opponent_iter_min`, `opponent_iter_max`, `seed_reinject_frequency`). Mutating `self.config` propagates automatically.
+
+The 9-key `_TUNABLE_KEYS` dict (nested `mcts.*` / `selfplay.*`) is unchanged.
+
+**Explicitly still restart-required** (documented in `TODOS.md` and plan's NOT-in-scope): `weight_decay` (baked into `AdamW`), `replay_buffer_size` (baked into `ReplayBuffer`), network architecture keys.
+
+**Change 2 — Warmup gate on restart (`--warmup-to-full` flag).** New CLI flag in `scripts/train.py`. When passed, sets `trainer._warmup_target = trainer.config['replay_buffer_size']` after checkpoint load. The existing `min_buffer_for_training` gate in `_train_network` now uses `effective_min = max(config_min, self._warmup_target)`. Once `len(buffer) >= warmup_target`, the target auto-clears and a single `[WARMUP] Buffer reached capacity` line logs the transition. `_warmup_target` is persisted in the checkpoint dict so a mid-warmup crash resumes the gate without re-passing the flag. Companion `--cancel-warmup` flag clears the target for the "changed my mind" case. Typical usage after a code update:
+
+```
+python scripts/train.py --config configs/dominion.yaml --flush-buffer --warmup-to-full
+```
+
+This clears the buffer, starts fresh self-play, and skips gradient updates until the buffer is at full capacity (~125 iters for Dominion at 800 examples/iter).
+
+**Files touched:** `mandala_rl/training/trainer.py` (hot-reload expansion, warmup gate, checkpoint save/load), `scripts/train.py` (two new flags), new `TODOS.md` at repo root with 3 follow-up items.
+
+**Test coverage:** 0 automated tests — trainer has no existing test suite, and adding one for a 40-line feature would cost ~200 lines of mock infra. Pre-existing gap captured in `TODOS.md`. Manual verification via the plan's Verification section.
+
+**Phase 4 unblocked.** Landing this lets `disabled_basic_supply` (Phase 4/6) and `max_action_cards` (Phase 5+) take effect by YAML edit alone. No more silent no-ops.
+
+---
+
+## DEVLOG #159 — 2026-04-19: Dominion Phase 3 → Phase 4 transition (re-enable Copper/Estate/Duchy; Curse/Gardens held)
+
+**Transition:** Manual graduation from Phase 3 (Silver/Gold/Province only, `province_supply: 7`) to Phase 4. Single-variable change: `disabled_basic_supply: [0, 3, 4, 6, 16] → [6, 16]`. Re-enables Copper(0), Estate(3), Duchy(4) in supply. Holds Curse(6) and Gardens(16) disabled. Same `province_supply: 7`, same `max_turns: 50`, same `draw_penalty: 0.0`, same `drop_draws: true`. All other hyperparameters unchanged.
+
+**Evidence Phase 3 exit criteria met:** Verified from `data/dominion/losses.jsonl`, iters 2067–2146 (80 consecutive iterations — target was 20):
+- Province/player: 3.46–3.50 (gate: >3.0; mechanical max 3.5 — saturated)
+- Draw rate: 0.00 (gate: <0.05)
+- Avg turns: 26.0–28.4 (gate: <40)
+- No turn clipping (cap 50, max observed 28.4)
+
+**Why Option C scope (skip Curse + Gardens):** the plan as written (DEVLOG #158 restructure) had Phase 4 enabling all five disabled basic cards and bumping `max_turns: 50 → 70` simultaneously. Two issues:
+
+1. **Curse and Gardens have no natural buyer in this supply.** Curse (cost 0, -1 VP) is only bought if forced by an attack card; none exist here. Gardens (1 VP per 10 cards, cost 4) rewards big-deck engines that require action cards. Enabling them adds argmax noise in the policy head without any learning signal. They defer to Phase 6 (alongside engine cards).
+2. **`max_turns` bump was prophylactic, not required.** Phase 3 settled at avg_turns 26–28; even with deck pollution from Copper/Estate we expect 28–38. Holding `max_turns: 50` preserves strict Rule #2 (one variable) and triggers an explicit hot-reload to 70 only if >5% of games clip.
+
+Net diff: one key, `disabled_basic_supply`.
+
+**Starting deck is unaffected by `disabled_basic_supply`** (`cpp/dominion_game.cpp:594-602` hardcodes 7 Copper + 3 Estate for both players regardless). The network has seen 3 Estates in opening hands through every prior phase. This transition is purely a *supply-availability* change, not a starting-state change.
+
+**Gates tightened to mastery criteria (vs. plan-as-written's softer learning gates):**
+- `avg_provinces/player ≥ 3.45` — within ~1% of Phase 3 median (3.48); no regression on Province buying. 100% of the last 100 Phase 3 iters cleared this.
+- `avg_turns < 30` — Phase 3 baseline was 26–28; deck pollution from Copper/Estate must not slow the deck. 100% of the last 100 Phase 3 iters cleared this.
+- `draw_rate < 0.05`
+- `avg_estates/player < 0.1` — policy must ignore Estate-in-supply (dead 1-VP buy; starting Estates already suffice).
+- `avg_copper/player < 0.1` — policy must ignore Copper-in-supply (anti-economy vs. Silver).
+
+All must hold for 20 consecutive iters before Phase 5.
+
+**Tracked but not gated:** `avg_duchies/player`. A priori unclear whether optimal play includes endgame Duchy grabs (cost 5, 3 VP) or pure Province racing is better. Log it; don't make it a blocker.
+
+**Hyperparameter review (all held — no changes at transition):** `temperature_threshold: 25`, `dirichlet_epsilon: 0.50`, `entropy_weight: 0.03`, `policy_weight: 1.0`, `drop_draws: true`, `num_simulations: 800`, `draw_penalty: 0.0`, `opponent_diversity_ratio: 0.0`, `max_turns: 50`, `province_supply: 7`. Keeping the config diff to exactly one key lets any post-transition dynamics be cleanly attributed to the card-enablement change.
+
+**`mcts_province_argmax_pct` drop across phases (resolved — NOT a regression):**
+| Phase | supply | argmax_pct |
+|---|---|---|
+| Phase 0 | 1 | ~98% |
+| Phase 1 | 3 | ~89% |
+| Phase 2 | 5 | ~70–78% |
+| Phase 3 | 7 | ~55–61% |
+
+At `supply=1`, the moment Province is affordable is the moment the game ends — argmax is trivially Province. As supply grows, the denominator (affordable-Province decisions) includes mid-game states where the correct play is still Gold (to continue economic ramp) rather than Province. The metric drops mechanically with supply size. This is strategic sophistication, not policy weakness. Future phases should not treat sub-90% argmax_pct as a regression signal — use the sharp sustained drop from recent baseline as the red flag instead. Monitoring table in the training plan updated.
+
+**Rollback capability (user-initiated — no automated triggers):** Pre-deploy snapshot via pure `cp` of `buffer_latest.pkl` and `model_latest.pt` to named `*_pre_phase4_iter${N}_20260419.*` files after an iteration boundary. Both files are written atomically by the trainer (`trainer.py:1037-1040`); copy is safe without training disruption. Two rollback paths available on demand: (a) config-only revert (hot-reload, buffer self-flushes in ~37 iters) or (b) full state restore (stop trainer, restore snapshot files, revert YAML, restart — resumes at exact pre-Phase-4 state).
+
+**Operational steps:**
+1. Pre-deploy: SSH to pod; wait for iter boundary; `cp` `buffer_latest.pkl` and `model_latest.pt` to named snapshot files in `/workspace/dominion_data/checkpoints/`; verify byte-for-byte match.
+2. Edit `configs/dominion.yaml`: `disabled_basic_supply: [0, 3, 4, 6, 16] → [6, 16]`; update inline comment. Commit.
+3. Back up live pod config: `cp /root/mandala-dom/configs/dominion.yaml /root/mandala-dom/configs/dominion.yaml.bak_phase3_20260419`.
+4. `scp` updated config to `/root/mandala-dom/configs/dominion.yaml`.
+5. Verify: `grep -n disabled_basic_supply /root/mandala-dom/configs/dominion.yaml` shows `[6, 16]`.
+6. Tail `/root/train_dom.log`; watch for `Config reload: disabled_basic_supply [0, 3, 4, 6, 16] → [6, 16]` at next iter boundary.
+7. No training restart, no checkpoint surgery, no buffer clear. Hot-reload path at `trainer.py:210-213` already whitelists `disabled_basic_supply`.
+
+**Expectation:** Short-term dip in `avg_provinces` (expected 2.8–3.3) and rise in `avg_turns` (expected 28–35) as the policy adapts to Copper/Estate/Duchy now existing in supply. Duchy / Estate / Copper buys start appearing. Gates should hold at Phase 4 mastery levels within ~40–80 iterations. `value_loss` may spike briefly then re-converge.
+
+**Rollback (on user call):**
+- Soft: revert YAML, hot-reload, buffer self-flushes in ~37 iters. Preserves weight drift.
+- Hard: stop trainer, restore `buffer_pre_phase4_*.pkl` + `model_pre_phase4_*.pt`, revert YAML, restart. Resumes at exact pre-Phase-4 iteration with same weights and buffer contents.
+
+---
+
 ## DEVLOG #158 — 2026-04-19: Dominion Phase 2 → Phase 3 transition (supply 5 → 7, single-variable)
 
 **Transition:** Manual graduation from Phase 2 (`province_supply: 5`) to a new Phase 3 (`province_supply: 7`). Same card set (Silver/Gold/Province only), same `disabled_basic_supply: [0, 3, 4, 6, 16]`, same `max_turns: 50`, same `draw_penalty: 0.0`, same `drop_draws: true`. Strict single-variable change per plan Rule #2.

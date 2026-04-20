@@ -45,6 +45,10 @@ def main():
                       help='Path to seed buffer (.pkl) to pre-fill replay buffer')
     parser.add_argument('--pretrain-epochs', type=int, default=0,
                       help='Pre-train on seed buffer for N epochs before self-play')
+    parser.add_argument('--warmup-to-full', action='store_true',
+                      help='Skip gradient updates until replay buffer fills to replay_buffer_size')
+    parser.add_argument('--cancel-warmup', action='store_true',
+                      help='Clear a pending warmup target (resume normal training immediately)')
     args = parser.parse_args()
 
     # Load config
@@ -238,6 +242,13 @@ def main():
     if args.flush_buffer:
         trainer.replay_buffer.buffer.clear()
         print("Flushed replay buffer (keeping network weights)")
+
+    if args.cancel_warmup:
+        trainer._warmup_target = 0
+        print("Cancelled warmup (training resumes on next iteration)")
+    if args.warmup_to_full:
+        trainer._warmup_target = trainer.config['replay_buffer_size']
+        print(f"[WARMUP] Gating gradient updates until buffer reaches {trainer._warmup_target} examples")
 
     # Seed replay buffer from bot-generated data
     if args.seed_buffer:

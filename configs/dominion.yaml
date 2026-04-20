@@ -74,10 +74,10 @@ device: auto
 # Replay saving
 save_replay_frequency: 1
 
-# Curriculum Learning — Phase 3: Silver/Gold/Province only, supply=7
+# Curriculum Learning — Phase 4: Silver/Gold/Province + Copper/Estate/Duchy re-enabled, supply=7
 # See docs/plans/dominion-training-plan.md for full curriculum
-disabled_basic_supply: [0, 3, 4, 6, 16]  # Copper(0), Estate(3), Duchy(4), Curse(6), Gardens(16) DISABLED
-province_supply: 7  # Phase 3: same card set (Silver/Gold/Province), supply bumped 5→7. Gates must hold 20 consec iters before Phase 4 (re-enable VP clutter).
+disabled_basic_supply: [6, 16]  # Curse(6), Gardens(16) DISABLED. Copper/Estate/Duchy re-enabled at Phase 4 (DEVLOG #159). Curse/Gardens held — no natural buyer without attack/engine cards.
+province_supply: 7  # Phase 4: card-set change only, supply unchanged from Phase 3. Gates: avg_prov ≥ 3.45, avg_turns < 30, draw_rate < 0.05, avg_estates < 0.1, avg_copper < 0.1 — all must hold 20 consec iters before Phase 5 (Smithy).
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
