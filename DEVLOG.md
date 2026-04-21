@@ -4,6 +4,72 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #163 — 2026-04-21: Rule #7 reference-play + nested-config hot-reload + reference ladder
+
+**Context.** After DEVLOG #162, Phase 4 remained stuck — `avg_provinces` oscillated 2.3-2.5 for ~100 iters at ε=0.15, no upward trend. Investigation ruled out two hypotheses:
+
+- **More MCTS sims doesn't help.** Dual-run diagnostic (`scripts/diag_argmax_by_supply.py`, 800 vs 1600 sims): argmax% at supply=7 unchanged, weakly regressed (65.1 → 59.4, within noise). Search is not the bottleneck.
+- **Score-head → value-head leaf eval doesn't help.** Added `mcts_leaf_eval_source` flag in `worker.py` (`"score"` vs `"value"`). A/B on current checkpoint: supply=7 argmax% 39.4 vs 45.3, +5.8 point delta, well below the 8-point gate. Hypothesis refuted. Flag retained (default `"score"`, no behavior change) as dormant instrumentation for future diagnostics.
+
+**Root-cause reframe.** In self-play at supply=7, agent buying Gold at $8 wins sometimes because opponent also plays suboptimally. Outcome distribution doesn't separate Province from Gold. Both heads (score trained on narrow VP margin, value trained on binary ±1) reflect that. The Q-gap is genuinely near-zero in the weights — not a head-choice artifact.
+
+**The intervention: Rule #7, reference-play.** 20% of self-play games played against a **frozen peak checkpoint from phase N-1** (for Phase 4: iter 2200, the Phase 3 peak). Asymmetric outcomes: current agent's weaknesses (Estate-turn-1, etc.) get punished cleanly by a disciplined reference, value head learns the Q-gap the symmetric self-play never produced. Not a crutch — no forced agent actions, just environmental pressure.
+
+Codified as Rule #7 in `docs/plans/dominion-training-plan.md` alongside a new "Reference-play" section covering selection criteria (peak within gates-holding window), config mechanics, when-to-enable, exit criteria, and failure modes.
+
+**Hot-reload plumbing fix.** `opponent_diversity_ratio`, `opponent_iter_min`, `opponent_iter_max` were listed in `trainer.py:_CONFIG_TOP_KEYS` but lived nested under `selfplay:` in YAML — the hot-reload loop checked `raw[cfg_key]` at top level and silently skipped them. Added `_CONFIG_NESTED_KEYS` dict + dedicated loop in `_hot_reload_config` that traverses `selfplay.*` nesting. Removed the three opponent keys from `_CONFIG_TOP_KEYS`. Deliberately NOT fixing the same bug for other nested keys (batch_size, policy_weight, etc. under `training:`) — some of those shouldn't hot-reload (batch_size needs tensor reallocation); out of scope here.
+
+**Deploy (iter 2873).** One-time restart needed to land the nested-keys patch in the running process. Snapshot at `/workspace/dominion_data/snapshots/20260420_reference_play/` (checkpoint + config + trainer.py). Reference pinned via `opponent_iter_min == opponent_iter_max == 2200`.
+
+**Outcome through iter 3133 (261 iters post-deploy):** strong recovery, then plateau. `avg_provinces` 2.52 → 2.94 (+0.42). `avg_estates` 0.53 → 0.08 (gate passed). `avg_copper` 0.91 → 0.22 (still above 0.1 gate, decelerating). `mcts_argmax%` 51 → 55 mean with individual iters crossing 60-63% — matched/exceeded iter 2200's historical 58% peak. Last 90 iters: province metric stopped climbing. Hypothesis: agent has absorbed everything distillation from iter 2200 can provide; iter 2200's mastery in the current Phase 4 supply caps us.
+
+**Reference ladder (2026-04-21, iter 3143).** Promoted reference pin from iter 2200 → iter 3075. Iter 3075 measured in a 5-iter window with mean avg_prov 3.02, argmax 59.4 — strongest recent Phase-4-config checkpoint. Pin (min == max) for clean A/B vs the prior 261-iter baseline; band (min < max) becomes the default once the ladder stabilizes as ongoing regime.
+
+Swap landed via hot-reload — `Config reload: config.opponent_iter_min 2200 → 3075, config.opponent_iter_max 2200 → 3075` at iter 3143 boundary. `Playing 20 games vs iter_3075 opponent` confirmed at iter 3144. Zero restart, zero buffer disruption. 50-iter observation window underway; follow-up entry will log outcome (kept vs reverted) and propose next ladder step or termination criteria.
+
+**Explicitly NOT doing.** No agent-only-positions training (mode B — deferred). No opponent_diversity_ratio tuning (stays at 0.2). No curriculum changes. No checkpoint revert.
+
+---
+
+## DEVLOG #162 — 2026-04-20: Phase 4 intervention — `dirichlet_epsilon: 0.50 → 0.15` (hot-reload)
+
+**Problem.** Phase 4 started iter ~2240 (Copper/Estate/Duchy re-enabled, supply=7). Expected 40–80 iter recovery; instead, ~275 iters in, policy is *regressing*: `avg_provinces` peaked at 3.22 around iter 2341 then trended down to 2.42 by iter 2515 (gate is 3.45). `avg_copper` and `avg_estates` monotonically climbed 0.00 → 0.69 each. `avg_gold` dropped from 8.6 (Phase 3) to 6.4. Four of five graduation gates failing.
+
+**Diagnosis — mask-expansion shock.** Policy head was trained for ~2100 iters to assign ~0 mass to mask-disabled slots (Copper/Estate/Duchy). At iter 2240 those slots unmasked under fixed `dirichlet_epsilon: 0.50` — half the MCTS root prior is Dirichlet noise. Half of exploration every search is forced onto freshly-unmasked "novel" actions, and 275 iters of that baked exploration-forced drift into the weights. Smoking gun: at iter 2515, `buy_curve[0]` (turn-1 buys) shows **Estate at 0.70 rate, Copper at 0.70 rate** — the network has learned to buy Estate on turn 1 whenever it can't afford Silver. That's Dirichlet-noise-shaped, not strategic. `buy_curve[1]` (turn 2) is clean — chaos concentrated on low-coin turns where unmasked dead cards under noise bite hardest.
+
+**Intervention.** Hot-reload `dirichlet_epsilon: 0.50 → 0.15`. Purely search-side — trusts the existing (trained) prior instead of forcing exploration onto the masked-then-unmasked slots. Cheap, reversible, zero weight surgery. Consistent with the no-silent-schedule principle from #161: a single explicit edit, no ramp/anneal. `dirichlet_epsilon` is in `_TUNABLE_KEYS` so the next iter picks it up without restart.
+
+**Deploy.** YAML `scp`'d to `/root/mandala-dom/configs/dominion.yaml` at iter 2551. Backup `dominion.yaml.bak_epsilon_20260420`. Expected `Config reload: dirichlet_epsilon 0.5 → 0.15` line on iter 2552 start.
+
+**Falsification plan.** Watch `avg_copper`/`avg_estates` and turn-1 `buy_curve` for the next ~20–50 iters. If the mask-expansion-shock diagnosis is right: dead-card buys should drop meaningfully, `avg_provinces` should climb back toward 3+. If recovery doesn't start within ~50 iters, next one-shot is mask-narrow to Copper-only (`disabled_basic_supply: [3, 4, 6, 16]`), then if that fails, revert ε to 0.50 and re-think. Full-rollback to Phase 3 mask is rejected — second shock on top of first, and the Copper-bias lives in weights not buffer.
+
+**Explicitly NOT doing.** No ε decay schedule, no automated anneal around future phase transitions, no Elo daemon. Every future ε change will be another explicit YAML edit logged in DEVLOG.
+
+---
+
+## DEVLOG #161 — 2026-04-20: Silent-schedule removal (LR milestones + force-rate decay)
+
+**Principle locked in.** No automatic schedules for training dynamics. Every change to LR, ε, temperature, mask, supply, or force rates is a one-shot human edit to YAML or code, logged here, picked up via hot-reload or on restart. No ramps, no anneals, no "after N iters do X." Extends plan Rule #5 (human decides phase advancement) to every training-behavior variable.
+
+**Motivation.** Phase 4 investigation surfaced that the LR schedule crossed its iter-2500 milestone silently at the same time the Phase 4 regression was accelerating. The LR crossing produced no log line — only visible in TensorBoard. The running LR at iter 2515 was 2.7e-5, derived from `learning_rate × gamma³`, meaning the live value was a function of history rather than an explicit config setting. On any pod restart, the scheduler would re-derive the same value. That's silent-behavior-by-default, exactly what we want to eliminate from training config.
+
+**Change 1 — `configs/dominion.yaml`.** Set `learning_rate: 0.0000027` (explicit, what we're actually running), `lr_milestones: []` (empty — no scheduled drops). `lr_gamma: 0.3` retained as inert compat. Zero runtime effect on the live process (LR is not hot-reloadable and the scheduler arrives at the same value either way); the change binds the LR state to config rather than to iteration history.
+
+**Change 2 — `mandala_rl/training/trainer.py`.** Two edits in service of the same principle:
+
+- `_get_lr_for_iteration`: default `lr_milestones` changed from `[200, 500, 800]` → `[]` so a missing config key no longer schedules drops. Added a tripwire print — if effective LR differs from the base value at any iter, `[LR] Milestone schedule applied at iter N: base X → effective Y` logs. Fires zero times in steady state with empty milestones; fires once on restart if milestones are ever re-introduced.
+- `_get_force_rate`: deleted the step-down-0.05-every-N-iters decay logic entirely. Now returns `self.config.get('big_money_force_rate', 0.0)` — a plain config read. `force_rate_decay_start` and `force_rate_decay_steps` are no longer read anywhere in the code. `big_money_force_rate` is already hot-reloadable (in `_WORKER_TOP_KEYS`), so any future change is a one-shot YAML edit.
+
+**Verified dormant.** `force_rate_decay_start`/`_steps` were last used in early 2026 (DEVLOG #84 / #1095). All three `*_force_rate` are 0.0 in current config. The deleted code path was not firing; this is defensive removal.
+
+**Deploy.** YAML `scp`'d to `/root/mandala-dom/configs/dominion.yaml` with backup `dominion.yaml.bak_lr_cleanup_20260420`. Training (pid 3712457, iter 2545 at deploy time) continued without disruption — no `Config reload:` line, no error. trainer.py change takes effect only on next restart.
+
+**Still auto-behaviors (acceptable, not silent):** iteration-based checkpoint/eval/deploy/replay-save frequencies. These are IO cadences, not training-dynamics changes. `temperature_threshold: 25` is per-game policy, not per-iteration. Curriculum graduation was already retired (DEVLOG #154) as a human decision.
+
+**Followup parked (not in this change):** Phase 4 regression intervention itself — recommended `dirichlet_epsilon: 0.50 → 0.15` as a single explicit hot-reload edit, mask narrowing as a separate later decision if needed. Both one-shot, no schedules, consistent with the principle above.
+
+---
+
 ## DEVLOG #160 — 2026-04-20: Full hot-reload whitelist + `--warmup-to-full` restart flag
 
 **Problem context.** Phase 4 YAML (`disabled_basic_supply: [6, 16]`) sat on the pod for ~15 iters (2186→2200) with zero effect because `disabled_basic_supply` was read only at `SelfPlayWorker.__init__` — it was not in the hot-reload whitelist. Reverted to Phase 3 without harm, but the restart-required constraint would re-bite on every future curriculum phase. Also: code-change restarts contaminate gradient updates with old-regime examples still in the replay buffer.

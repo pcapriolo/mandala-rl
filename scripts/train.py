@@ -190,6 +190,9 @@ def main():
         # Action play forcing (Dominion: epsilon-greedy play of action cards in hand)
         'action_play_force_rate': config['mcts'].get('action_play_force_rate', 0.0),
 
+        # MCTS leaf eval source: "score" (current) or "value" (sharper binary-outcome signal; DEVLOG #163)
+        'mcts_leaf_eval_source': config['mcts'].get('leaf_eval_source', 'score'),
+
         # Curriculum: max action cards in kingdom (0 = Phase 0, no action cards)
         'max_action_cards': config.get('max_action_cards', 10),
         'big_money_force_rate': config.get('big_money_force_rate', 0.0),

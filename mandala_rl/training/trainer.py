@@ -85,6 +85,7 @@ class Trainer:
             draw_penalty=config.get('draw_penalty', 0.0),
             drop_draws=config.get('drop_draws', False),
             max_turns=config.get('max_turns', 0),
+            mcts_leaf_eval_source=config.get('mcts_leaf_eval_source', 'score'),
         )
 
         # Log curriculum params at startup to catch silent config drops
@@ -170,12 +171,20 @@ class Trainer:
             print(f"[heartbeat] write failed: {e}")
 
     def _get_lr_for_iteration(self, iteration: int) -> float:
-        """Compute LR based on absolute iteration (restart-resilient)."""
+        """Compute LR based on absolute iteration (restart-resilient).
+
+        Default lr_milestones is [] — no silent LR schedule. If milestones are
+        explicitly configured and one is crossed, print a tripwire line.
+        """
         lr = self.config.get('learning_rate', 1e-3)
         gamma = self.config.get('lr_gamma', 0.3)
-        for milestone in sorted(self.config.get('lr_milestones', [200, 500, 800])):
+        base_lr = lr
+        for milestone in sorted(self.config.get('lr_milestones', [])):
             if iteration >= milestone:
                 lr *= gamma
+        if lr != base_lr and iteration != getattr(self, '_last_logged_lr_iter', -1):
+            print(f"[LR] Milestone schedule applied at iter {iteration}: base {base_lr:.2e} → effective {lr:.2e}")
+            self._last_logged_lr_iter = iteration
         return lr
 
     # Tunable config keys: maps YAML path to SelfPlayWorker attribute name
@@ -219,11 +228,19 @@ class Trainer:
         'entropy_weight',
         'max_discard_rate',
         'checkpoint_every_n_games',
-        'opponent_diversity_ratio',
-        'opponent_iter_min',
-        'opponent_iter_max',
         'seed_reinject_frequency',
     ]
+
+    # YAML-nested keys that train.py flattens into self.config at startup.
+    # Hot-reload must traverse the nesting to pick up changes; without this
+    # dict, the _CONFIG_TOP_KEYS loop looks for them at raw top level and
+    # silently skips (they live under selfplay:).
+    # Map: (yaml_section, yaml_key) -> flattened cfg key in self.config
+    _CONFIG_NESTED_KEYS = {
+        ('selfplay', 'opponent_diversity_ratio'): 'opponent_diversity_ratio',
+        ('selfplay', 'opponent_iter_min'): 'opponent_iter_min',
+        ('selfplay', 'opponent_iter_max'): 'opponent_iter_max',
+    }
 
     def _hot_reload_config(self):
         """Re-read YAML and update tunable SelfPlayWorker params. No-op on error."""
@@ -259,6 +276,14 @@ class Trainer:
             if cfg_key not in raw:
                 continue
             new_val = raw[cfg_key]
+            old_val = self.config.get(cfg_key)
+            if old_val != new_val:
+                self.config[cfg_key] = new_val
+                changes.append(f"config.{cfg_key} {old_val} → {new_val}")
+        for (section, yaml_key), cfg_key in self._CONFIG_NESTED_KEYS.items():
+            new_val = raw.get(section, {}).get(yaml_key)
+            if new_val is None:
+                continue
             old_val = self.config.get(cfg_key)
             if old_val != new_val:
                 self.config[cfg_key] = new_val
@@ -491,17 +516,7 @@ class Trainer:
         return self.config.get('policy_weight', 1.0)
 
     def _get_force_rate(self) -> float:
-        """Decay big_money_force_rate linearly from config value to 0.
-        Starts at force_rate_decay_start, steps down 0.05 every force_rate_decay_steps iters."""
-        base = self.config.get('big_money_force_rate', 0.0)
-        if base <= 0.0:
-            return 0.0
-        decay_start = self.config.get('force_rate_decay_start', 999999)  # default: never
-        decay_steps = self.config.get('force_rate_decay_steps', 50)
-        if self.iteration < decay_start:
-            return base
-        steps_elapsed = (self.iteration - decay_start) // decay_steps
-        return max(0.0, round(base - steps_elapsed * 0.05, 2))
+        return self.config.get('big_money_force_rate', 0.0)
 
     def _train_network(self):
         """Train network on replay buffer."""
