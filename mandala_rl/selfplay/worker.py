@@ -59,7 +59,8 @@ class SelfPlayWorker:
         province_supply: int = 8,
         draw_penalty: float = 0.0,
         drop_draws: bool = False,
-        max_turns: int = 0
+        max_turns: int = 0,
+        mcts_leaf_eval_source: str = "score",
     ):
         self.game = game
         self.network = network.to(device)
@@ -84,6 +85,9 @@ class SelfPlayWorker:
         self.draw_penalty = draw_penalty
         self.drop_draws = drop_draws
         self.max_turns = max_turns
+        if mcts_leaf_eval_source not in ("score", "value"):
+            raise ValueError(f"mcts_leaf_eval_source must be 'score' or 'value', got {mcts_leaf_eval_source!r}")
+        self.mcts_leaf_eval_source = mcts_leaf_eval_source
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -205,8 +209,13 @@ class SelfPlayWorker:
                         batch = torch.from_numpy(np.stack(leaf_tensors)).to(self.device)
                         logits, vals, scores, _beliefs = self.network(batch)
                         pols = F.softmax(logits, dim=1).cpu().numpy()
-                        # Use score head (VP margin) for MCTS leaf eval, bounded by tanh
-                        vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy()
+                        if self.mcts_leaf_eval_source == "value":
+                            # Value head trained on binary ±1 outcomes — wider leaf eval range
+                            # than score head (narrow VP-margin targets). See DEVLOG #163.
+                            vals_np = vals.squeeze(-1).cpu().numpy()
+                        else:
+                            # score: score head (VP margin), bounded by tanh
+                            vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy()
                     mgr.apply_nn_results(pols, vals_np)
 
             # Select actions, advance games
@@ -367,8 +376,12 @@ class SelfPlayWorker:
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                 logits, vals, scores, *_ = models[m_idx](batch)
                 pols = F.softmax(logits, dim=1).cpu().numpy()
-                # Use score head (VP margin) for MCTS leaf eval, bounded by tanh
-                vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy() if not policy_only else None
+                if policy_only:
+                    vals_np = None
+                elif self.mcts_leaf_eval_source == "value":
+                    vals_np = vals.squeeze(-1).cpu().numpy()
+                else:
+                    vals_np = torch.tanh(scores.squeeze(-1)).cpu().numpy()
 
             if all_policies is None:
                 all_policies = np.empty((n, pols.shape[1]), dtype=np.float32)

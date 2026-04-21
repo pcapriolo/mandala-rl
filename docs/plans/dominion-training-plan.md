@@ -11,6 +11,7 @@
 | **Last Updated** | 2026-04-19 |
 
 ### Recent changes
+- 2026-04-20: **Introduced Rule #7 — reference-play every phase.** Diagnostics confirmed that self-play alone converges to a fixed point below the prior phase's actual strength (Phase 4 stuck at ~45% mcts_province_argmax_pct vs Phase 3 peak of 58%, with avg_provinces 2.35 vs Phase 3 peak 3.48). More MCTS sims (800→1600) didn't help; swapping MCTS leaf eval from score head to value head didn't help. The bottleneck is genuinely that self-play training outcomes don't separate Province from Gold at mid-game $8+ — both "win sometimes" against similarly-confused self. Fix: every phase plays 20% of games vs the prior phase's peak checkpoint. Asymmetric outcomes teach the value head the Q-gap it was missing. Not a crutch (no forced actions). Retroactively applied to current Phase 4 against iter 2200 baseline. See DEVLOG #163.
 - 2026-04-19: **Phase 3 → Phase 4 transition (enable Copper/Estate/Duchy in supply, single-variable).** Phase 3 gates held for 80 consecutive iters (iter 2067–2146): avg_provinces 3.46–3.50 (mechanical max 3.5), draw_rate 0.00, avg_turns 26–28. Re-enabling the three cards with real learning signal (Copper, Estate, Duchy) while holding Curse and Gardens disabled — neither has a natural buyer without attack or engine cards, so enabling them adds policy noise without signal. `disabled_basic_supply: [0, 3, 4, 6, 16] → [6, 16]`. `max_turns: 50` retained (Phase 4 expected turns 28–38; will bump to 70 via hot-reload only if clipping emerges). All other hyperparameters unchanged. Gates tightened to mastery criteria (avg_prov ≥ 3.45, avg_turns < 30). Starting deck still 7 Copper + 3 Estate regardless of supply config (`cpp/dominion_game.cpp:594-602`). See DEVLOG #159.
 - 2026-04-19: **Phase 2 → Phase 3 transition (supply 5 → 7, single-variable).** Phase 2 gates saturated at iter 1754–1783: provinces/p = 2.5 (mechanical max), draw_rate = 0.0, avg_turns 18–20 (same mechanical-saturation pattern that retired Phase 1's turns-floor gate). Taking a strict single-variable supply step to restore Rule #2 compliance — card set, `max_turns: 50`, `draw_penalty`, `drop_draws` all unchanged. The old Phase 3 (bundled supply+VP-clutter) is now Phase 4. Smithy → Phase 5. Full Dominion → Phase 6. See DEVLOG #158.
 - 2026-04-18: **Phase 1 → Phase 2 transition (supply 3 → 5).** Phase 1 gates held on MCTS % and coins, but `avg_turns < 13` was mechanically unreachable at supply=3 (games consistently 15–17 turns). Graduating with a smaller step than original plan (3→5, not 3→7) to reduce adaptation shock. Plan restructured: **Phase 2 now supply=5, Phase 3 now supply=7** (swapped from earlier 7/5 layout). Gates re-derived for both. `max_turns` 30 → 50 to accommodate longer supply=5 games. See DEVLOG #157.
@@ -146,9 +147,15 @@ province_supply: 7
 ```yaml
 disabled_basic_supply: [6, 16]   # was [0, 3, 4, 6, 16]
 # max_turns: 50 unchanged — bump to 70 via hot-reload only if >5% of games clip
+# 2026-04-20 retroactive Rule #7 addition:
+opponent_diversity_ratio: 0.2    # was 0.0 — reference-play vs iter 2200 (Phase 3 peak)
+opponent_iter_min: 2200
+opponent_iter_max: 2200
 ```
 
-All other hyperparameters unchanged (temperature_threshold, dirichlet_epsilon, entropy_weight, policy_weight, drop_draws, num_simulations, draw_penalty, opponent_diversity_ratio).
+All other hyperparameters unchanged (temperature_threshold, dirichlet_epsilon, entropy_weight, policy_weight, drop_draws, num_simulations, draw_penalty).
+
+**Phase 4 status (2026-04-20):** stuck in a self-play bad equilibrium at iter 2650. `avg_provinces` 2.35 (gate 3.45), `avg_estates` 0.60, `avg_copper` 0.85 (policy buying dead cards). 275+ iters since Phase 4 started; recovery never completed. Applying Rule #7 retroactively as the intervention — iter 2200 (Phase 3 peak) is the reference. Expected trajectory: ~30-50 iters of vs-reference losses teach the value head the Q-gap; `avg_provinces` recovers toward 3.45; `avg_estates` / `avg_copper` fall toward 0. If no recovery within 50 iters, fall back to Phase 3 mask revert (`disabled_basic_supply: [0, 3, 4, 6, 16]`) to regenerate economy before re-trying.
 
 **Graduation criteria (all must hold for 20 consecutive iterations):**
 - `avg_provinces/player ≥ 3.45`  *(no regression — Phase 3 median was 3.48; mechanical max 3.5)*
@@ -172,6 +179,10 @@ All other hyperparameters unchanged (temperature_threshold, dirichlet_epsilon, e
 ```yaml
 max_action_cards: 1
 forced_kingdom_cards: []  # TBD — may force Smithy
+# Rule #7: reference-play against Phase 4 peak
+opponent_diversity_ratio: 0.2
+opponent_iter_min: <Phase 4 peak iter, set when Phase 4 graduates>
+opponent_iter_max: <same>
 ```
 
 **Graduation criteria:** TBD based on Phase 4 results.
@@ -207,12 +218,78 @@ disabled_basic_supply: []
 4. **No weight surgery.** Bias nudges only. Seed data injection is the approved intervention for stuck priors (DEVLOG #137).
 5. **Phase advancement is a human decision.** Gates are observable criteria in `losses.jsonl` / dashboard; the human edits `province_supply` in the YAML and the trainer picks it up via hot-reload on the next iteration.
 6. **Monitor overtraining ratio.** Each iteration ~3,000 examples. Buffer 100K, 1 epoch = each example seen ~1.3x. Safe.
+7. **Every phase runs reference-play against the prior phase's peak checkpoint** (see "Reference-play" section below). Self-play alone converges to a fixed point that can be below the prior phase's actual strength — vs-reference games provide an asymmetric, external "strength floor" independent of the self-play equilibrium. Not a crutch (agent isn't forced to take any action); an environmental pressure. Part of the standard phase config, not a separate variable under Rule #2.
+
+---
+
+## Reference-play (Rule #7)
+
+### Motivation
+
+Self-play training converges to a fixed point where the policy is trained on visit distributions produced by itself. When MCTS visits split (e.g., 50/25/25 across Province/Gold/End-buy at $8+), the policy learns that split as its prior, which then produces similar splits next iter — a stable equilibrium even when that equilibrium is game-theoretically wrong (e.g., Province strictly dominates at $8+ with no +Buy, but self-play lands at ~58% mcts_province_argmax_pct at Phase 3 peak, not the ~95% first principles would predict).
+
+Diagnostics (2026-04-20):
+- Supply=1 → 100% argmax. Supply=7 → 40-65% argmax. Clean monotonic drop. Structural, not a bug.
+- More MCTS sims (800→1600) did NOT improve argmax% — search isn't the bottleneck.
+- Swapping MCTS leaf eval from score head to value head did NOT improve argmax% — network's Q(Province) and Q(Gold) at mid-game $8+ are genuinely close in the weights.
+- Conclusion: in self-play, Province-buying and Gold-stockpiling both "win sometimes" against a similarly-confused opponent. The training distribution doesn't push Q(Province) past Q(Gold) because the outcome data doesn't separate them cleanly.
+
+Playing a fraction of games against a stronger frozen reference breaks this symmetry. The reference picks Province at $8+ consistently; the current agent that buys Estate at turn 1 loses those games clearly. Clean asymmetric outcomes flow into the training buffer. Value head learns Province-state > Gold-state when the opponent is disciplined.
+
+### Selection of the reference checkpoint
+
+The reference is the **peak** checkpoint from phase N-1, defined as:
+- An iteration where the phase-graduation gates held continuously, AND
+- Within that stable window, the iteration with the highest mastery metric (`avg_provinces` for supply-scaling phases, TBD for engine phases)
+- For Phase N=4: iter **2200** (Phase 3 gate-holding window 2067-2146, avg_provinces 3.48 peak)
+
+The reference is a real checkpoint file on disk. We do not hand-code Big Money bots or any other oracle — the reference is whatever our training previously produced at best.
+
+### Config
+
+Already in `configs/dominion.yaml` (lines 32-34):
+```yaml
+selfplay:
+  opponent_diversity_ratio: 0.2         # 20% of games vs frozen reference
+  opponent_iter_min: 2200               # pinned to phase N-1 peak
+  opponent_iter_max: 2200               # single-checkpoint reference (not a band)
+```
+
+**Not hot-reloadable** (as of 2026-04-20): although these keys are listed in `trainer.py:_CONFIG_TOP_KEYS`, the hot-reload path at `trainer.py:267-274` checks `raw[cfg_key]` at YAML top level, but `opponent_diversity_ratio` / `opponent_iter_min` / `opponent_iter_max` live **nested under `selfplay:`** in the YAML. The check silently skips them. A config edit to these keys will NOT take effect until pod restart. If hot-reload for these is wanted later, the fix is trainer.py nested-key handling — not a config restructure. Retroactive application to the current Phase 4 run therefore requires a training restart with snapshot first.
+
+### When to turn on
+
+**Default for every phase transition from Phase 4 onward:** `opponent_diversity_ratio: 0.2` lit up concurrently with the phase config change. It's part of the standard phase entry configuration, not a separate decision.
+
+**For in-flight regressions (like current Phase 4):** turn on retroactively against the prior phase peak. The 2026-04-20 intervention for Phase 4 is: set `opponent_diversity_ratio: 0.2`, `opponent_iter_min/max: 2200/2200`. No other config change.
+
+### When to turn off
+
+`opponent_diversity_ratio: 0.0` **only when** the agent demonstrably matches or exceeds the reference in current-phase metrics:
+- `avg_provinces` matches or exceeds the reference's phase-N-1 peak
+- `mcts_province_argmax_pct` matches or exceeds the reference's phase-N-1 baseline
+
+Turn off via YAML edit → hot-reload. Asymmetric signal has done its job; agent can now stabilize on self-play.
+
+### What NOT to do
+
+- **Don't use a "stronger than we've ever trained" hand-coded baseline.** The reference must be from our own training lineage. If a hand-coded Big Money bot wins every game against a weakened agent, the buffer fills with trivial losses and value head learns nothing except "you're worse than a script." A reference-checkpoint-of-the-same-architecture provides gradient-useful signal.
+- **Don't bump ratio above 0.3** without explicit reasoning. Too much vs-reference play starves self-play of strategic diversity. Agent starts optimizing specifically against reference's weaknesses rather than learning the phase.
+- **Don't use the same reference forever.** When advancing to phase N+1, the reference updates to phase N peak. Each phase graduates its own successor baseline.
+
+### Scaling across phases
+
+The same mechanism works for every phase because the reference is drawn from our own training, not hand-coded. Phase 5's reference is Phase 4 peak. Phase 6's reference is Phase 5 peak. Phases 1-3 didn't use it historically (no regression pressure); new Phase 4+ rule applies forward.
+
+### Cost
+
+~20% of self-play compute goes to vs-reference games. These games still generate training examples (both positions recorded). Net cost: small; signal-to-noise improves.
 
 ---
 
 ## Phase transition runbook
 
-Use this for every supply/card-set graduation. Hot-reload handles `province_supply`, `max_turns`, `draw_penalty`, `big_money_force_rate` (see `trainer.py:210-213`); anything else requires a restart.
+Use this for every supply/card-set graduation. Hot-reload handles `province_supply`, `max_turns`, `draw_penalty`, `big_money_force_rate`, `disabled_basic_supply` (see `trainer.py:210-213`); anything else requires a restart. **Note (2026-04-20):** `opponent_diversity_ratio`, `opponent_iter_min`, `opponent_iter_max` are NOT hot-reloadable despite appearing in `_CONFIG_TOP_KEYS` — the hot-reload path doesn't traverse `selfplay:` nesting. Any change to Rule #7 reference-play config requires a restart.
 
 ### Pre-flight
 
@@ -226,11 +303,18 @@ Use this for every supply/card-set graduation. Hot-reload handles `province_supp
 
 ### Deploy
 
-1. Edit `configs/dominion.yaml` in the repo — change only the targeted keys.
-2. Back up the pod file: `ssh ... "cp <live>/configs/dominion.yaml <live>/configs/dominion.yaml.bak_phase<N>_<YYYYMMDD>"`.
-3. `scp` the local file to the same live path on the pod.
-4. Verify the pod file with `grep -nE 'province_supply|disabled_basic_supply|max_turns'` — the values should match the local edit.
-5. Tail training stdout at `/root/train_dom.log` (found via `/proc/<pid>/fd/1`); watch for `Config reload: <attr> <old> → <new>` at the next iter boundary. If the log says nothing, the change didn't land — re-check file path and hot-reload whitelist.
+1. **Pin the reference checkpoint** (Rule #7). Identify the peak iter of phase N-1 (highest `avg_provinces` within the gates-holding window). Set in YAML:
+   ```yaml
+   opponent_diversity_ratio: 0.2
+   opponent_iter_min: <peak_iter>
+   opponent_iter_max: <peak_iter>
+   ```
+   Verify the checkpoint file exists on the pod: `ls /workspace/dominion_data/checkpoints/model_iter_<peak_iter>.pt`. If pruned, pick the nearest surviving checkpoint in the gates-holding window and use that.
+2. Edit `configs/dominion.yaml` in the repo — change curriculum key(s) + reference-play config.
+3. Back up the pod file: `ssh ... "cp <live>/configs/dominion.yaml <live>/configs/dominion.yaml.bak_phase<N>_<YYYYMMDD>"`.
+4. `scp` the local file to the same live path on the pod.
+5. Verify the pod file with `grep -nE 'province_supply|disabled_basic_supply|max_turns|opponent_diversity|opponent_iter'` — the values should match the local edit.
+6. Tail training stdout at `/root/train_dom.log` (found via `/proc/<pid>/fd/1`); watch for `Config reload: <attr> <old> → <new>` at the next iter boundary. If the log says nothing, the change didn't land — re-check file path and hot-reload whitelist.
 
 ### Update project artifacts
 

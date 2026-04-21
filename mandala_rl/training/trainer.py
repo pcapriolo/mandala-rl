@@ -85,6 +85,7 @@ class Trainer:
             draw_penalty=config.get('draw_penalty', 0.0),
             drop_draws=config.get('drop_draws', False),
             max_turns=config.get('max_turns', 0),
+            mcts_leaf_eval_source=config.get('mcts_leaf_eval_source', 'score'),
         )
 
         # Log curriculum params at startup to catch silent config drops
@@ -227,11 +228,19 @@ class Trainer:
         'entropy_weight',
         'max_discard_rate',
         'checkpoint_every_n_games',
-        'opponent_diversity_ratio',
-        'opponent_iter_min',
-        'opponent_iter_max',
         'seed_reinject_frequency',
     ]
+
+    # YAML-nested keys that train.py flattens into self.config at startup.
+    # Hot-reload must traverse the nesting to pick up changes; without this
+    # dict, the _CONFIG_TOP_KEYS loop looks for them at raw top level and
+    # silently skips (they live under selfplay:).
+    # Map: (yaml_section, yaml_key) -> flattened cfg key in self.config
+    _CONFIG_NESTED_KEYS = {
+        ('selfplay', 'opponent_diversity_ratio'): 'opponent_diversity_ratio',
+        ('selfplay', 'opponent_iter_min'): 'opponent_iter_min',
+        ('selfplay', 'opponent_iter_max'): 'opponent_iter_max',
+    }
 
     def _hot_reload_config(self):
         """Re-read YAML and update tunable SelfPlayWorker params. No-op on error."""
@@ -267,6 +276,14 @@ class Trainer:
             if cfg_key not in raw:
                 continue
             new_val = raw[cfg_key]
+            old_val = self.config.get(cfg_key)
+            if old_val != new_val:
+                self.config[cfg_key] = new_val
+                changes.append(f"config.{cfg_key} {old_val} → {new_val}")
+        for (section, yaml_key), cfg_key in self._CONFIG_NESTED_KEYS.items():
+            new_val = raw.get(section, {}).get(yaml_key)
+            if new_val is None:
+                continue
             old_val = self.config.get(cfg_key)
             if old_val != new_val:
                 self.config[cfg_key] = new_val

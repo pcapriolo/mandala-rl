@@ -15,10 +15,11 @@ mcts:
   num_simulations: 800
   c_puct: 1.5
   dirichlet_alpha: 0.15    # Lower for large action space (131 actions)
-  dirichlet_epsilon: 0.50
+  dirichlet_epsilon: 0.15   # DEVLOG #162: dropped from 0.50 (2026-04-20). Fixed high ε was exploration-forcing dead-card buys (Copper/Estate) after Phase 4 mask expansion. One-shot explicit change, no schedule.
   action_explore_boost: 0.0
   action_buy_force_rate: 0.0
   action_play_force_rate: 0.0
+  leaf_eval_source: score   # "score" (current, VP-margin head, narrow) or "value" (binary ±1 head, wider). DEVLOG #163.
 
 # Self-Play Parameters
 selfplay:
@@ -28,9 +29,9 @@ selfplay:
   temperature: 1.0
   temperature_threshold: 25  # DEVLOG #149: reverted from 15 — lower threshold amplified bad policy
   explore_epsilon: 0.0        # DEVLOG #92 rule: must stay at 0.0 — crutch prevents organic learning
-  opponent_diversity_ratio: 0.0  # Pure self-play for Phase 0 (DEVLOG #144)
-  opponent_iter_min: 779  # Unused while diversity=0.0
-  opponent_iter_max: 796  # Unused while diversity=0.0
+  opponent_diversity_ratio: 0.2  # DEVLOG #163 (Rule #7): reference-play to break self-play fixed-point
+  opponent_iter_min: 3075  # Ladder step 1 (2026-04-21): promoted from iter 2200 after 261 iters plateaued at 2.94 avg_prov. Iter 3075 window: 3.02 prov, 59.4 argmax — strongest recent Phase-4-config peak.
+  opponent_iter_max: 3075  # Pin (min==max) for clean A/B vs the prior iter-2200 baseline. Switch to band once ladder stabilizes.
 
 
 # Training Parameters
