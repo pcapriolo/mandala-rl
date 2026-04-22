@@ -4,6 +4,172 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #169 — 2026-04-22: Config-schema refactor — replace four whitelists with one dataclass
+
+**Context.** The hot-reload system had four ad-hoc whitelists in `trainer.py` (`_TUNABLE_KEYS`, `_WORKER_TOP_KEYS`, `_CONFIG_TOP_KEYS`, `_CONFIG_NESTED_KEYS`) that each encoded a different slice of "how does a YAML change propagate to the running trainer." Adding a new key required knowing which of the four to edit; getting it wrong caused silent failures. We tripped this class of bug three times in one session: `checkpoint_frequency` (#165), `entropy_weight` (#168), `mcts_leaf_eval_source` (attempted #167, found unreachable). Full audit found 10 silently-broken keys, all with the same pattern: listed in `_CONFIG_TOP_KEYS` expecting YAML top level, actually nested under `training:` or `evaluation:`, `raw[cfg_key] not in raw` silently skipped them.
+
+Separately, the YAML mixed current values (`dirichlet_epsilon: 0.15`) with historical rationale (`# DEVLOG #168: reverted 0.05 → 0.15 after...`). Every `yaml.dump` destroyed the comments (DEVLOG #153 retired it for this reason). Separating values from metadata was overdue.
+
+**Change (Dominion only; Mandala/LC on legacy path until their schemas land):**
+
+1. **`mandala_rl/training/config_schema.py` (new).** Single flat dataclass `DominionConfig` with 63 fields. Each field declares its type, current-value default (docs-only — YAML is authoritative), and hot-reload metadata: `hot: bool`, `target: "worker" | "config"`. Methods: `load(path)` strict-parses YAML (rejects unknowns, requires every declared field); `to_flat_dict()` returns the flat dict `train.py` consumes; `reload_into(path, config, worker)` iterates `hot=True` fields and applies changes.
+
+2. **`configs/dominion.yaml` (rewritten).** Flat, no inline rationale comments, only structural section markers (`# mcts`, `# training`). History lives in DEVLOG; strategy lives in `docs/plans/dominion-training-plan.md`. YAML is a current-state snapshot that diffs cleanly in git. 63 keys, every schema field present.
+
+3. **`scripts/train.py`.** Dominion path: `DominionConfig.load(args.config)` → `to_flat_dict()`. Other games unchanged (legacy nested flattener). Dominion branch builds a nested-mirror `config` for startup code that reads `config['network']['input_channels']`, aliasing each section to the flat dict.
+
+4. **`mandala_rl/training/trainer.py`.** `Trainer.__init__` accepts optional `config_schema`. `_hot_reload_config` branches: schema path uses `schema.reload_into()` (one loop, typed, no whitelists); legacy path keeps the four-loop body for Mandala/LC compat. Silent `except Exception: return` replaced with explicit error logging. Missing-config-file check also logs loudly.
+
+5. **`tests/test_config_schema.py` (new, 13 cases).** Golden flat-dict identity, unknown-key rejection, strict missing-key rejection, Literal validation, hot-reload propagation to both targets, missing-hot-field raises, no-changes-no-output, static fields don't propagate, plus three explicit regression tests for the exact bugs we hit this session (`checkpoint_frequency`, `entropy_weight`, `mcts_leaf_eval_source`).
+
+**Silent-skip bugs fixed.** All 10 `training.*` / `evaluation.*` keys that were in `_CONFIG_TOP_KEYS` become hot-reloadable via the schema. `mcts_leaf_eval_source` becomes hot-reloadable for the first time (previously missing from every whitelist).
+
+**Pending interventions landed in the same restart** (dormant values now being read correctly):
+- `entropy_weight: 0.01` (per #168)
+- `checkpoint_frequency: 5` (per #165)
+- Reference pin remains `opponent_iter_min/max: 3600` (#166)
+- `mcts_leaf_eval_source` held at `score` per user decision (E1 hot-reload deferred to after refactor proves itself).
+
+**Scope adjustment from plan.** The approved plan's "migrate 7 ancillary scripts" was downgraded to "deferred." Scripts like `evaluate.py`, `eval_daemon.py`, `play_vs_ai.py` load configs for multiple games (not just Dominion) and read nested sections. Migrating them cleanly requires schemas for Mandala/LC too, which is explicitly out of scope. They'll need a follow-up when any of them is invoked with `dominion.yaml` (the flat format won't match their nested reads). Non-blocking: training + hot-reload + tests all work without them.
+
+**Deploy (iter ~3916).** Backed up pod's old `dominion.yaml`, `train.py`, `trainer.py` to `/root/mandala-dom/backup_schema_refactor_20260422/`. SCP'd the 4 new/modified files atomically. Killed the running `train.py` process; watchdog (`/root/dominion_watchdog.sh`, 120s loop) restarts it with new code. Expected startup: schema load, single `Config reload:` (none — or only the pending entropy/checkpoint_frequency if the values were different from in-memory, which they are since previous hot-reloads silently failed). Full post-restart verification in the "First post-restart hot-reload test" section of the plan.
+
+**Falsification / rollback.** If training fails to resume from `model_latest.pt`, revert the 4 files from the backup dir, wait for watchdog to restart. Buffer cost ~33 iters either way (restart alone flushes buffer).
+
+---
+
+## DEVLOG #168 — 2026-04-22: Revert ε 0.05 → 0.15 + `entropy_weight` 0.03 → 0.01
+
+**Part 1 — falsification of #167.** 51 iters of observation at `dirichlet_epsilon=0.05`:
+
+| metric | PRE ε-drop (31 iters) | POST first 30 | POST 30-60 |
+|--------|----------------------:|--------------:|-----------:|
+| prov | 3.089 | 3.093 | 3.113 |
+| argmax | 59.01 | 58.89 | 59.08 |
+| cop | 0.486 | 0.490 | 0.491 |
+| est | 0.149 | 0.144 | 0.143 |
+
+Essentially no change on any axis. Argmax flat. Copper unchanged. If the 3.10 ceiling were noise-driven dead-card exploration, reducing ε by 3x should have tightened both Province argmax and reduced Copper buys directly. Neither moved. **Falsified**: dead-buys are baked into the learned policy prior, not search-time artifacts. The ε spike observed right after the #167 reload was iter-level variance, not sustained.
+
+**Part 2 — policy-side intervention: `entropy_weight: 0.03 → 0.01`.** Reframe: the prior itself is too spread. Policy gives nontrivial mass to Copper-at-$3 and Estate-at-$2 because entropy regularization pulls toward uniform distribution, countering the outcome-driven gradient that would sharpen toward Province.
+
+History for this config:
+- DEVLOG #80 (iter 779): 0.15 → 0.05 fixed a Province decline 3.84→2.7 caused by entropy winning over force-rate labels.
+- DEVLOG #145 (iter ~706): 0.15 → 0.03 fixed Province% stuck at 35-40%. Called out as "actively penalized the policy from sharpening toward Province buying."
+- Every prior reduction has been corrective, never reverted. Direction is clear.
+
+0.01 is uncharted for Dominion — prior work stayed at 0.03 or above. Risk: policy collapse in 131-action space. Mitigation: watch for any single action dominating >95% within its legal subset; revert if so.
+
+**Deploy (iter ~3874).** Both changes hot-reloadable:
+- `dirichlet_epsilon` in `_TUNABLE_KEYS[('mcts', 'dirichlet_epsilon')]`
+- `entropy_weight` in `_CONFIG_TOP_KEYS`
+
+Backed up pod config to `/root/mandala-dom/configs/dominion.yaml.bak_eps_revert_entropy_001_20260422`. `scp` landed. Expected two `Config reload:` lines.
+
+**Falsification plan.** 50-iter window (iters ~3875-3925). Success = prov window climbing above 3.10 toward 3.15+, argmax climbing. Policy sharpening shows up in `policy_loss` trending down and per-iter visit distributions concentrating. Abort: any single-action dominance >95% within buy-phase subset (collapse), `draw_rate ≥ 0.10`, or `avg_provinces ≤ 2.9` for 10 consecutive iters — revert to 0.03.
+
+**Reference pin unchanged** at iter 3600. Single-variable training-dynamic change (entropy_weight); ε revert is hygiene not a behavior change.
+
+---
+
+## DEVLOG #167 — 2026-04-22: `dirichlet_epsilon` 0.15 → 0.05 — attack the prov cap
+
+**Context.** Ladder step 3 (iter 3175 → 3600, DEVLOG #166) landed 122 iters ago. Trajectory:
+
+| window | iters | prov | argmax | cop | est |
+|--------|-------|-----:|-------:|----:|----:|
+| pre-swap 30 | 3670-3699 | 3.085 | 58.67 | 0.406 | 0.140 |
+| post-swap early 39 | 3700-3738 | 3.124 | 58.36 | 0.452 | 0.134 |
+| post-swap latest 84 | 3739-3822 | 3.100 | 59.11 | 0.488 | 0.141 |
+
+Prov spiked +0.04 in the first 38 iters then regressed to the pre-swap 3.10 plateau. Copper drifting monotonically worse (+0.08 over 122 iters). 8 new saved checkpoints (3625-3800) — none beat iter 3600 on any criterion. Ladder is exhausted: no available reference plays prov >3.24 single; self-play is stuck at a 3.10 fixed point.
+
+**Reframe.** Copper drift is downstream, not the target. The upstream cap is: in self-play at supply=7, outcome data doesn't separate Province-at-$8+ from Gold-at-$8+ cleanly enough to push the value head's Q-gap. Reference-play was supposed to do that but has plateaued — we're out of stronger references. The proximate cause of the 3.10 ceiling is noise-driven dead-card exploration: with `dirichlet_epsilon: 0.15` in a 131-action space, 15% of root prior is spread across all legal actions including Copper-at-\$3 and Estate-at-\$2. A fraction of those noise-forced trajectories win in the self-play sample → policy picks up sliver of mass on dead-card buys → each dead buy delays \$8 by a turn → fewer Provinces before the pile empties. That sliver *is* the cap.
+
+DEVLOG #162 already dropped ε 0.50 → 0.15 for this exact reason. Worked initially; noise has re-compounded as training continued.
+
+**Change.** `configs/dominion.yaml` mcts.dirichlet_epsilon: `0.15 → 0.05`. Trust the learned prior more; less root noise on dead actions. Hot-reloadable (`trainer.py:192` `_TUNABLE_KEYS[('mcts', 'dirichlet_epsilon')]`).
+
+**Falsification plan.** 50-iter window (iters ~3825-3875). Success = prov window climbing above 3.10 toward 3.15+, argmax climbing, copper falling as a side effect. If prov flat AND copper drops: policy sharpened but Q-gap still narrow → prior has a bad mode, next move is different (entropy_weight or temperature_threshold, or seed injection). If prov drops AND copper drops: too-low ε collapsed useful exploration → revert to 0.10 or back to 0.15.
+
+**Risk.** Lower ε means if the learned prior has a suboptimal mode (e.g., overweighted Gold-at-\$8 vs Province-at-\$8), MCTS has less pressure to explore out of it. Mitigation: 3.10 prov is close enough to the 3.24 peak that the prior seems mostly-correct; the noise-driven explanation for dead-buys is the more parsimonious one. If wrong, the falsification plan detects it.
+
+**Explicitly NOT doing.** No entropy_weight change. No temperature_threshold change. No reference pin change (stays iter 3600). No curriculum change. No seed data injection. Single-variable intervention per principle #161 — observe, then escalate only if needed.
+
+**Deploy (iter ~3822).** Backed up pod config to `/root/mandala-dom/configs/dominion.yaml.bak_eps_005_20260422`. `scp` landed. Expected `Config reload: dirichlet_epsilon 0.15 → 0.05` at next iter boundary.
+
+---
+
+## DEVLOG #166 — 2026-04-22: Reference ladder step 3 — iter 3175 → 3600
+
+**Context.** Ladder step 2 (iter 3075 → 3175, DEVLOG #164) landed at iter 3302. Over 290 iters of observation after the swap, the live agent matched iter 3175's window strength (3.09-3.10 prov) but never exceeded it — classic distillation ceiling. Discipline drifted worse (est 0.10 → 0.15, cop 0.33 → 0.40). Diagnosis: current agent is now at iter 3175's true sustained strength, so the asymmetric reference-play signal exhausted. 524 iters post-3175-reference, no prov improvement in 30-iter windows.
+
+**Candidate scan (saved checkpoints since 3175).** Per single-iter selection criterion (feedback memory: reference IS one checkpoint's weights). Each compared 3/3 to iter 3175 (prov/argmax/est):
+
+| ckpt | prov | argmax | est | turns | beats 3175? |
+|------|-----:|-------:|----:|------:|:-----------:|
+| 3175 (pin) | 3.18 | 61.5 | 0.10 | 33.3 | — |
+| 3425 | 3.12 | 62.2 | 0.20 | 33.9 | 1/3 |
+| 3450 | 3.24 | 62.7 | 0.16 | 32.8 | 2/3 |
+| 3600 | **3.24** | **67.0** | 0.12 | **30.9** | **2/3 + near-match on est** |
+| 3650 | 3.08 | 63.5 | 0.15 | 33.7 | 1/3 |
+
+**Pick: iter 3600.** Best argmax across the entire post-pin scan (+5.5 over 3175). Prov tied with iter 3450 at 3.24, but 3600 has dramatically cleaner est (0.12 vs 0.16) and 2 fewer turns (30.9 vs 32.8). Window confirms sustained strength: 5-iter centered window (3598-3602) means prov 3.17, argmax 60.9, turns 33.3, with iters 3598/3599/3600 at 3.20/3.30/3.24 prov consecutively — a genuine 3-iter peak, not an isolated spike. Copper regression (0.41 vs 0.33) accepted — Phase 4 copper has drifted population-wide, and 3600's Province-racing signal is strong enough to trade.
+
+**Deploy (iter 3699).** Backed up pod config to `/root/mandala-dom/configs/dominion.yaml.bak_ladder_3600_20260422`. `scp` landed; hot-reload via nested-config path (DEVLOG #163 fix) expected at next iter boundary. `model_iter_3600.pt` confirmed present on pod.
+
+**Observation plan.** 50-iter window (iters ~3700-3750). Success criterion: 30-iter window prov rising above the 3.10 plateau toward 3.15-3.20, argmax window climbing above 60. Abort: `draw_rate ≥ 0.10` any iter, or 20 consecutive iters `avg_provinces ≤ 3.0` — revert to 3175.
+
+**Explicitly NOT doing.** No band yet. No `opponent_diversity_ratio` change. No curriculum change. No `dirichlet_epsilon` change. If 3600 produces progress, next candidate comes from windowed single-iter analysis of future saved ckpts.
+
+---
+
+## DEVLOG #165 — 2026-04-21: checkpoint_frequency 25 → 5 (capture peaks for Rule #7)
+
+**Problem.** Rule #7 reference-opponent selection is constrained to saved checkpoints (multiples of `checkpoint_frequency`). After 200+ iters of Phase 4 with cadence=25, the saved set has 3175 as its single-iter peak (prov 3.18 / argmax 61.5) while *unsaved* iters hit repeatedly higher peaks: 3229 (3.25/62.1), 3331 (3.25/59.7), 3336 (3.23/62.1), 3311 (3.23/61.9), 3235 (3.23/60.2), 3385 (3.21/65.3), and a dozen others at 3.20+. None are addressable as reference pins. The next ladder rung can't improve on 3175 while the pattern holds.
+
+**Change.** `configs/dominion.yaml`: `checkpoint_frequency: 25 → 5`. Captures 5× more candidates. Hot-reload whitelisted (`trainer.py:_CONFIG_TOP_KEYS`). No restart.
+
+**Principle check.** DEVLOG #161 explicitly sanctions IO-cadence changes as "acceptable, not silent" (`Still auto-behaviors (acceptable, not silent): iteration-based checkpoint/eval/deploy/replay-save frequencies`). This is a checkpoint-cadence change, not a training-dynamics change — the policy doesn't see it. No violation.
+
+**Explicitly NOT doing.** No auto-promotion of the reference pin on metrics thresholds — that would be the silent schedule #161 bans. Pin swaps remain human YAML edits with single-iter criterion (per feedback memory + DEVLOG #164). The user evaluated and rejected an auto-swap-on-5%-turns-drop rule for noise + principle reasons.
+
+**Disk runway.** /workspace currently 26 GB free. Observed training cadence ~25 iters/hr → new checkpoint rate ~5/hr × 48 MB ≈ 240 MB/hr ≈ 5.8 GB/day. ~4.5 days of runway. Cleanup policy deferred (most old checkpoints are outside the Phase 4 window and not addressable as reference candidates; a future sweep can archive pre-Phase-4 iters if space pressure forces it).
+
+**Deploy (iter ~3386) — hot-reload silently skipped; change deferred to next restart.** `scp` of updated YAML landed at `/root/mandala-dom/configs/dominion.yaml` but no `Config reload:` line appeared. Root cause: `checkpoint_frequency` lives nested under `training:` in the YAML, while `_CONFIG_TOP_KEYS` (trainer.py:219) expects top-level; the hot-reload check at line 276 does `if cfg_key not in raw: continue` — silently skips. This is the same class of bug DEVLOG #163 fixed for `opponent_iter_*` via `_CONFIG_NESTED_KEYS`, unfixed for this key. Clean fix is one line: add `('training', 'checkpoint_frequency'): 'checkpoint_frequency'` to `_CONFIG_NESTED_KEYS` at trainer.py:239. Requires a restart to land (code changes don't hot-reload).
+
+**Decision: defer.** User declined restart (buffer rebuild cost ~33 iters). The scp'd YAML at `checkpoint_frequency: 5` is dormant — the live process continues at 25 until the next organic restart, at which point the startup flattener picks up the new value. Code fix is parked for the next restart-worthy change. Local repo and pod YAML both reflect the intent (5); live `self.config['checkpoint_frequency']` remains 25. Do not expect new candidates at iter cadence 5 until the next restart — next ladder picks are still bounded to multiples of 25.
+
+---
+
+## DEVLOG #164 — 2026-04-21: Reference ladder step 2 — iter 3075 → 3175
+
+**Context.** DEVLOG #163 landed reference-play (Rule #7) and did ladder step 1 (iter 2200 → 3075) at iter 3143. 130 iters of observation since: the swap ended the 261-iter plateau at `avg_provinces` 2.94, lifted the policy to a new plateau around 3.08, raised `mcts_province_argmax_pct` from ~55 to ~58-60 mean. But the trajectory flattened — last 30 iters (3243-3272) held at `avg_provinces` 3.08 mean, nowhere near the 3.45 graduation gate. Same pattern as the end of the 2200 pin: iter 3075's distillation ceiling has been reached. Time for the next ladder step.
+
+**Selection criterion — single-iter, not windowed.** First pass used the #163 5-iter windowed-mean methodology and picked iter 3200. On review that criterion was wrong for the job: the reference opponent is literally one checkpoint's weights, so its playing strength is its single-iter metrics — the window only tells you whether the neighborhood confirms non-fluke, it doesn't average-out with adjacent weights. Iter 3200 deploy was live for ~1 iter then reverted to iter 3175 before material buffer contamination.
+
+**Candidates (single-iter, saved checkpoints only, checkpoint_frequency=25):**
+
+| ckpt | prov | argmax | cop | est | window prov / argmax |
+|------|-----:|-------:|----:|----:|---------------------:|
+| 3100 | 2.91 | 56.3 | 0.25 | 0.06 | 2.99 / 56.3 |
+| 3125 | 2.88 | 57.2 | 0.17 | 0.15 | 2.89 / 54.6 |
+| 3150 | 2.91 | 55.7 | 0.25 | 0.12 | 3.03 / 56.6 |
+| **3175** | **3.18** | **61.5** | 0.33 | **0.10** | 3.09 / 58.9 |
+| 3200 | 3.09 | 57.7 | 0.29 | 0.14 | 3.10 / 59.2 |
+| 3225 | 3.02 | 56.5 | 0.36 | 0.12 | 3.06 / 58.9 |
+| 3250 | 3.02 | 55.9 | 0.40 | 0.12 | 3.06 / 59.2 |
+
+**Pick: iter 3175.** Best single-iter on every axis among saved checkpoints: prov 3.18 (+0.12 over runner-up 3200 at 3.09; +0.12 over current baseline 3075 at 3.06), argmax 61.5 (+3.8), est 0.10 (at the Phase 4 gate — alone among candidates in meeting discipline). 5-iter window 3.09 confirms the 3.18 single-iter is a real peak in a stable neighborhood, not a noise spike. Non-saved-checkpoint iters in the window (e.g. 3185 at 3.23) are unreachable — selection is constrained to multiples of 25.
+
+**Deploy — two-stage (selection correction mid-deploy).** Stage 1: `3075 → 3200` scp'd at iter 3295, hot-reload confirmed at iter 3296→3297 boundary (`Config reload: config.opponent_iter_min 3075 → 3200`; `Playing 20 games vs iter_3200 opponent` at iter 3297). Stage 2: selection criterion corrected to single-iter, `3200 → 3175` scp'd shortly after; hot-reload fired at iter 3301→3302 boundary (`Config reload: config.opponent_iter_min 3200 → 3175`). Iters 3297-3301 (5 iters) ran against iter_3200 reference — ~100 reference games into buffer (~0.1% of 100K), self-flushes within ~33 iters. Backup at `/root/mandala-dom/configs/dominion.yaml.bak_ladder_3200_20260421`.
+
+**Observation plan.** Same as step 1: 50-iter window (iters ~3296-3346). Watch prov window, argmax window, cop/est windows vs the pre-swap 3.08 baseline. Success looks like windowed prov rising above 3.10 and trending toward 3.15-3.20. Abort trigger: `draw_rate ≥ 0.10` any iter, or 10 consecutive iters `avg_provinces ≤ 2.9` — revert pin to 3075.
+
+**Explicitly NOT doing.** No band (min < max) yet — defer until ladder stabilizes. No `opponent_diversity_ratio` change (stays 0.2). No curriculum change. No `dirichlet_epsilon` change (stays 0.15 per #162). No "stronger-than-lineage" reference — Rule #7 requires a real checkpoint from our own training.
+
+---
+
 ## DEVLOG #163 — 2026-04-21: Rule #7 reference-play + nested-config hot-reload + reference ladder
 
 **Context.** After DEVLOG #162, Phase 4 remained stuck — `avg_provinces` oscillated 2.3-2.5 for ~100 iters at ε=0.15, no upward trend. Investigation ruled out two hypotheses:
