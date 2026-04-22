@@ -37,7 +37,8 @@ class Trainer:
         network: MandalaNet,
         config: dict,
         device: str = "mps",
-        config_path: str = "configs/default.yaml"
+        config_path: str = "configs/default.yaml",
+        config_schema: Optional[object] = None,
     ):
         """
         Args:
@@ -46,12 +47,15 @@ class Trainer:
             config: Training configuration
             device: PyTorch device
             config_path: Path to YAML config
+            config_schema: Typed DominionConfig for schema-based hot-reload
+                (Dominion only; None for Mandala/LC uses legacy whitelists).
         """
         self.game = game
         self.network = network.to(device)
         self.device = device
         self.config = config
         self._config_path = config_path
+        self._config_schema = config_schema
 
         # Replay buffer
         self.replay_buffer = ReplayBuffer(
@@ -243,14 +247,37 @@ class Trainer:
     }
 
     def _hot_reload_config(self):
-        """Re-read YAML and update tunable SelfPlayWorker params. No-op on error."""
+        """Re-read YAML and update tunable params.
+
+        Dominion uses the typed schema (single source of truth, fixes the 10
+        silent-skip bugs from the legacy whitelists — see DEVLOG #169). Other
+        games fall through to the legacy four-whitelist path.
+        """
         config_path = Path(self._config_path)
         if not config_path.exists():
+            print(f"[HOT-RELOAD ERROR] config not found at {config_path}")
             return
+
+        # Schema-based path (Dominion). No whitelists — every field's
+        # hot-reload metadata lives on the dataclass.
+        if self._config_schema is not None:
+            try:
+                changes = self._config_schema.reload_into(
+                    str(config_path), self.config, self.selfplay_worker,
+                )
+            except (yaml.YAMLError, ValueError) as e:
+                print(f"[HOT-RELOAD ERROR] {config_path}: {e}")
+                return
+            if changes:
+                print(f"Config reload: {', '.join(changes)}")
+            return
+
+        # Legacy path (Mandala, Lost Cities).
         try:
             with open(config_path) as f:
                 raw = yaml.safe_load(f)
-        except Exception:
+        except Exception as e:
+            print(f"[HOT-RELOAD ERROR] {config_path}: {e}")
             return
         changes = []
         curriculum_changes = []

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mandala_rl.network.model import MandalaNet
 from mandala_rl.training.trainer import Trainer
+from mandala_rl.training.config_schema import DominionConfig
 
 
 def load_config(config_path: str) -> dict:
@@ -26,6 +27,17 @@ def load_config(config_path: str) -> dict:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
+
+
+def _dominion_flat_config(config_path: str):
+    """Load Dominion config via the typed schema and return (flat_dict, schema).
+
+    The schema is the single source of truth for every Dominion config key's
+    type, default, and hot-reload metadata. Replaces the hand-rolled flattener
+    that had silent-skip bugs (DEVLOG #165, #167, #168).
+    """
+    schema = DominionConfig.load(config_path)
+    return schema.to_flat_dict(), schema
 
 
 def main():
@@ -51,8 +63,28 @@ def main():
                       help='Clear a pending warmup target (resume normal training immediately)')
     args = parser.parse_args()
 
-    # Load config
-    config = load_config(args.config)
+    # Load config. Dominion (detected by flat-YAML format OR --game dominion)
+    # uses the typed DominionConfig schema (DEVLOG #169); other games keep the
+    # nested YAML format until their schemas land. The watchdog runs without
+    # --game flag, so path-based detection is the reliable trigger.
+    _is_dominion_config = args.game == 'dominion' or 'dominion' in args.config
+    if _is_dominion_config:
+        training_config, dominion_schema = _dominion_flat_config(args.config)
+        # Build a nested mirror so the rest of this startup code (network
+        # construction, device detection, paths) still works unchanged. Each
+        # nested view just points back at the same flat values.
+        config = {
+            'network': training_config,
+            'mcts': training_config,
+            'selfplay': training_config,
+            'training': training_config,
+            'evaluation': training_config,
+            'paths': training_config,
+            **training_config,
+        }
+    else:
+        dominion_schema = None
+        config = load_config(args.config)
     config_hash = hashlib.sha256(yaml.dump(config, sort_keys=True).encode()).hexdigest()[:12]
     print(f"Loaded config from {args.config} (hash: {config_hash})")
 
@@ -105,123 +137,88 @@ def main():
     )
     print(f"Created network with {sum(p.numel() for p in network.parameters())} parameters")
 
-    # Prepare training config
-    training_config = {
-        # MCTS
-        'mcts_simulations': config['mcts']['num_simulations'],
-        'c_puct': config['mcts']['c_puct'],
-        'dirichlet_alpha': config['mcts'].get('dirichlet_alpha', 0.3),
-        'dirichlet_epsilon': config['mcts'].get('dirichlet_epsilon', 0.25),
-        'temperature': config['selfplay']['temperature'],
-        'temperature_threshold': config['selfplay']['temperature_threshold'],
+    # Prepare training config. Dominion already built `training_config` above
+    # via the typed schema (DEVLOG #169); skip the legacy flattener entirely.
+    # Other games use the legacy nested-YAML flattener.
+    if dominion_schema is None:
+        training_config = {
+            # MCTS
+            'mcts_simulations': config['mcts']['num_simulations'],
+            'c_puct': config['mcts']['c_puct'],
+            'dirichlet_alpha': config['mcts'].get('dirichlet_alpha', 0.3),
+            'dirichlet_epsilon': config['mcts'].get('dirichlet_epsilon', 0.25),
+            'temperature': config['selfplay']['temperature'],
+            'temperature_threshold': config['selfplay']['temperature_threshold'],
+            # Self-play
+            'games_per_iteration': config['selfplay']['games_per_iteration'],
+            'parallel_games': config['selfplay'].get('parallel_games', 8),
+            'leaves_per_game': config['selfplay'].get('leaves_per_game', 1),
+            'batch_size': config['training']['batch_size'],
+            'epochs_per_iteration': config['training']['epochs_per_iteration'],
+            'learning_rate': config['training']['learning_rate'],
+            'weight_decay': config['training']['weight_decay'],
+            'lr_milestones': config['training']['lr_milestones'],
+            'lr_gamma': config['training']['lr_gamma'],
+            'replay_buffer_size': config['training']['replay_buffer_size'],
+            'checkpoint_frequency': config['training']['checkpoint_frequency'],
+            # Evaluation
+            'eval_frequency': config['evaluation']['eval_frequency'],
+            'eval_num_games': config['evaluation']['eval_num_games'],
+            'eval_mcts_simulations': config['evaluation']['eval_mcts_simulations'],
+            # Network architecture (for evaluation)
+            'input_channels': network_config['input_channels'],
+            'num_actions': network_config['num_actions'],
+            'num_res_blocks': network_config['num_res_blocks'],
+            'channels': network_config['channels'],
+            'belief_size': network_config.get('belief_size', 12),
+            # Paths
+            'checkpoint_dir': config['paths']['checkpoint_dir'],
+            'replay_dir': config['paths']['replay_dir'],
+            'log_dir': config['paths']['log_dir'],
+            'elo_file': config['paths']['elo_file'],
+            # Misc training knobs
+            'save_replay_frequency': config.get('save_replay_frequency', 10),
+            'prune_old_checkpoints': config['training'].get('prune_old_checkpoints', False),
+            'entropy_weight': config['training'].get('entropy_weight', 0.0),
+            'max_discard_rate': config['training'].get('max_discard_rate', 0),
+            'seed_reinject_frequency': config['training'].get('seed_reinject_frequency', 0),
+            'min_play_rate': config['training'].get('min_play_rate', 0),
+            'policy_weight': config['training'].get('policy_weight', 1.0),
+            'checkpoint_every_n_games': config['training'].get('checkpoint_every_n_games', 10),
+            'opponent_diversity_ratio': config['selfplay'].get('opponent_diversity_ratio', 0.0),
+            'opponent_iter_min': config['selfplay'].get('opponent_iter_min', None),
+            'opponent_iter_max': config['selfplay'].get('opponent_iter_max', None),
+            'explore_epsilon': config['selfplay'].get('explore_epsilon', 0.0),
+            'min_buffer_for_training': config['training'].get('min_buffer_for_training', 0),
+            'action_explore_boost': config['mcts'].get('action_explore_boost', 0.0),
+            'action_buy_force_rate': config['mcts'].get('action_buy_force_rate', 0.0),
+            'action_play_force_rate': config['mcts'].get('action_play_force_rate', 0.0),
+            'mcts_leaf_eval_source': config['mcts'].get('leaf_eval_source', 'score'),
+            # Curriculum
+            'max_action_cards': config.get('max_action_cards', 10),
+            'big_money_force_rate': config.get('big_money_force_rate', 0.0),
+            'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
+            'disabled_basic_supply': config.get('disabled_basic_supply', []),
+            'province_supply': config.get('province_supply', 8),
+            'draw_penalty': config.get('draw_penalty', 0.0),
+            'max_turns': config.get('max_turns', 0),
+            'deploy_frequency': config.get('deploy_frequency', 0),
+        }
+        # Catch-all: merge top-level scalar/list keys not already in training_config.
+        for key, value in config.items():
+            if not isinstance(value, dict) and key not in training_config:
+                training_config[key] = value
 
-        # Self-play
-        'games_per_iteration': config['selfplay']['games_per_iteration'],
-        'parallel_games': config['selfplay'].get('parallel_games', 8),
-        'leaves_per_game': config['selfplay'].get('leaves_per_game', 1),
-        'batch_size': config['training']['batch_size'],
-        'epochs_per_iteration': config['training']['epochs_per_iteration'],
-        'learning_rate': config['training']['learning_rate'],
-        'weight_decay': config['training']['weight_decay'],
-        'lr_milestones': config['training']['lr_milestones'],
-        'lr_gamma': config['training']['lr_gamma'],
-        'replay_buffer_size': config['training']['replay_buffer_size'],
-        'checkpoint_frequency': config['training']['checkpoint_frequency'],
-
-        # Evaluation
-        'eval_frequency': config['evaluation']['eval_frequency'],
-        'eval_num_games': config['evaluation']['eval_num_games'],
-        'eval_mcts_simulations': config['evaluation']['eval_mcts_simulations'],
-
-        # Network architecture (for evaluation)
-        'input_channels': network_config['input_channels'],
-        'num_actions': network_config['num_actions'],
-        'num_res_blocks': network_config['num_res_blocks'],
-        'channels': network_config['channels'],
-        'belief_size': network_config.get('belief_size', 12),
-
-        # Paths
-        'checkpoint_dir': config['paths']['checkpoint_dir'],
-        'replay_dir': config['paths']['replay_dir'],
-        'log_dir': config['paths']['log_dir'],
-        'elo_file': config['paths']['elo_file'],
-
-        # Replay saving
-        'save_replay_frequency': config.get('save_replay_frequency', 10),
-
-        # Disk management
-        'prune_old_checkpoints': config['training'].get('prune_old_checkpoints', False),
-
-        # Entropy regularization
-        'entropy_weight': config['training'].get('entropy_weight', 0.0),
-
-        # Degenerate game filtering
-        'max_discard_rate': config['training'].get('max_discard_rate', 0),
-
-        # Seed buffer re-injection
-        'seed_reinject_frequency': config['training'].get('seed_reinject_frequency', 0),
-
-        # LC quality filtering
-        'min_play_rate': config['training'].get('min_play_rate', 0),
-
-        # Policy weight schedule (decays from base to 1.0 over 256 iterations)
-        'policy_weight': config['training'].get('policy_weight', 1.0),
-
-        # Checkpoint every N games within iteration (for resume)
-        'checkpoint_every_n_games': config['training'].get('checkpoint_every_n_games', 10),
-
-        # Opponent diversity (fraction of full-sim games played vs older checkpoint)
-        'opponent_diversity_ratio': config['selfplay'].get('opponent_diversity_ratio', 0.0),
-        'opponent_iter_min': config['selfplay'].get('opponent_iter_min', None),
-        'opponent_iter_max': config['selfplay'].get('opponent_iter_max', None),
-
-        # Explore epsilon (Dominion: Big Money prior blending in buy phase)
-        'explore_epsilon': config['selfplay'].get('explore_epsilon', 0.0),
-
-        # Min buffer for training (skip training until buffer has enough diversity)
-        'min_buffer_for_training': config['training'].get('min_buffer_for_training', 0),
-
-        # Action exploration boost (Dominion: multiply PLAY priors in ACTION phase)
-        'action_explore_boost': config['mcts'].get('action_explore_boost', 0.0),
-
-        # Action buy forcing (Dominion: epsilon-greedy buy of kingdom action cards)
-        'action_buy_force_rate': config['mcts'].get('action_buy_force_rate', 0.0),
-
-        # Action play forcing (Dominion: epsilon-greedy play of action cards in hand)
-        'action_play_force_rate': config['mcts'].get('action_play_force_rate', 0.0),
-
-        # MCTS leaf eval source: "score" (current) or "value" (sharper binary-outcome signal; DEVLOG #163)
-        'mcts_leaf_eval_source': config['mcts'].get('leaf_eval_source', 'score'),
-
-        # Curriculum: max action cards in kingdom (0 = Phase 0, no action cards)
-        'max_action_cards': config.get('max_action_cards', 10),
-        'big_money_force_rate': config.get('big_money_force_rate', 0.0),
-        'forced_kingdom_cards': config.get('forced_kingdom_cards', []),
-        'disabled_basic_supply': config.get('disabled_basic_supply', []),
-        'province_supply': config.get('province_supply', 8),
-
-        # Game rules (Dominion curriculum)
-        'draw_penalty': config.get('draw_penalty', 0.0),
-        'max_turns': config.get('max_turns', 0),
-
-        # Deploy
-        'deploy_frequency': config.get('deploy_frequency', 0),
-    }
-
-    # Catch-all: merge top-level scalar/list keys from YAML not already in training_config.
-    # This prevents silent config drops (e.g., draw_penalty, max_turns, deploy_frequency)
-    # when new keys are added to YAML but not manually listed above.
-    for key, value in config.items():
-        if not isinstance(value, dict) and key not in training_config:
-            training_config[key] = value
-
-    # Create trainer
+    # Create trainer. For Dominion, pass the typed schema so hot-reload uses
+    # the single-source-of-truth declarations (DEVLOG #169). Other games pass
+    # None and hot-reload uses the legacy whitelists.
     trainer = Trainer(
         game=game,
         network=network,
         config=training_config,
         device=device,
-        config_path=args.config
+        config_path=args.config,
+        config_schema=dominion_schema,
     )
     print("Created trainer")
 
