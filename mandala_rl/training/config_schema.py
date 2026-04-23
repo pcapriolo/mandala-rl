@@ -110,6 +110,14 @@ class DominionConfig:
     disabled_basic_supply: list[int] = field(
         default_factory=lambda: [6, 16], metadata=HOT_WORKER
     )
+    # Card IDs the reference opponent's policy must treat as illegal during
+    # inference (buy-action logits forced to -inf before softmax). Unlike
+    # disabled_basic_supply (game-level, both players), this is per-policy:
+    # supply stays globally available; only the reference's selection is
+    # constrained. DEVLOG #170. Default [] = behavior identical to before.
+    opponent_disabled_supply: list[int] = field(
+        default_factory=list, metadata=HOT_WORKER
+    )
     province_supply: int = field(default=7, metadata=HOT_WORKER)
     max_action_cards: int = field(default=0, metadata=HOT_WORKER)
     forced_kingdom_cards: list[int] = field(

@@ -4,6 +4,40 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #170 — 2026-04-23: Per-reference policy masking + staged Duchy-unmask experiment
+
+**Context.** Three sharpening interventions (ε↓, entropy↓, leaf_eval→value) all returned null (#167, #168, and E1 on 2026-04-23). Copper re-mask (`disabled_basic_supply: [6, 16] → [0, 6, 16]`) lifted prov 3.10→3.33 over 272 iters, confirming Copper was the dominant leak. Estate then crept from 0.04→0.08 — same mask-expansion-shock mechanism baking Estate-buying into the policy as Copper had done.
+
+**Diagnosis (root cause, not just symptom).** In symmetric self-play with outcome-only binary value targets, dead-card actions (Copper-at-\$3, Estate-at-\$2) maintain nonzero policy mass because both sides play with dead-card mass, outcomes tie out on average, and the value head never separates dead-card states from Silver-buy states. Reference-play with peer checkpoints helped (2200 → 3075 → 3175 → 3600) but saturated at each promotion because every peer reference **itself** has dead-buy mass — the asymmetric outcome pressure degrades to symmetry once current catches reference strength. Masking is surgery without biopsy; we keep treating symptoms.
+
+**Fix: categorical asymmetry via per-reference policy masking.** Engineer a reference opponent that is **structurally** disciplined — its policy cannot select specific actions, regardless of supply availability. When current buys the disabled card, it loses to a reference that categorically refuses the same action, producing asymmetric outcome signal that the value head CAN separate. Attacks the tie-out at its source instead of masking the action globally.
+
+**Implementation.** Policy-level mask applied only to the opponent's inference batch in `worker.py:_eval_two_models`. When `m_idx == 1` (the opponent) and `self.opponent_disabled_supply` is non-empty, set `logits[:, buy_idx] = float('-inf')` before softmax. Post-softmax mass is 0; dirichlet noise at MCTS root blends with the already-softmaxed prior, so the masked action stays dead permanently. Supply remains globally available (C++ game state unchanged) — current agent is unaffected.
+
+Why policy-level, not game-level: the C++ `disabled_basic_supply` applies once per game in `create_initial_state()` (cpp/dominion_game.cpp:589-592), symmetric across both players. Per-player asymmetry would require C++ API changes; policy-level achieves the same end in ~40 lines of Python.
+
+**Files.** Net: 2 test files, 5 modified.
+- `mandala_rl/training/config_schema.py`: new `opponent_disabled_supply: list[int]` field, `HOT_WORKER` metadata, default `[]`.
+- `mandala_rl/selfplay/worker.py`: `__init__` accepts + stores the attr; `_eval_two_models` applies `logits[:, 34+cid] = -inf` on opponent batches when non-empty.
+- `mandala_rl/training/trainer.py`: passes `opponent_disabled_supply=config.get(...)` into worker.
+- `configs/dominion.yaml`: adds `opponent_disabled_supply: []` (strict-schema requirement). Also synced with pod drift: `disabled_basic_supply: [6, 16] → [0, 6, 16]`, `opponent_iter_{min,max}: 3600 → 4220`, `entropy_weight: 0.01 → 0.03`.
+- `tests/test_worker_opponent_mask.py` (new, 6 cases): BUY_OFFSET constant, card→index mapping, mask zeroes opponent policy at target indices, no-op when empty, noise cannot lift `-inf`.
+- `tests/test_config_schema.py`: new `test_14_opponent_disabled_supply_field_hot_reloads`. Two existing tests (07, 12) de-coupled from specific entropy_weight values to be drift-tolerant.
+
+**Staged experiment design.**
+
+**Step 1 — Phase-3-restart.** Hot-reload `disabled_basic_supply: [0, 6, 16] → [0, 3, 4, 6, 16]` (full Phase-3 supply: Copper, Estate, Duchy, Curse, Gardens all globally masked). Keep reference pin at iter 4220. `opponent_disabled_supply: []` at this stage (global mask covers all dead cards; no asymmetry needed yet). Expect prov to climb from ~3.30 toward Phase-3-peak territory (3.45-3.48) as Estate/Duchy creep disappears. **Exit criterion: manual — user signals when to promote.**
+
+**Step 2 — Duchy reintroduction.** When user approves, three atomic hot-reloads: (1) promote reference to a Phase-3-master checkpoint from Step-1 window, (2) unmask Duchy for current agent: `disabled_basic_supply: [0, 3, 4, 6, 16] → [0, 3, 6, 16]`, (3) enable reference-side mask: `opponent_disabled_supply: [] → [0, 3, 4, 6, 16]`. Current has Duchy available everywhere. Reference's policy refuses Duchy. Asymmetric signal in the 20% vs-reference games should suppress Duchy buys while prov holds.
+
+**Falsification.** Success: `avg_duchies` climbs briefly (exploration) then drops toward 0; `avg_provinces` holds ≥ 3.40. Null: sustained Duchy-buying despite reference pressure → signal too weak or reference OOD-noisy on Duchy-contaminated states. Collapse: prov crashes → three-way revert via hot-reload.
+
+**Risks accepted.** Reference's value head was trained without Duchy-in-supply, so leaf evaluations on current-agent states with Duchy-contaminated decks are OOD and noisy. Self-play is still 80% of games (symmetric with Duchy available), so if signal is too weak, Duchy-buying could compound like Copper did. Watch first 30 iters closely after Step 2.
+
+**Deploy plan.** Phase A (code): run tests, commit, PR, merge, SCP, restart training (code change requires restart — ~33-iter buffer rebuild). Phase B (Step 1): hot-reload disabled_basic_supply. Phase C (Step 2): user signals, three hot-reloads atomic. All three phases independently reversible via YAML edits.
+
+---
+
 ## DEVLOG #169 — 2026-04-22: Config-schema refactor — replace four whitelists with one dataclass
 
 **Context.** The hot-reload system had four ad-hoc whitelists in `trainer.py` (`_TUNABLE_KEYS`, `_WORKER_TOP_KEYS`, `_CONFIG_TOP_KEYS`, `_CONFIG_NESTED_KEYS`) that each encoded a different slice of "how does a YAML change propagate to the running trainer." Adding a new key required knowing which of the four to edit; getting it wrong caused silent failures. We tripped this class of bug three times in one session: `checkpoint_frequency` (#165), `entropy_weight` (#168), `mcts_leaf_eval_source` (attempted #167, found unreachable). Full audit found 10 silently-broken keys, all with the same pattern: listed in `_CONFIG_TOP_KEYS` expecting YAML top level, actually nested under `training:` or `evaluation:`, `raw[cfg_key] not in raw` silently skipped them.

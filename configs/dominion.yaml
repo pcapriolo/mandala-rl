@@ -25,8 +25,8 @@ temperature: 1.0
 temperature_threshold: 25
 explore_epsilon: 0.0
 opponent_diversity_ratio: 0.2
-opponent_iter_min: 3600
-opponent_iter_max: 3600
+opponent_iter_min: 4220
+opponent_iter_max: 4220
 
 # training
 num_iterations: 3000
@@ -40,7 +40,7 @@ replay_buffer_size: 100000
 min_buffer_for_training: 10000
 checkpoint_frequency: 5
 checkpoint_every_n_games: 0
-entropy_weight: 0.01
+entropy_weight: 0.03
 policy_weight: 1.0
 max_discard_rate: 0.0
 seed_reinject_frequency: 0
@@ -62,7 +62,8 @@ log_dir: /workspace/dominion_data/logs
 elo_file: /workspace/dominion_data/elo_ratings.json
 
 # curriculum
-disabled_basic_supply: [6, 16]
+disabled_basic_supply: [0, 6, 16]
+opponent_disabled_supply: []
 province_supply: 7
 max_action_cards: 0
 forced_kingdom_cards: []

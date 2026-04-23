@@ -90,6 +90,7 @@ class Trainer:
             drop_draws=config.get('drop_draws', False),
             max_turns=config.get('max_turns', 0),
             mcts_leaf_eval_source=config.get('mcts_leaf_eval_source', 'score'),
+            opponent_disabled_supply=config.get('opponent_disabled_supply', []),
         )
 
         # Log curriculum params at startup to catch silent config drops
