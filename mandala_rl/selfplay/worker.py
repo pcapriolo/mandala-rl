@@ -61,6 +61,7 @@ class SelfPlayWorker:
         drop_draws: bool = False,
         max_turns: int = 0,
         mcts_leaf_eval_source: str = "score",
+        opponent_disabled_supply: list = None,
     ):
         self.game = game
         self.network = network.to(device)
@@ -88,6 +89,12 @@ class SelfPlayWorker:
         if mcts_leaf_eval_source not in ("score", "value"):
             raise ValueError(f"mcts_leaf_eval_source must be 'score' or 'value', got {mcts_leaf_eval_source!r}")
         self.mcts_leaf_eval_source = mcts_leaf_eval_source
+        # DEVLOG #170: card IDs the reference (opponent) network's policy must
+        # treat as illegal during inference. Applied as -inf on the BUY action
+        # logits before softmax, so the reference structurally never expands
+        # those branches in MCTS. Supply stays globally available — only the
+        # reference's selection is constrained. Current agent is unaffected.
+        self.opponent_disabled_supply = opponent_disabled_supply or []
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -375,6 +382,16 @@ class SelfPlayWorker:
             batch = torch.from_numpy(stacked[indices]).to(self.device)
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
                 logits, vals, scores, *_ = models[m_idx](batch)
+                # DEVLOG #170: per-reference policy masking. When the opponent
+                # (m_idx == 1) has opponent_disabled_supply set, force -inf on
+                # the BUY action logits for those card IDs before softmax so
+                # MCTS never expands those branches on the reference side.
+                # Current agent (m_idx == 0) is untouched.
+                if m_idx == 1 and self.opponent_disabled_supply:
+                    # BUY[card_id] action index = 34 + card_id
+                    # (dominion/game/state.py: BUY_OFFSET = 34)
+                    buy_idx = [34 + cid for cid in self.opponent_disabled_supply]
+                    logits[:, buy_idx] = float('-inf')
                 pols = F.softmax(logits, dim=1).cpu().numpy()
                 if policy_only:
                     vals_np = None

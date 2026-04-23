@@ -148,12 +148,13 @@ def test_07_reload_config_target_mutates_config(tmp_path):
     schema = DominionConfig.load(DOMINION_YAML)
     worker = _make_worker_from_schema(schema)
     config = schema.to_flat_dict()
-    assert config["entropy_weight"] == 0.01
+    baseline = config["entropy_weight"]
+    new_val = baseline + 0.01
 
-    new_path = _write_yaml(tmp_path, overrides={"entropy_weight": 0.02})
+    new_path = _write_yaml(tmp_path, overrides={"entropy_weight": new_val})
     changes = schema.reload_into(new_path, config, worker)
 
-    assert config["entropy_weight"] == 0.02
+    assert config["entropy_weight"] == new_val
     assert any("entropy_weight" in c for c in changes)
 
 
@@ -227,13 +228,32 @@ def test_12_regression_entropy_weight_hot_reloads(tmp_path):
     schema = DominionConfig.load(DOMINION_YAML)
     worker = _make_worker_from_schema(schema)
     config = schema.to_flat_dict()
-    assert config["entropy_weight"] == 0.01
+    baseline = config["entropy_weight"]
+    new_val = baseline + 0.01
 
-    new_path = _write_yaml(tmp_path, overrides={"entropy_weight": 0.02})
+    new_path = _write_yaml(tmp_path, overrides={"entropy_weight": new_val})
     changes = schema.reload_into(new_path, config, worker)
 
-    assert config["entropy_weight"] == 0.02
+    assert config["entropy_weight"] == new_val
     assert any("entropy_weight" in c for c in changes)
+
+
+def test_14_opponent_disabled_supply_field_hot_reloads(tmp_path):
+    """DEVLOG #170: new field `opponent_disabled_supply` (list[int]) must load,
+    default to [], and hot-reload onto the worker when changed.
+    """
+    schema = DominionConfig.load(DOMINION_YAML)
+    assert schema.opponent_disabled_supply == []  # default for current YAML
+
+    worker = _make_worker_from_schema(schema)
+    config = schema.to_flat_dict()
+    assert worker.opponent_disabled_supply == []
+
+    new_path = _write_yaml(tmp_path, overrides={"opponent_disabled_supply": [0, 3, 4, 6, 16]})
+    changes = schema.reload_into(new_path, config, worker)
+
+    assert worker.opponent_disabled_supply == [0, 3, 4, 6, 16]
+    assert any("opponent_disabled_supply" in c for c in changes)
 
 
 def test_13_regression_leaf_eval_source_hot_reloads(tmp_path):
