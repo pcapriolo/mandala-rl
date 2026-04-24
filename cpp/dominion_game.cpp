@@ -1646,6 +1646,7 @@ void DominionGame::do_cleanup(DominionState& s) const {
 void DominionGame::check_game_end(DominionState& s) const {
     if (s.supply[CARD_PROVINCE] == 0) {
         s.game_over = true;
+        s.terminated_by = DOM_TERM_PROVINCE_EMPTY;
         return;
     }
     int empty = 0;
@@ -1662,7 +1663,35 @@ void DominionGame::check_game_end(DominionState& s) const {
     }
     if (empty >= 3) {
         s.game_over = true;
+        s.terminated_by = DOM_TERM_THREE_PILES;
+        return;
     }
+    if (early_terminate_decided_ && is_outcome_determined(s)) {
+        s.game_over = true;
+        s.terminated_by = DOM_TERM_OUTCOME_DETERMINED;
+    }
+}
+
+// DEVLOG #172: A game's outcome is mathematically determined when the current
+// VP lead exceeds every VP point still obtainable from the supply.
+//
+//   remaining_max = Province × 6 + Duchy × 3 + Estate × 1 + Gardens × 10
+//
+// Gardens is bounded at 10 VP per copy (would require 100-card deck to realize,
+// not possible without Gardens-in-supply curriculum — so the *10 is a defensive
+// upper bound when Gardens is enabled; with current disabled_basic_supply=[…,16]
+// it adds 0). Trailing player cannot catch up once lead > remaining_max, so the
+// game is over from a training-signal perspective; further turns only generate
+// pathological replay samples (DEVLOG #172 stuck-at-50 analysis).
+bool DominionGame::is_outcome_determined(const DominionState& s) const {
+    int vp0 = compute_vp(s, 0);
+    int vp1 = compute_vp(s, 1);
+    int lead = std::abs(vp0 - vp1);
+    int remaining = s.supply[CARD_PROVINCE] * 6
+                  + s.supply[CARD_DUCHY]    * 3
+                  + s.supply[CARD_ESTATE]   * 1
+                  + s.supply[CARD_GARDENS]  * 10;
+    return lead > remaining;
 }
 
 int DominionGame::compute_vp(const DominionState& s, int player) const {

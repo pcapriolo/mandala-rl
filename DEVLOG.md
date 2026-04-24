@@ -4,6 +4,58 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #172 — 2026-04-24: Early-terminate Dominion games when VP outcome is mathematically determined
+
+**Pathology.** At supply=7 with `disabled_basic_supply: [0, 3, 6, 16]`, 14% of self-play games were reaching `max_turns=50` instead of ending via pile-drain. Flat at 14% ± 1% across 500 iters (4873 → 5372), unmoved by Copper remask, Stage-1 full mask, Stage-2 Duchy unmask, ε=0.15 → 0.30, or any other intervention. Replay scans of those stuck games showed a consistent mechanism: the **trailing player buys 21-27 Golds and 0 Provinces in a 50-turn game**, with 250-300 `coins_wasted` proving they had $8+ hands constantly but chose Gold over Province at every decision. Winner typically reached 4-6 Provinces then stopped; pile never drained because neither player bought the last Province. Mean game-prov = 6.69 / 2 = **3.345 per player**, exact match to the plateau we'd been chasing.
+
+**Diagnosis.** Outcome-only value targets can't distinguish "lose with 0 prov" from "lose with 4 prov" — both are −1. In a trailing state the policy has no gradient to prefer Province-buy, and MCTS with a low Province prior starves the branch of visits. Score head correctly prefers Province (used as leaf evaluator per DEVLOG #88), but action selection is policy-prior × MCTS visits — the score head can't vote its way out of the prior's blind spot. Same mechanism as DEVLOG #170's dead-card contamination but in a different failure mode: endgame abandonment in decided games.
+
+**Prior attempts at score-based reward (rejected).** DEVLOG #99 introduced `value = score_margin / 30 * 0.15` as a value target and DEVLOG #123 reverted it after 40 iters. The revert reason: "Margin reward taught the bot 'VP = good' but it bought Estate ($2, 1VP) and Duchy ($5, 3VP) indiscriminately, destroying deck quality. Both players greenbotted symmetrically, so neither got punished." Direct score-margin blends are a known failure mode; they don't survive symmetric self-play. We're NOT redoing that experiment.
+
+**Fix: game-rule-level early termination, not reward shaping.** End the game when the trailing player cannot mathematically catch up even by claiming every VP card in the supply:
+
+```
+remaining_max = province_pile × 6 + duchy_pile × 3 + estate_pile × 1 + gardens_pile × 10
+outcome_determined = |vp0 - vp1| > remaining_max
+```
+
+When `outcome_determined` fires and the `early_terminate_decided` flag is on, `DominionGame::check_game_end` sets `game_over = true` alongside the existing province-empty and 3-piles termination conditions. Gardens uses a defensive ×10 bound (never materializable in practice but safe when Gardens is re-enabled in a future curriculum).
+
+**Why this is different from score-margin reward.** The reward function is unchanged: `get_reward` still returns `margin/5.0` capped to [-1,1] with turn-discount `0.995^turn`. The policy's incentive structure is identical to before. What changes is **game duration in decided states**: instead of generating 20 extra turns of pathological "infinite Gold buying" replay samples per stuck game, the game ends when it's mathematically over. No greenbotting vector — the winner's reward is the same whether they got 4 or 7 provinces, they just don't keep playing a game with zero gradient signal after the outcome is decided.
+
+**Game summary instrumentation.** Added `terminated_by: str` to the Dominion game summary dict, with values `"province_empty" | "three_piles" | "outcome_determined" | "turn_cap"`. Enables post-hoc analysis: did the 14% turn_cap rate drop to 0 with corresponding 14% outcome_determined rate, or did stuck-game distribution migrate somewhere else?
+
+**Files.** 10 modified, 1 new test file.
+- `cpp/dominion_game.h`: `DomTerminatedBy` enum + `terminated_by` field on `DominionState` + `early_terminate_decided_` member + `set_early_terminate_decided` + public `is_outcome_determined` decl.
+- `cpp/dominion_game.cpp`: `is_outcome_determined` implementation + updated `check_game_end` to set `terminated_by` and call the new check.
+- `cpp/batched_mcts.{h,cpp}`: constructor param + wire to `DominionGame::set_early_terminate_decided` + game_summary `terminated_by` string output.
+- `cpp/bindings.cpp`: `py::arg("early_terminate_decided") = false`.
+- `mandala_rl/training/config_schema.py`: `early_terminate_decided: bool` field, default `False`, `HOT_WORKER` metadata.
+- `mandala_rl/selfplay/worker.py`: ctor param + attribute + pass to both `BatchedMCTS` instantiation sites.
+- `mandala_rl/training/trainer.py`: pass `early_terminate_decided=config.get(..., False)` to worker.
+- `configs/dominion.yaml`: `early_terminate_decided: true`.
+- `tests/test_dominion_early_terminate.py` (new): 7 cases covering pybind kwarg wiring, flag-off regression, flag-on smoke test, `terminated_by` field presence, schema field metadata, YAML round-trip.
+
+**Deploy plan.** Rebuild C++ extension locally (`pip install -e .`), run tests, commit, PR, merge. SCP modified files to pod + rebuilt `.so`. Restart training (code change + C++ rebuild — cannot hot-reload a C++ signature change). Buffer rebuild ~33 iters as standard.
+
+**Verification.**
+1. First post-restart iter: replay summaries should have `terminated_by` field populated on every game.
+2. Within 20 iters: `turn_cap` rate drops from 14% to near-0; `outcome_determined` rate rises to roughly the same 14%.
+3. `avg_prov` (mean provinces per player per game) should rise mechanically from 3.35 toward 3.50 as stuck games with [0, 5] Province splits are replaced by decisively-terminated games with the same winner but no 20-turn tail.
+4. No regression in policy loss, value loss, or drawn games (should be 0 still; we're not changing reward).
+
+**Falsification.**
+- **Success:** `outcome_determined` fires at ~14%, `avg_prov` rises, policy trajectory stable.
+- **Null:** `outcome_determined` fires but `avg_prov` doesn't move. Means the policy's blind spot exists in other game states too and cutting off pathological tails isn't enough.
+- **Regression:** value loss spikes or training destabilizes from the distribution shift. Revert by hot-reloading `early_terminate_decided: false`.
+
+**Risks accepted.**
+- **Buffer distribution shift.** Value head has been trained on 14% stuck-game tails; removing them causes a short-term distribution shift. Expect 10-30 iters of value-loss volatility.
+- **Metric inflation without policy improvement.** `avg_prov` will rise mechanically because we exclude the games that dragged it down. Real policy-quality check: track `winner's prov count in decisive games` and `stuck rate` as independent metrics. If the policy's blind spot in trailing states is unchanged, the pathology will re-emerge at a different cutoff.
+- **Does NOT fix the losing-player policy blind spot.** The trailing player still refuses Province in not-yet-decided trailing states. This intervention is necessary but not sufficient — it addresses the symptom's amplification, not the root cause. A follow-up may be needed once we see how far this moves the ceiling.
+
+---
+
 ## DEVLOG #171 — 2026-04-24: Dirichlet ε 0.15 → 0.30 to force Duchy exploration (Stage 2 augment)
 
 **Observation after Stage 2 reload (iter 5185 onward).** Three atomic hot-reloads landed cleanly: reference promoted 4220→4785, `disabled_basic_supply: [0, 3, 4, 6, 16] → [0, 3, 6, 16]` (Duchy unmasked globally), `opponent_disabled_supply: [] → [0, 3, 4, 6, 16]` (reference mask engaged). But `avg_duchies` held at exactly 0.0 across 20 iters post-reload (5185→5204). Prov held at 3.3-3.4.

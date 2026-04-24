@@ -21,7 +21,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          std::vector<int> forced_kingdom_cards,
                          std::vector<int> disabled_basic_supply,
                          int province_supply,
-                         int max_turns)
+                         int max_turns,
+                         bool early_terminate_decided)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
@@ -32,7 +33,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
       big_money_force_rate_(big_money_force_rate),
       forced_kingdom_cards_(forced_kingdom_cards),
       disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply),
-      max_turns_(max_turns), rng_(seed)
+      max_turns_(max_turns), early_terminate_decided_(early_terminate_decided), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -44,6 +45,7 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
         if (!forced_kingdom_cards.empty()) dom->set_forced_kingdom_cards(forced_kingdom_cards);
         if (!disabled_basic_supply_.empty()) dom->set_disabled_basic_supply(disabled_basic_supply_);
         if (province_supply_ > 0) dom->set_province_supply(province_supply_);
+        dom->set_early_terminate_decided(early_terminate_decided_);
         game_ = std::move(dom);
         if (max_turns_ == 0) max_turns_ = 70;  // Default for Dominion if not set via config
     } else {
@@ -572,6 +574,9 @@ std::vector<int> BatchedMCTS::finish_move() {
         if (!terminal && max_turns_ > 0 && g.state->get_turn_number() >= max_turns_) {
             terminal = true;
             move_cap_hit = true;
+            if (auto* ds = dynamic_cast<DominionState*>(g.state.get())) {
+                ds->terminated_by = DOM_TERM_TURN_CAP;
+            }
         }
         if (terminal) {
             g.score_p0 = game_->get_score(*g.state, 0);
@@ -710,6 +715,17 @@ py::dict BatchedMCTS::get_game_summary(int game_idx) {
         summary["score_p0"] = dom_game.get_score(*ds, 0);
         summary["score_p1"] = dom_game.get_score(*ds, 1);
         summary["turn_number"] = static_cast<int>(ds->turn_number);
+        // DEVLOG #172: which termination rule ended the game. Maps the DomTerminatedBy enum to a string
+        // so Python-side analysis (dashboard, replay scans) can filter without needing the enum.
+        const char* term_name;
+        switch (ds->terminated_by) {
+            case DOM_TERM_PROVINCE_EMPTY:     term_name = "province_empty"; break;
+            case DOM_TERM_THREE_PILES:        term_name = "three_piles"; break;
+            case DOM_TERM_OUTCOME_DETERMINED: term_name = "outcome_determined"; break;
+            case DOM_TERM_TURN_CAP:           term_name = "turn_cap"; break;
+            default:                          term_name = "none"; break;
+        }
+        summary["terminated_by"] = term_name;
         summary["total_buys"] = py::make_tuple(ds->total_buys[0], ds->total_buys[1]);
         summary["province_buys"] = py::make_tuple(ds->province_buys[0], ds->province_buys[1]);
         summary["duchy_buys"] = py::make_tuple(ds->duchy_buys[0], ds->duchy_buys[1]);

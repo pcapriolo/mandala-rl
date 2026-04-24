@@ -130,6 +130,15 @@ enum DomPhase : int8_t {
     DOM_PHASE_REACT  = 3,
 };
 
+// How a game ended. 0 = not terminated. Set by check_game_end when game_over.
+enum DomTerminatedBy : int8_t {
+    DOM_TERM_NONE              = 0,
+    DOM_TERM_PROVINCE_EMPTY    = 1,
+    DOM_TERM_THREE_PILES       = 2,
+    DOM_TERM_OUTCOME_DETERMINED = 3,
+    DOM_TERM_TURN_CAP          = 4,  // set by BatchedMCTS when max_turns hit
+};
+
 // Pending decision types
 enum DomPendingType : int8_t {
     DOM_PEND_NONE = 0,
@@ -222,6 +231,7 @@ public:
     DomPending pending;
     int16_t turn_number = 1;
     bool game_over = false;
+    int8_t terminated_by = DOM_TERM_NONE;  // Which condition ended the game (set in check_game_end or by BatchedMCTS for turn-cap)
     int8_t kingdom_cards[10] = {};
     int8_t num_kingdom = 0;
     int8_t merchant_silver_bonus = 0;
@@ -286,6 +296,11 @@ public:
         disabled_basic_supply_.clear();
         for (int c : cards) disabled_basic_supply_.push_back(static_cast<int8_t>(c));
     }
+    void set_early_terminate_decided(bool v) { early_terminate_decided_ = v; }
+
+    // Whether the VP outcome is mathematically determined: trailing player cannot
+    // reach a tie even by claiming every VP card still in supply. Exposed for tests.
+    bool is_outcome_determined(const DominionState& s) const;
 
     std::unique_ptr<GameState> create_initial_state(std::mt19937& rng) override;
     void get_valid_moves(const GameState& state, std::vector<float>& out) const override;
@@ -300,6 +315,7 @@ private:
     int province_supply_ = 8;
     std::vector<int8_t> forced_kingdom_cards_;  // if non-empty, use exactly these cards every game
     std::vector<int8_t> disabled_basic_supply_;  // basic supply cards to zero out (curriculum)
+    bool early_terminate_decided_ = false;      // end game when VP lead > max remaining VP (DEVLOG #172)
 
     void play_card(DominionState& s, int8_t card_id) const;
     void handle_effect(DominionState& s, int8_t card_id) const;
