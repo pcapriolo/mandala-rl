@@ -62,6 +62,7 @@ class SelfPlayWorker:
         max_turns: int = 0,
         mcts_leaf_eval_source: str = "score",
         opponent_disabled_supply: list = None,
+        early_terminate_decided: bool = False,
     ):
         self.game = game
         self.network = network.to(device)
@@ -95,6 +96,10 @@ class SelfPlayWorker:
         # those branches in MCTS. Supply stays globally available — only the
         # reference's selection is constrained. Current agent is unaffected.
         self.opponent_disabled_supply = opponent_disabled_supply or []
+        # DEVLOG #172: end Dominion games early when VP outcome is determined.
+        # Read by BatchedMCTS constructor each time self-play is invoked, so
+        # hot-reload takes effect at the next play_games_batched call boundary.
+        self.early_terminate_decided = early_terminate_decided
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -189,6 +194,7 @@ class SelfPlayWorker:
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
             max_turns=self.max_turns,
+            early_terminate_decided=self.early_terminate_decided,
         )
         mgr.init_games(num_games)
 
@@ -283,6 +289,7 @@ class SelfPlayWorker:
             disabled_basic_supply=self.disabled_basic_supply,
             province_supply=self.province_supply,
             max_turns=self.max_turns,
+            early_terminate_decided=self.early_terminate_decided,
         )
         mgr.init_games(num_games)
 

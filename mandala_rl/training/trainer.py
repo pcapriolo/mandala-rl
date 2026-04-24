@@ -91,6 +91,7 @@ class Trainer:
             max_turns=config.get('max_turns', 0),
             mcts_leaf_eval_source=config.get('mcts_leaf_eval_source', 'score'),
             opponent_disabled_supply=config.get('opponent_disabled_supply', []),
+            early_terminate_decided=config.get('early_terminate_decided', False),
         )
 
         # Log curriculum params at startup to catch silent config drops

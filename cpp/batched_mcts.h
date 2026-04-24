@@ -25,7 +25,8 @@ public:
                 std::vector<int> forced_kingdom_cards = {},
                 std::vector<int> disabled_basic_supply = {},
                 int province_supply = 8,
-                int max_turns = 0);
+                int max_turns = 0,
+                bool early_terminate_decided = false);
 
     void init_games(int num_games);
 
@@ -94,6 +95,7 @@ private:
     std::vector<int> disabled_basic_supply_;
     int province_supply_ = 8;
     int max_turns_ = 0;  // 0 = no limit; when set, caps on get_turn_number() not sub-actions
+    bool early_terminate_decided_ = false;  // DEVLOG #172: end games when VP outcome is mathematically decided
     std::mt19937 rng_;
     std::vector<PerGame> games_;
     std::vector<int> active_indices_;  // indices of non-finished games

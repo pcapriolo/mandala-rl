@@ -127,6 +127,13 @@ class DominionConfig:
     draw_penalty: float = field(default=0.0, metadata=HOT_WORKER)
     drop_draws: bool = field(default=True, metadata=HOT_WORKER)
     max_turns: int = field(default=50, metadata=HOT_WORKER)
+    # DEVLOG #172: end Dominion games early when the VP outcome is mathematically
+    # determined (winner's VP lead > max remaining supply VP). Cuts off the 14%
+    # of games stalling to turn_cap with a trailing player infinite-Gold-buying.
+    # Hot-reloads onto the worker attribute; takes effect on next new games
+    # (BatchedMCTS reads it at construction — games already in progress keep
+    # their original flag value until this iter's self-play batch completes).
+    early_terminate_decided: bool = field(default=False, metadata=HOT_WORKER)
 
     # --- misc ---
     device: str = field(default="auto", metadata=STATIC)
