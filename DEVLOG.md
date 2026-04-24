@@ -4,6 +4,22 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #171 — 2026-04-24: Dirichlet ε 0.15 → 0.30 to force Duchy exploration (Stage 2 augment)
+
+**Observation after Stage 2 reload (iter 5185 onward).** Three atomic hot-reloads landed cleanly: reference promoted 4220→4785, `disabled_basic_supply: [0, 3, 4, 6, 16] → [0, 3, 6, 16]` (Duchy unmasked globally), `opponent_disabled_supply: [] → [0, 3, 4, 6, 16]` (reference mask engaged). But `avg_duchies` held at exactly 0.0 across 20 iters post-reload (5185→5204). Prov held at 3.3-3.4.
+
+**Why zero exploration.** Stage 1 training left the current-agent policy with ~0 prior mass on Duchy. Post-softmax, Duchy's network-prior is effectively 0 even though the action is now legal. At ε=0.15, Dirichlet root-noise blended as `(1-ε)P + ε*η` gives Duchy a final prior of `0.15 * η_duchy ≈ 0.15 * 0.008 = 0.0012` on average (α=0.15 concentrates mass elsewhere). With 800 MCTS sims, Duchy gets effectively zero visits. The experiment's asymmetric-signal mechanism can't activate if the current agent never tries Duchy — no trajectories to condition on, no outcome asymmetry to learn from.
+
+**Fix.** Hot-reload `dirichlet_epsilon: 0.15 → 0.30` (iter 5204 boundary). Doubles noise contribution, lifts Duchy prior to ~0.002-0.003 on average with occasional spikes up to ~0.15 (dirichlet α=0.15 has high variance). MCTS should now visit Duchy occasionally on the current agent, producing actual Duchy-buy trajectories in self-play.
+
+**Reference stays disciplined.** The DEVLOG #170 `-inf` mask forces the reference's Duchy prior to exact 0 pre-softmax; post-softmax is exact 0 regardless of ε. Dirichlet noise blends with the zeroed prior giving `0.30 * η_duchy` final mass — small in expectation, rarely spiky. Reference will refuse Duchy in the overwhelming majority of vs-reference games. Asymmetry preserved.
+
+**Falsification / rollback.** Success: `avg_duchies` rises briefly (exploration signal), then falls as asymmetric outcome signal accumulates and the value head learns to separate Duchy-contaminated trajectories. Null: sustained Duchy-buying with prov collapse → revert to `dirichlet_epsilon: 0.15`, reconsider mechanism. Reversible via single-line YAML hot-reload.
+
+**Files.** Pod-only YAML edit; no code change. `/root/mandala-dom/configs/dominion.yaml:14` — `dirichlet_epsilon: 0.15 → 0.30`. Schema default (`config_schema.py`) unchanged (docs-only; YAML is authoritative).
+
+---
+
 ## DEVLOG #170 — 2026-04-23: Per-reference policy masking + staged Duchy-unmask experiment
 
 **Context.** Three sharpening interventions (ε↓, entropy↓, leaf_eval→value) all returned null (#167, #168, and E1 on 2026-04-23). Copper re-mask (`disabled_basic_supply: [6, 16] → [0, 6, 16]`) lifted prov 3.10→3.33 over 272 iters, confirming Copper was the dominant leak. Estate then crept from 0.04→0.08 — same mask-expansion-shock mechanism baking Estate-buying into the policy as Copper had done.
