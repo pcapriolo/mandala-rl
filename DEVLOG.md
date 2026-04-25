@@ -4,6 +4,32 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #173 — 2026-04-25: Bump `province_supply: 7 → 8` as a metric-calibration test
+
+**Context.** After 116 iters with DEVLOG #172's `early_terminate_decided=true` deployed, the termination-distribution change landed cleanly (province_empty 71%, outcome_determined 19%, turn_cap 10%, 0 errors), value loss trended down (0.25 → 0.22), and value-head pred std crept toward target std (0.77 → 0.78). But `avg_prov` *fell* from the pre-deploy baseline of 3.36 to 3.27 instead of rising. Cause: `outcome_determined` typically fires only at `[6, 0]` with 1 prov left in supply, so it cuts off games that would have either drained naturally to `[6, 1]/[7, 0]` (mean 3.5) OR stuck to turn 50 at `[6, 0]` (mean 3.0). Net effect on the avg_prov metric: small but negative.
+
+**Diagnostic question.** Is the 3.36 plateau a *policy* limit, or a *supply* limit? With supply=7 the theoretical max mean prov is 3.5. We were at 3.36 = 96% of max. The remaining 4% gap could be (a) competent policy hitting structural pathology, or (b) policy genuinely incompetent and the metric ceiling masks it.
+
+**Test.** Hot-reload `province_supply: 7 → 8`. Theoretical max becomes 4.0. If the policy is competent, mean prov should rise to ~3.7-3.8 (same 14%-ish stuck-game rate at slightly lower mean per stuck game, plus full-drain games at 4.0 instead of 3.5). If the policy is the limit and not the supply, mean will stagnate near the old plateau or even drop because the loser still buys 0 prov in the same fraction of games — just with one more prov uncollected.
+
+**Implementation.** One-line YAML edit, hot-reloadable (HOT_WORKER metadata). No code change. Pod-side via `sed`; local YAML updated to match.
+
+**Other things in this restart.**
+- Disk on pod hit 100% mid-deploy. `prune_old_checkpoints: false` had let 484 checkpoint files at ~94 MB each = 46 GB accumulate. Pruned to 115 (every 50th iter + 5 known reference pins + `model_latest.pt`). Freed 18.5 GB. Watchdog restarted training cleanly from `model_latest.pt` (iter 5551).
+- The fresh `[CONFIG]` line confirms `province_supply: 8` was read at startup, not from a hot-reload — restart was forced by the disk fill.
+
+**Falsification.** 20-iter window for first read, 50-iter window for confirmation:
+- **Policy was competent (3.36 was a supply ceiling):** mean prov rises to 3.65-3.85, turn count rises ~3-5 turns (one more prov to buy), termination distribution roughly matches post-#172 baseline.
+- **Policy is the limit (3.36 was a policy ceiling):** mean prov stays at 3.30-3.45, possibly slightly higher just from extra-prov mechanical bump. The 8th prov in supply gets unbought as often as the 7th, confirming the loser-blind-spot is the bind.
+- **Curriculum advance is warranted:** Smithy / action cards become the next step.
+- **No further interventions help on this curriculum:** declare supply-only-VP mastered, change scope.
+
+**Risk.** None significant. Pure config change, fully reversible via single-line YAML edit. Buffer composition shifts marginally (longer games), value head may have 5-10 iters of recalibration but loss was already trending down so unlikely to regress.
+
+**Files.** `configs/dominion.yaml: province_supply: 7 → 8`. Pod YAML synced via sed. Local committed for git history.
+
+---
+
 ## DEVLOG #172 — 2026-04-24: Early-terminate Dominion games when VP outcome is mathematically determined
 
 **Pathology.** At supply=7 with `disabled_basic_supply: [0, 3, 6, 16]`, 14% of self-play games were reaching `max_turns=50` instead of ending via pile-drain. Flat at 14% ± 1% across 500 iters (4873 → 5372), unmoved by Copper remask, Stage-1 full mask, Stage-2 Duchy unmask, ε=0.15 → 0.30, or any other intervention. Replay scans of those stuck games showed a consistent mechanism: the **trailing player buys 21-27 Golds and 0 Provinces in a 50-turn game**, with 250-300 `coins_wasted` proving they had $8+ hands constantly but chose Gold over Province at every decision. Winner typically reached 4-6 Provinces then stopped; pile never drained because neither player bought the last Province. Mean game-prov = 6.69 / 2 = **3.345 per player**, exact match to the plateau we'd been chasing.
