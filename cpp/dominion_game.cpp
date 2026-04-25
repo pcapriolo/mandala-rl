@@ -531,7 +531,7 @@ int DominionGame::initial_supply_count(int8_t card_id, bool is_kingdom) {
         case CARD_GOLD:     return 30;
         case CARD_ESTATE:   return 8;   // 2-player
         case CARD_DUCHY:    return 8;
-        case CARD_PROVINCE: return 3;   // Low count = depletes fast with sparse Province buying
+        case CARD_PROVINCE: return 8;   // Standard 2-player count; curriculum overrides via set_province_supply
         case CARD_CURSE:    return 10;  // (num_players-1)*10
         default:
             if (is_kingdom) {
@@ -580,10 +580,12 @@ std::unique_ptr<GameState> DominionGame::create_initial_state(std::mt19937& rng)
         s->supply[cid] = initial_supply_count(cid, true);
     }
 
-    // Override province supply count (default 8, use 7 to reduce draws)
-    if (province_supply_ != 8) {
-        s->supply[CARD_PROVINCE] = province_supply_;
-    }
+    // Override province supply count to whatever the curriculum sets.
+    // BUG FIX: previously gated `if (province_supply_ != 8)` which silently
+    // *skipped* the override when curriculum requested 8 — but the default in
+    // initial_supply_count was 3, not 8, so setting `province_supply: 8` left
+    // the supply at 3. Now unconditional. (DEVLOG #174.)
+    s->supply[CARD_PROVINCE] = province_supply_;
 
     // Disable basic supply cards for curriculum
     for (auto cid : disabled_basic_supply_) {

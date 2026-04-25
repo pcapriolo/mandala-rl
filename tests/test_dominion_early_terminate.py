@@ -161,6 +161,58 @@ def test_flag_on_does_not_break_termination():
         assert summary["turn_number"] <= 50
 
 
+def test_province_supply_8_actually_creates_8_provinces():
+    """REGRESSION (DEVLOG #174): a buggy `if (province_supply_ != 8)` guard in
+    create_initial_state silently SKIPPED the supply override when the curriculum
+    asked for 8 provinces. Combined with `initial_supply_count(CARD_PROVINCE)`
+    returning 3 by default, setting `province_supply: 8` produced supply=3 games.
+    This test pins that the fix works end-to-end: at supply=8, a province_empty
+    termination requires 8 (or 9 if winner-drains-final + loser-buys, but supply
+    is 8 so total bought ≤ 8) total provinces bought across both players.
+    """
+    # With uniform policy + 16 sims, games at supply=8 typically can't drain
+    # the pile in 50 turns. Pre-fix bug: supply was silently 3, so games drained
+    # quickly at total=3 (~all 20 trials). Post-fix: supply is genuinely 8, so
+    # most games hit turn_cap with prov < 8. Either way: any game that DOES
+    # terminate via province_empty MUST have total prov = 8 — that's the
+    # dispositive check.
+    saw_any_total = False
+    for seed in range(30):
+        summary = _run_one_game(
+            early_terminate_decided=False, seed=seed, province_supply=8,
+        )
+        total = sum(summary["province_buys"])
+        # Pre-fix bug signature: any game would drain at total=3.
+        assert total <= 8, f"seed {seed}: total prov={total} > 8 (impossible with supply=8)"
+        if summary["terminated_by"] == "province_empty":
+            assert total == 8, (
+                f"seed {seed}: province_empty fired but total prov={total}, expected 8 "
+                f"(buggy if-check at supply=8 would give total=3)"
+            )
+            saw_any_total = True
+        # Sanity: the pre-fix bug would produce total=3 on every drain. With
+        # supply=8 we should NEVER see a drain at total=3.
+        if summary["terminated_by"] == "province_empty" and total == 3:
+            pytest.fail(
+                f"seed {seed}: drained at total=3 with supply=8 — DEVLOG #174 bug regressed"
+            )
+
+
+def test_province_supply_3_still_creates_3_provinces():
+    """Symmetric counterpart: supply=3 should genuinely produce supply=3 games.
+    Confirms the override still applies in the !=8 path (we kept supply=3 working
+    after the bug fix)."""
+    for seed in range(5):
+        summary = _run_one_game(
+            early_terminate_decided=False, seed=seed, province_supply=3,
+        )
+        if summary["terminated_by"] == "province_empty":
+            total = sum(summary["province_buys"])
+            assert total == 3, (
+                f"seed {seed}: province_empty fired but total prov={total}, expected 3"
+            )
+
+
 # ---- Config schema test -----------------------------------------------------
 
 

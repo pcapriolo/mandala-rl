@@ -4,6 +4,60 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #174 — 2026-04-25: Fix C++ bug — `province_supply: 8` silently set supply to 3
+
+**Bug.** Setting `province_supply: 8` in YAML produced games with **supply = 3**, not 8.
+
+In `cpp/dominion_game.cpp`:
+
+```cpp
+// initial_supply_count returns 3 for Province (NOT 8)
+case CARD_PROVINCE: return 3;   // "Low count = depletes fast..."
+
+// Override applied only when value differs from 8 — wrongly assumed default 8
+if (province_supply_ != 8) {
+    s->supply[CARD_PROVINCE] = province_supply_;
+}
+```
+
+The conditional skipped the override when curriculum requested 8, leaving the supply at the *real* default of 3. The comment claimed default was 8, but `initial_supply_count` returned 3. Two contradictory truths in the code; the if-check trusted the wrong one.
+
+**Detection.** Right after deploying DEVLOG #173 (`province_supply: 7 → 8`), training metrics showed:
+- `avg_prov`: 3.27 → **1.5**
+- Buys per player: ~14 → **~7.5**
+- Mean turn count: 27 → 17
+- Replay JSON: every `province_empty` game had total prov = 3 across both players. Impossible at supply=8 — dispositive evidence the supply was actually 3.
+
+**Damage.** ~12 iters (5552-5564) of training on supply=3 trajectories. Replay buffer received ~12% pollution from supply=3 distributions before we caught it. Manageable — buffer cycles every ~33 iters at 100 examples/iter into a 100K window.
+
+**Immediate response.** Hot-reloaded `province_supply: 8 → 7` on pod (works because 7 ≠ 8 so the override fires). Stops the bleeding within one iter boundary. Confirmed via `Config reload: province_supply 8 → 7` log line.
+
+**Fix.**
+
+```cpp
+// initial_supply_count
+case CARD_PROVINCE: return 8;   // Standard 2-player count; curriculum overrides via setter
+
+// create_initial_state — unconditional override
+s->supply[CARD_PROVINCE] = province_supply_;
+```
+
+Removed the `if (province_supply_ != 8)` guard. Default in `initial_supply_count` corrected to the real Dominion default (8). Override is now unconditional — whatever the curriculum sets via `set_province_supply`, that's what the game gets.
+
+**Test coverage.** Added two cases to `tests/test_dominion_early_terminate.py`:
+- `test_province_supply_8_actually_creates_8_provinces`: runs 30 games at supply=8; asserts that any `province_empty` termination has total prov = 8 (not 3). Fails on the pre-fix bug.
+- `test_province_supply_3_still_creates_3_provinces`: symmetric counterpart confirming supply=3 still produces 3-prov games (the override path that was working).
+
+15/15 tests pass with the fix.
+
+**Why this hid for so long.** The `if != 8` check was silent — no error, no warning, just "default" behavior that happened to differ from the comment. We've been running `province_supply: 7` for the entire Phase 3+4 history (DEVLOG #158 onward), so the override always fired and supply was correctly 7. The bug only surfaced when we tried 8 for the first time in DEVLOG #173.
+
+**Lesson.** Magic-number guards in code need to match what comments claim. The comment "default 8, use 7 to reduce draws" implied the C++ default was 8 — but `initial_supply_count` told a different story. Either the comment was wrong, or the function was wrong. Both diverged in opposite directions and the if-check trusted the comment. Should have caught this in code review for DEVLOG #173 by reading `initial_supply_count`. Did not. My miss.
+
+**DEVLOG #173 status.** The supply=8 calibration test was never actually run — it ran on supply=3. Pending: with the fix in place, retry `province_supply: 8` if user still wants the metric-calibration data.
+
+---
+
 ## DEVLOG #173 — 2026-04-25: Bump `province_supply: 7 → 8` as a metric-calibration test
 
 **Context.** After 116 iters with DEVLOG #172's `early_terminate_decided=true` deployed, the termination-distribution change landed cleanly (province_empty 71%, outcome_determined 19%, turn_cap 10%, 0 errors), value loss trended down (0.25 → 0.22), and value-head pred std crept toward target std (0.77 → 0.78). But `avg_prov` *fell* from the pre-deploy baseline of 3.36 to 3.27 instead of rising. Cause: `outcome_determined` typically fires only at `[6, 0]` with 1 prov left in supply, so it cuts off games that would have either drained naturally to `[6, 1]/[7, 0]` (mean 3.5) OR stuck to turn 50 at `[6, 0]` (mean 3.0). Net effect on the avg_prov metric: small but negative.

@@ -64,7 +64,7 @@ elo_file: /workspace/dominion_data/elo_ratings.json
 # curriculum
 disabled_basic_supply: [0, 6, 16]
 opponent_disabled_supply: []
-province_supply: 8
+province_supply: 7
 max_action_cards: 0
 forced_kingdom_cards: []
 big_money_force_rate: 0.0
