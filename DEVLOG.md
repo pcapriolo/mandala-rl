@@ -4,6 +4,50 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #175 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
+
+**Context.** Supply=8 calibration (DEVLOG #173 + #174 fix) ran for ~50 iters with the policy plateauing at avg_prov 3.61, single-iter 3.67 at iter 6020. That's 90% of the new theoretical max (4.0) but still leaves a structural ~0.4-prov gap from the loser-blind-spot pathology. The shift in termination distribution at supply=8 (`outcome_determined` 19% → 37%) confirmed the policy is responsive to supply changes but the pathology amplifies with more provinces. Pure supply scaling can't dissolve symmetric self-play tie-out — we need new gradient signal from action-card decisions.
+
+**Phase 5 entry per the training plan.** Add Smithy (card_id 21, $4 cost, +3 cards) as the kingdom card. This is the simplest engine card and was the explicit Phase 5 entry per `docs/plans/dominion-training-plan.md`.
+
+**Reference-asymmetric design (Rule #7 + DEVLOG #170).** Pin a strong supply=8-master checkpoint (iter 6020: prov 3.67, argmax 64.8%) as the reference. The reference's policy is masked to refuse Smithy: its BUY[Smithy] logit (action index 55 = `BUY_OFFSET 34 + card_id 21`) is forced to -inf before softmax. The current agent has Smithy available, can play it for +3 cards, can build engine decks. The reference is the "no-engine veteran" — strong Big-Money play, refuses the new card. This produces asymmetric outcome signal: engine-success → win vs stale veteran; engine-failure → lose vs stable veteran. Mirrors the Stage-2 Duchy mechanism from DEVLOG #170, applied to a positive-VP rather than dead-card scenario.
+
+**Atomic 4-key hot-reload.** All HOT_WORKER / HOT_CONFIG, no code change, no restart.
+
+| Key | From | To | Schema target |
+|-----|------|----|----|
+| `forced_kingdom_cards` | `[]` | `[21]` | HOT_WORKER |
+| `max_action_cards` | `0` | `1` | HOT_WORKER |
+| `opponent_iter_min` | `4785` | `6020` | HOT_CONFIG |
+| `opponent_iter_max` | `4785` | `6020` | HOT_CONFIG |
+| `opponent_disabled_supply` | `[0, 3, 4, 6, 16]` | `[0, 3, 4, 6, 16, 21]` | HOT_WORKER |
+
+`forced_kingdom_cards: [21]` bypasses the random kingdom selection in `cpp/dominion_game.cpp:548-554` and pins Smithy as the only kingdom card. `max_action_cards: 1` declares the curriculum intent (the C++ uses it only in the random path; with forced kingdom cards it's redundant but kept for clarity).
+
+**Falsification.** First 50 iters:
+- **Success** — `avg_prov` rebounds within 30 iters and exceeds the supply=8 plateau of 3.61 by iter ~50. Indicates engine play is working: bot is using Smithy to drive deck velocity into more Province buys per game. Smithy purchase rate stabilizes (probably 2-5 per player). Action plays > 0.
+- **Recovery (acceptable)** — `avg_prov` dips initially (engine learning curve) but returns to ~3.5+ within 50 iters. Bot is learning Smithy but hasn't fully integrated it. Continue.
+- **Stuck regression** — `avg_prov` collapses below 3.0 and stays there. Engine learning isn't compensating for added supply complexity. Revert via 4-key hot-reload back to old values.
+- **Greenbot risk** — bot buys Smithy indiscriminately at every $4+ hand without playing it strategically. Watch `0% action play rate` warnings.
+
+**Rollback.** Single hot-reload edit reverts the 5 keys back to their pre-Phase-5 values. The reference iter 6020 checkpoint exists on disk (it's now in the always-keep set via `opponent_iter_min/max` per DEVLOG #173's prune fix).
+
+**Risks accepted.**
+- **Initial prov dip likely.** Bot adapting to action card → buy timing → engine play takes iters. Phase transition shock is normal.
+- **Buffer composition shift.** New games include Smithy buy/play actions that weren't in the buffer before. ~33-iter cycle for buffer to reflect new distribution.
+- **Reference OOD on Smithy-contaminated states.** The reference (iter 6020) was trained without Smithy in supply. Its value head's leaf evaluations on current-agent states with Smithy in the deck are out-of-distribution. Same hazard accepted in DEVLOG #170 / #171.
+- **Reference may grow stale.** As current agent learns engine play, iter 6020's strength becomes a moving target. Future ladder steps may be needed.
+
+**Files.** Pod-only YAML edit; no code change. Local YAML synced for git history.
+
+**Verification (post-deploy).**
+1. `Config reload:` log line confirming all 5 changes landed atomically.
+2. First post-reload iter shows `Playing 20 games vs iter_6020 opponent`.
+3. Within 5 iters: action play rate > 0 indicates Smithy is being played at least sometimes.
+4. Within 20 iters: a sample of vs-reference replays should show reference never bought Smithy (action_buys == 0 on reference's side every game).
+
+---
+
 ## DEVLOG #174 — 2026-04-25: Fix C++ bug — `province_supply: 8` silently set supply to 3
 
 **Bug.** Setting `province_supply: 8` in YAML produced games with **supply = 3**, not 8.
