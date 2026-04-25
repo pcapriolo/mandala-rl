@@ -45,7 +45,7 @@ policy_weight: 1.0
 max_discard_rate: 0.0
 seed_reinject_frequency: 0
 min_play_rate: 0.0
-prune_old_checkpoints: false
+prune_old_checkpoints: true
 
 # evaluation
 num_games: 100

@@ -1196,10 +1196,16 @@ class Trainer:
             return
         iter_files = sorted(checkpoint_dir.glob('model_iter_*.pt'), key=lambda f: int(f.stem.split('_')[2]))
         if len(iter_files) > 40:
+            # Preserve reference-pin checkpoints currently used by self-play (Rule #7).
+            # opponent_iter_{min,max} are HOT_CONFIG so the live values may differ from
+            # YAML at the time training started; reading from self.config catches
+            # post-hot-reload changes too. Range is inclusive on both ends.
+            ref_lo = self.config.get('opponent_iter_min', 0) or 0
+            ref_hi = self.config.get('opponent_iter_max', 0) or 0
             keep = set()
             for f in iter_files:
                 i = int(f.stem.split('_')[2])
-                if i % 50 == 0:
+                if i % 50 == 0 or (ref_lo <= i <= ref_hi):
                     keep.add(f)
             for f in iter_files[-30:]:
                 keep.add(f)
