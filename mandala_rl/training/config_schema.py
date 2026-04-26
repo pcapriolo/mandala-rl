@@ -38,7 +38,7 @@ HOT_CONFIG: dict[str, Any] = {"hot": True, "target": "config"}
 @dataclass
 class DominionConfig:
     # --- network (restart-only: architecture) ---
-    input_channels: int = field(default=280, metadata=STATIC)
+    input_channels: int = field(default=404, metadata=STATIC)
     num_actions: int = field(default=131, metadata=STATIC)
     num_res_blocks: int = field(default=10, metadata=STATIC)
     channels: int = field(default=128, metadata=STATIC)
@@ -47,7 +47,10 @@ class DominionConfig:
     factored_policy: bool = field(default=False, metadata=STATIC)
 
     # --- mcts ---
-    mcts_simulations: int = field(default=800, metadata=STATIC)
+    # mcts_simulations is read from self.config every iter inside
+    # play_games_batched and pushed onto the worker before BatchedMCTS
+    # construction. Hot-reloadable via the config dict.
+    mcts_simulations: int = field(default=800, metadata=HOT_CONFIG)
     c_puct: float = field(default=1.5, metadata=HOT_WORKER)
     dirichlet_alpha: float = field(default=0.15, metadata=HOT_WORKER)
     dirichlet_epsilon: float = field(default=0.15, metadata=HOT_WORKER)
@@ -57,9 +60,12 @@ class DominionConfig:
     mcts_leaf_eval_source: str = field(default="score", metadata=HOT_WORKER)
 
     # --- self-play ---
-    games_per_iteration: int = field(default=100, metadata=STATIC)
-    parallel_games: int = field(default=256, metadata=STATIC)
-    leaves_per_game: int = field(default=8, metadata=STATIC)
+    # All three are read per-iter — games_per_iteration / parallel_games via
+    # self.config.get inside the train loop, leaves_per_game via the worker
+    # attribute (worker re-creates BatchedMCTS each play_games_batched call).
+    games_per_iteration: int = field(default=100, metadata=HOT_CONFIG)
+    parallel_games: int = field(default=256, metadata=HOT_CONFIG)
+    leaves_per_game: int = field(default=8, metadata=HOT_WORKER)
     temperature: float = field(default=1.0, metadata=HOT_WORKER)
     temperature_threshold: int = field(default=25, metadata=HOT_WORKER)
     explore_epsilon: float = field(default=0.0, metadata=HOT_WORKER)
@@ -71,10 +77,16 @@ class DominionConfig:
     num_iterations: int = field(default=3000, metadata=STATIC)
     batch_size: int = field(default=256, metadata=HOT_CONFIG)
     epochs_per_iteration: int = field(default=1, metadata=HOT_CONFIG)
-    learning_rate: float = field(default=2.7e-5, metadata=STATIC)
+    # learning_rate is read from self.config every iteration in
+    # Trainer._get_lr_for_iteration and pushed into optimizer.param_groups[*]['lr'].
+    # Hot-reloadable; takes effect on the next iter boundary.
+    learning_rate: float = field(default=2.7e-5, metadata=HOT_CONFIG)
+    # weight_decay is set at optimizer construction; would need per-iter
+    # param_group update to be safely hot-reloadable. Keeping STATIC for now.
     weight_decay: float = field(default=0.0001, metadata=STATIC)
-    lr_milestones: list[int] = field(default_factory=list, metadata=STATIC)
-    lr_gamma: float = field(default=0.3, metadata=STATIC)
+    # Schedule milestones are also read per-iter via _get_lr_for_iteration.
+    lr_milestones: list[int] = field(default_factory=list, metadata=HOT_CONFIG)
+    lr_gamma: float = field(default=0.3, metadata=HOT_CONFIG)
     replay_buffer_size: int = field(default=100000, metadata=STATIC)
     min_buffer_for_training: int = field(default=10000, metadata=HOT_CONFIG)
     checkpoint_frequency: int = field(default=5, metadata=HOT_CONFIG)
@@ -84,15 +96,18 @@ class DominionConfig:
     max_discard_rate: float = field(default=0.0, metadata=HOT_CONFIG)
     seed_reinject_frequency: int = field(default=0, metadata=HOT_CONFIG)
     min_play_rate: float = field(default=0.0, metadata=STATIC)
-    prune_old_checkpoints: bool = field(default=False, metadata=STATIC)
+    # prune_old_checkpoints is read each iter inside _cleanup_checkpoints.
+    prune_old_checkpoints: bool = field(default=False, metadata=HOT_CONFIG)
 
     # --- evaluation ---
-    num_games: int = field(default=100, metadata=STATIC)
-    win_threshold: float = field(default=0.55, metadata=STATIC)
+    # All eval params are consumed inside the eval cycle which runs every
+    # eval_frequency iters; reading from self.config each time is fine.
+    num_games: int = field(default=100, metadata=HOT_CONFIG)
+    win_threshold: float = field(default=0.55, metadata=HOT_CONFIG)
     eval_frequency: int = field(default=5, metadata=HOT_CONFIG)
-    eval_num_games: int = field(default=20, metadata=STATIC)
-    eval_mcts_simulations: int = field(default=400, metadata=STATIC)
-    eval_start_iteration: int = field(default=1, metadata=STATIC)
+    eval_num_games: int = field(default=20, metadata=HOT_CONFIG)
+    eval_mcts_simulations: int = field(default=400, metadata=HOT_CONFIG)
+    eval_start_iteration: int = field(default=1, metadata=HOT_CONFIG)
 
     # --- paths ---
     checkpoint_dir: str = field(

@@ -1196,10 +1196,16 @@ class Trainer:
             return
         iter_files = sorted(checkpoint_dir.glob('model_iter_*.pt'), key=lambda f: int(f.stem.split('_')[2]))
         if len(iter_files) > 40:
+            # Preserve reference-pin checkpoints currently used by self-play (Rule #7).
+            # opponent_iter_{min,max} are HOT_CONFIG so the live values may differ from
+            # YAML at the time training started; reading from self.config catches
+            # post-hot-reload changes too. Range is inclusive on both ends.
+            ref_lo = self.config.get('opponent_iter_min', 0) or 0
+            ref_hi = self.config.get('opponent_iter_max', 0) or 0
             keep = set()
             for f in iter_files:
                 i = int(f.stem.split('_')[2])
-                if i % 50 == 0:
+                if i % 50 == 0 or (ref_lo <= i <= ref_hi):
                     keep.add(f)
             for f in iter_files[-30:]:
                 keep.add(f)
@@ -1285,7 +1291,15 @@ class Trainer:
         if self._warmup_target > 0:
             print(f"[WARMUP] Resuming warmup: target {self._warmup_target} examples")
 
-        # Try loading buffer from separate file first, then legacy embedded buffer
+        # Try loading buffer from separate file first, then legacy embedded buffer.
+        # Set target sizes so buffer can migrate old-format examples (zero-pad
+        # state tensors and beliefs to match current network architecture).
+        # DEVLOG #176: this wires up the previously-dead set_target_sizes path —
+        # without it, loading a 280-channel buffer into a 404-channel network
+        # produced inhomogeneous-batch ValueError on first training step.
+        target_input_channels = self.config.get('input_channels', 280)
+        target_belief_size = self.config.get('belief_size', 31)
+        self.replay_buffer.set_target_sizes(target_input_channels, target_belief_size)
         buffer_path = Path(filepath).parent / 'buffer_latest.pkl'
         if 'replay_buffer' in checkpoint:
             self.replay_buffer.load_data(checkpoint['replay_buffer'])

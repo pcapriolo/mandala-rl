@@ -242,17 +242,22 @@ def test_14_opponent_disabled_supply_field_hot_reloads(tmp_path):
     """DEVLOG #170: new field `opponent_disabled_supply` (list[int]) must load,
     default to [], and hot-reload onto the worker when changed.
     """
+    # Drift-tolerant: live YAML may carry deployed values (Phase 5+ has Smithy in
+    # the mask). Verify the field loads as list[int] and hot-reloads to a new value
+    # regardless of baseline.
     schema = DominionConfig.load(DOMINION_YAML)
-    assert schema.opponent_disabled_supply == []  # default for current YAML
+    assert isinstance(schema.opponent_disabled_supply, list)
 
     worker = _make_worker_from_schema(schema)
     config = schema.to_flat_dict()
-    assert worker.opponent_disabled_supply == []
+    assert isinstance(worker.opponent_disabled_supply, list)
+    baseline = list(worker.opponent_disabled_supply)
+    new_value = [0] if baseline != [0] else [0, 3]
 
-    new_path = _write_yaml(tmp_path, overrides={"opponent_disabled_supply": [0, 3, 4, 6, 16]})
+    new_path = _write_yaml(tmp_path, overrides={"opponent_disabled_supply": new_value})
     changes = schema.reload_into(new_path, config, worker)
 
-    assert worker.opponent_disabled_supply == [0, 3, 4, 6, 16]
+    assert worker.opponent_disabled_supply == new_value
     assert any("opponent_disabled_supply" in c for c in changes)
 
 

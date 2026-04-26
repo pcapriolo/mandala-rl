@@ -4,6 +4,224 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #177 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
+
+**Context.** Supply=8 calibration (DEVLOG #173 + #174 fix) ran for ~50 iters with the policy plateauing at avg_prov 3.61, single-iter 3.67 at iter 6020. That's 90% of the new theoretical max (4.0) but still leaves a structural ~0.4-prov gap from the loser-blind-spot pathology. The shift in termination distribution at supply=8 (`outcome_determined` 19% → 37%) confirmed the policy is responsive to supply changes but the pathology amplifies with more provinces. Pure supply scaling can't dissolve symmetric self-play tie-out — we need new gradient signal from action-card decisions.
+
+**Phase 5 entry per the training plan.** Add Smithy (card_id 21, $4 cost, +3 cards) as the kingdom card. This is the simplest engine card and was the explicit Phase 5 entry per `docs/plans/dominion-training-plan.md`.
+
+**Reference-asymmetric design (Rule #7 + DEVLOG #170).** Pin a strong supply=8-master checkpoint (iter 6020: prov 3.67, argmax 64.8%) as the reference. The reference's policy is masked to refuse Smithy: its BUY[Smithy] logit (action index 55 = `BUY_OFFSET 34 + card_id 21`) is forced to -inf before softmax. The current agent has Smithy available, can play it for +3 cards, can build engine decks. The reference is the "no-engine veteran" — strong Big-Money play, refuses the new card. This produces asymmetric outcome signal: engine-success → win vs stale veteran; engine-failure → lose vs stable veteran. Mirrors the Stage-2 Duchy mechanism from DEVLOG #170, applied to a positive-VP rather than dead-card scenario.
+
+**Atomic 4-key hot-reload.** All HOT_WORKER / HOT_CONFIG, no code change, no restart.
+
+| Key | From | To | Schema target |
+|-----|------|----|----|
+| `forced_kingdom_cards` | `[]` | `[21]` | HOT_WORKER |
+| `max_action_cards` | `0` | `1` | HOT_WORKER |
+| `opponent_iter_min` | `4785` | `6020` | HOT_CONFIG |
+| `opponent_iter_max` | `4785` | `6020` | HOT_CONFIG |
+| `opponent_disabled_supply` | `[0, 3, 4, 6, 16]` | `[0, 3, 4, 6, 16, 21]` | HOT_WORKER |
+
+`forced_kingdom_cards: [21]` bypasses the random kingdom selection in `cpp/dominion_game.cpp:548-554` and pins Smithy as the only kingdom card. `max_action_cards: 1` declares the curriculum intent (the C++ uses it only in the random path; with forced kingdom cards it's redundant but kept for clarity).
+
+**Falsification.** First 50 iters:
+- **Success** — `avg_prov` rebounds within 30 iters and exceeds the supply=8 plateau of 3.61 by iter ~50. Indicates engine play is working: bot is using Smithy to drive deck velocity into more Province buys per game. Smithy purchase rate stabilizes (probably 2-5 per player). Action plays > 0.
+- **Recovery (acceptable)** — `avg_prov` dips initially (engine learning curve) but returns to ~3.5+ within 50 iters. Bot is learning Smithy but hasn't fully integrated it. Continue.
+- **Stuck regression** — `avg_prov` collapses below 3.0 and stays there. Engine learning isn't compensating for added supply complexity. Revert via 4-key hot-reload back to old values.
+- **Greenbot risk** — bot buys Smithy indiscriminately at every $4+ hand without playing it strategically. Watch `0% action play rate` warnings.
+
+**Rollback.** Single hot-reload edit reverts the 5 keys back to their pre-Phase-5 values. The reference iter 6020 checkpoint exists on disk (it's now in the always-keep set via `opponent_iter_min/max` per DEVLOG #173's prune fix).
+
+**Risks accepted.**
+- **Initial prov dip likely.** Bot adapting to action card → buy timing → engine play takes iters. Phase transition shock is normal.
+- **Buffer composition shift.** New games include Smithy buy/play actions that weren't in the buffer before. ~33-iter cycle for buffer to reflect new distribution.
+- **Reference OOD on Smithy-contaminated states.** The reference (iter 6020) was trained without Smithy in supply. Its value head's leaf evaluations on current-agent states with Smithy in the deck are out-of-distribution. Same hazard accepted in DEVLOG #170 / #171.
+- **Reference may grow stale.** As current agent learns engine play, iter 6020's strength becomes a moving target. Future ladder steps may be needed.
+
+**Files.** Pod-only YAML edit; no code change. Local YAML synced for git history.
+
+**Verification (post-deploy).**
+1. `Config reload:` log line confirming all 5 changes landed atomically.
+2. First post-reload iter shows `Playing 20 games vs iter_6020 opponent`.
+3. Within 5 iters: action play rate > 0 indicates Smithy is being played at least sometimes.
+4. Within 20 iters: a sample of vs-reference replays should show reference never bought Smithy (action_buys == 0 on reference's side every game).
+
+---
+
+## DEVLOG #176 — 2026-04-25: State-encoding upgrade — expose deck/discard split + opp in_play + trash (280 → 404 channels)
+
+**Pathology.** While diagnosing why Smithy plays weren't producing policy improvement (DEVLOG #175 follow-up), audit of the state encoding revealed two strategically distinct game states could collapse to the *same input tensor*:
+
+- State A: Smithy in hand + 4 Golds. Deck (face-down): 3 Golds. Discard: 7 Coppers + 5 Estates.
+- State B: Smithy in hand + 4 Golds. Deck (face-down): 3 Estates. Discard: 5 Silvers + 4 Coppers + 3 Golds.
+
+In both states the *full deck composition* (Ch 0-30: deck + hand + discard + in_play combined) is identical. Hand-only (Ch 31-61) and in_play-only (Ch 62-92) channels are also identical. The network sees the same tensor.
+
+But the *optimal action differs*: in A, don't play Smithy (the 3 Golds will draw next turn anyway); in B, play Smithy (drawing 3 Estates clears the deck without losing tempo). Without a way to see deck-only vs discard-only counts, the network's best policy is the *averaged* play probability across the two — which is wrong for both individually.
+
+**Audit findings — what's already encoded vs what's legally available:**
+
+| Info | Already encoded? |
+|------|------------------|
+| My full deck (Ch 0-30) | ✓ |
+| My hand (Ch 31-61) | ✓ |
+| My in-play (Ch 62-92) | ✓ |
+| My deck-only counts | ✗ |
+| My discard-only counts | ✗ |
+| Opp full deck (Ch 156-186) | ✓ (deductive — public buys/trash history) |
+| Opp discard (Ch 187-217) | ✓ (publicly visible) |
+| Opp in_play | ✗ (publicly visible during their turn) |
+| Trash composition | ✗ (publicly visible to all) |
+
+**Fix.** Append 4 new 31-channel ranges (124 channels total). Network grows 280 → 404 input channels.
+
+```
+Ch 280-310 (31): my deck-only counts (face-down deck, divisor=12)
+Ch 311-341 (31): my discard-only counts (divisor=12)
+Ch 342-372 (31): opp in_play counts (divisor=5)
+Ch 373-403 (31): trash composition (divisor=12)
+```
+
+Channel placement preserves all existing 0-279 features (no remap → no learned-feature loss).
+
+**Migration is automatic.** Both checkpoint and replay buffer migration paths already exist in the codebase (used in prior input-channel changes 156→218):
+- `trainer.py:1253-1262` pads `conv_input.weight` with zero columns for new channels — old learned weights are preserved exactly in `[:, :280, :, :]`, new channels start at zero (no effect).
+- `replay_buffer.py:_migrate_if_needed` pads cached state tensors with trailing zero-channels at load. Old (state, policy, value) targets remain valid because zero inputs × zero weights = zero contribution.
+
+After ~33 iters of new self-play, the buffer cycles to all-404-channel entries and gradient flows to the new input weights. Network starts learning to use the new info.
+
+**What this enables (immediate):** Network can finally distinguish "good cards on top of deck" from "good cards in discard" — directly addresses the Smithy play-decision nuance from DEVLOG #175 conversation. Trash visibility helps with deck-quality reasoning. Opp in_play composition shows what they just played this turn (was invisible).
+
+**What's still missing (deferred):** Deck *order* info (Sentry/Harbinger/Bureaucrat reveal-and-place effects). Defer to the PR that adds the first deck-manipulation kingdom card — at that point we'll add `known_top_cards_p0/p1` state tracking, card-effect updates, and channel encoding in one logical change.
+
+**Files.** 5 modified, 1 new test file.
+- `cpp/dominion_game.h`: `DOM_TENSOR_CHANNELS: 280 → 404`.
+- `cpp/dominion_game.cpp`: 4 new channel-encoding blocks + `encode_counts` lambda helper (DRY's the 5 callsites).
+- `mandala_rl/training/config_schema.py`: `input_channels: 280 → 404`.
+- `configs/dominion.yaml`: `input_channels: 280 → 404`.
+- `tests/test_state_encoding_404ch.py` (new): 7 cases — tensor shape, value ranges, deck/hand/in_play/discard sum invariant, empty-state expectations, schema/YAML consistency.
+- `tests/test_dominion.py`: shape assertion updated 151 → 404 (was already stale from prior refactors; test was failing before this PR for unrelated reasons).
+
+**Deploy plan.** Rebuild C++ on pod, restart training. `model_latest.pt` (iter ~6519) loads via existing migration: conv_input grows 280 → 404 input dim, new 124 weight columns zero-init. Buffer migrates on load; old 280-ch state tensors get padded to 404. ~33-iter buffer rebuild for fresh data with real values in new channels.
+
+**Falsification.**
+- **Success:** Training resumes cleanly. After ~50 iters, buffer is mostly new-format. Smithy play decisions start to differentiate by state context (rate varies by hand+deck composition, not flat). Prov holds at ≥3.5.
+- **Null:** New channels carry info but value head doesn't learn to use them in any visible time horizon — would suggest LR=2.7e-6 is too low to absorb the new gradient signal. Increase LR or train longer.
+- **Regression:** Migration bug zeroes existing weights. Caught immediately by training collapsing to random-policy behavior. Revert `model_latest.pt` from a pre-migration snapshot.
+
+**Risk.** Low. Migration path is well-tested (prior 156→218 channel migration used the same code). Network architecture is unchanged except for first-layer input dim. Compute increase: first conv +44% params (322K → 463K) which is ~3% of total network compute. Negligible.
+
+---
+
+## DEVLOG #175 — 2026-04-25: `action_play_force_rate: 0.0 → 0.2` to bootstrap Smithy plays (Phase 5)
+
+**Context.** Phase 5 deployed: `forced_kingdom_cards: [21]` (Smithy), `max_action_cards: 1`, supply=8. After several iters, replay scan showed:
+- Smithy buys: ~1.5% of games (90 buys per ~5000 games via dirichlet noise on BUY[21])
+- Smithy plays: **0** in every sampled game. `action_plays = [0, 0]`.
+
+The bot buys Smithy occasionally and never plays it. Smithy goes into the deck and sits there as a dead $4 card.
+
+**Root cause: zero-prior bootstrap problem.** The policy network was trained on Phase 0-4 with `max_action_cards: 0` for ~6000 iters. During that time, `valid[PLAY[Smithy]] = 0` always (no action cards in supply or hand). MCTS visit counts on PLAY indices were always 0, so the policy was trained to output **zero prior** on those output indices. Now in Phase 5 with Smithy actually in hand, the policy still outputs ~0 prior on PLAY[21]. With ε=0.30 dirichlet noise, the noise contribution is ~0.30/131 ≈ 0.002 — far below what 800 MCTS sims will visit. Result: PLAY[21] gets 0 visits, END_ACTIONS wins, Smithy never played.
+
+**This is not a bug.** Tracking attribution verified correct at `cpp/dominion_game.cpp:888` (`s.action_plays[s.current_player_]++`) and `:1602` (`s.action_buys[p]++`). State encoding handles POV correctly via `get_canonical()`. The policy network simply has no learned prior on action-play indices because it never saw them as valid during training.
+
+**Fix.** Hot-reload `action_play_force_rate: 0.0 → 0.2`. The mechanism already exists in `cpp/batched_mcts.cpp:438-476`: when set > 0, with that probability the action distribution is overridden to uniform over playable action cards (prioritizing +action cards before terminals). Designed exactly for this bootstrap. With 20% force-play, when current agent has Smithy in hand, ~20% of action-phase decisions force-play it. Network sees PLAY[Smithy] trajectories. Outcome differential teaches value head whether playing was good or bad. Policy distills via MCTS visit counts.
+
+**Why 0.2 and not higher.** A small bootstrap signal is enough. We want the network to *explore* action plays, not be *forced* into them. After ~30 iters of force-play, the policy prior on PLAY[Smithy] should be non-zero, after which MCTS + value-head can reason about *when* to play Smithy (the strategic nuance: don't play if you already have $8 and good cards on top of your deck, etc.). Plan to taper toward 0.05 or 0.0 after policy converges.
+
+**What the bot can and can't learn.** State encoding has full deck composition (Ch 0-30), hand-only (Ch 31-61), in-play (Ch 62-92), supply (Ch 93-123). It does NOT separate deck-only from discard-only counts — so the bot can't directly reason about "the 3 cards still in my deck are specifically Golds." It infers statistically. World-class Smithy play requires the deck/discard split (input_channels: 280 → 342) which is a from-scratch architecture upgrade. Not in scope here. This bootstrap fix is a necessary first step regardless.
+
+**Falsification.** 30-iter window:
+- **Success:** `action_plays > 0` per game appears in replay summaries within 5-10 iters. By iter +30, policy has nonzero learned prior on PLAY[Smithy] even at force_rate=0.0 (test by hot-reloading 0.2 → 0.0 briefly).
+- **Null:** `action_plays` stays at 0 even with force_rate=0.2. Means the mechanism isn't firing — investigate. Possible causes: forced action_probs gets overwritten downstream, or the action phase isn't being entered at all (deck doesn't draw Smithy because it's stuck in discard).
+- **Regression:** policy collapses (prov < 3.0) because being forced to play Smithy at bad times tanks game outcomes. Lower to 0.1 or revert to 0.0.
+
+**Files.** `configs/dominion.yaml: action_play_force_rate: 0.0 → 0.2`. Pod synced via sed. No code change.
+
+**`action_buy_force_rate`: still 0.0.** Smithy buys are happening at ~1.5% via dirichlet, which is enough to seed the buffer with "deck has Smithy" states. Force-buy isn't necessary to bootstrap; the play side was the binding constraint.
+
+---
+
+## DEVLOG #174 — 2026-04-25: Fix C++ bug — `province_supply: 8` silently set supply to 3
+
+**Bug.** Setting `province_supply: 8` in YAML produced games with **supply = 3**, not 8.
+
+In `cpp/dominion_game.cpp`:
+
+```cpp
+// initial_supply_count returns 3 for Province (NOT 8)
+case CARD_PROVINCE: return 3;   // "Low count = depletes fast..."
+
+// Override applied only when value differs from 8 — wrongly assumed default 8
+if (province_supply_ != 8) {
+    s->supply[CARD_PROVINCE] = province_supply_;
+}
+```
+
+The conditional skipped the override when curriculum requested 8, leaving the supply at the *real* default of 3. The comment claimed default was 8, but `initial_supply_count` returned 3. Two contradictory truths in the code; the if-check trusted the wrong one.
+
+**Detection.** Right after deploying DEVLOG #173 (`province_supply: 7 → 8`), training metrics showed:
+- `avg_prov`: 3.27 → **1.5**
+- Buys per player: ~14 → **~7.5**
+- Mean turn count: 27 → 17
+- Replay JSON: every `province_empty` game had total prov = 3 across both players. Impossible at supply=8 — dispositive evidence the supply was actually 3.
+
+**Damage.** ~12 iters (5552-5564) of training on supply=3 trajectories. Replay buffer received ~12% pollution from supply=3 distributions before we caught it. Manageable — buffer cycles every ~33 iters at 100 examples/iter into a 100K window.
+
+**Immediate response.** Hot-reloaded `province_supply: 8 → 7` on pod (works because 7 ≠ 8 so the override fires). Stops the bleeding within one iter boundary. Confirmed via `Config reload: province_supply 8 → 7` log line.
+
+**Fix.**
+
+```cpp
+// initial_supply_count
+case CARD_PROVINCE: return 8;   // Standard 2-player count; curriculum overrides via setter
+
+// create_initial_state — unconditional override
+s->supply[CARD_PROVINCE] = province_supply_;
+```
+
+Removed the `if (province_supply_ != 8)` guard. Default in `initial_supply_count` corrected to the real Dominion default (8). Override is now unconditional — whatever the curriculum sets via `set_province_supply`, that's what the game gets.
+
+**Test coverage.** Added two cases to `tests/test_dominion_early_terminate.py`:
+- `test_province_supply_8_actually_creates_8_provinces`: runs 30 games at supply=8; asserts that any `province_empty` termination has total prov = 8 (not 3). Fails on the pre-fix bug.
+- `test_province_supply_3_still_creates_3_provinces`: symmetric counterpart confirming supply=3 still produces 3-prov games (the override path that was working).
+
+15/15 tests pass with the fix.
+
+**Why this hid for so long.** The `if != 8` check was silent — no error, no warning, just "default" behavior that happened to differ from the comment. We've been running `province_supply: 7` for the entire Phase 3+4 history (DEVLOG #158 onward), so the override always fired and supply was correctly 7. The bug only surfaced when we tried 8 for the first time in DEVLOG #173.
+
+**Lesson.** Magic-number guards in code need to match what comments claim. The comment "default 8, use 7 to reduce draws" implied the C++ default was 8 — but `initial_supply_count` told a different story. Either the comment was wrong, or the function was wrong. Both diverged in opposite directions and the if-check trusted the comment. Should have caught this in code review for DEVLOG #173 by reading `initial_supply_count`. Did not. My miss.
+
+**DEVLOG #173 status.** The supply=8 calibration test was never actually run — it ran on supply=3. Pending: with the fix in place, retry `province_supply: 8` if user still wants the metric-calibration data.
+
+---
+
+## DEVLOG #173 — 2026-04-25: Bump `province_supply: 7 → 8` as a metric-calibration test
+
+**Context.** After 116 iters with DEVLOG #172's `early_terminate_decided=true` deployed, the termination-distribution change landed cleanly (province_empty 71%, outcome_determined 19%, turn_cap 10%, 0 errors), value loss trended down (0.25 → 0.22), and value-head pred std crept toward target std (0.77 → 0.78). But `avg_prov` *fell* from the pre-deploy baseline of 3.36 to 3.27 instead of rising. Cause: `outcome_determined` typically fires only at `[6, 0]` with 1 prov left in supply, so it cuts off games that would have either drained naturally to `[6, 1]/[7, 0]` (mean 3.5) OR stuck to turn 50 at `[6, 0]` (mean 3.0). Net effect on the avg_prov metric: small but negative.
+
+**Diagnostic question.** Is the 3.36 plateau a *policy* limit, or a *supply* limit? With supply=7 the theoretical max mean prov is 3.5. We were at 3.36 = 96% of max. The remaining 4% gap could be (a) competent policy hitting structural pathology, or (b) policy genuinely incompetent and the metric ceiling masks it.
+
+**Test.** Hot-reload `province_supply: 7 → 8`. Theoretical max becomes 4.0. If the policy is competent, mean prov should rise to ~3.7-3.8 (same 14%-ish stuck-game rate at slightly lower mean per stuck game, plus full-drain games at 4.0 instead of 3.5). If the policy is the limit and not the supply, mean will stagnate near the old plateau or even drop because the loser still buys 0 prov in the same fraction of games — just with one more prov uncollected.
+
+**Implementation.** One-line YAML edit, hot-reloadable (HOT_WORKER metadata). No code change. Pod-side via `sed`; local YAML updated to match.
+
+**Other things in this restart.**
+- Disk on pod hit 100% mid-deploy. `prune_old_checkpoints: false` had let 484 checkpoint files at ~94 MB each = 46 GB accumulate. Pruned to 115 (every 50th iter + 5 known reference pins + `model_latest.pt`). Freed 18.5 GB. Watchdog restarted training cleanly from `model_latest.pt` (iter 5551).
+- The fresh `[CONFIG]` line confirms `province_supply: 8` was read at startup, not from a hot-reload — restart was forced by the disk fill.
+
+**Falsification.** 20-iter window for first read, 50-iter window for confirmation:
+- **Policy was competent (3.36 was a supply ceiling):** mean prov rises to 3.65-3.85, turn count rises ~3-5 turns (one more prov to buy), termination distribution roughly matches post-#172 baseline.
+- **Policy is the limit (3.36 was a policy ceiling):** mean prov stays at 3.30-3.45, possibly slightly higher just from extra-prov mechanical bump. The 8th prov in supply gets unbought as often as the 7th, confirming the loser-blind-spot is the bind.
+- **Curriculum advance is warranted:** Smithy / action cards become the next step.
+- **No further interventions help on this curriculum:** declare supply-only-VP mastered, change scope.
+
+**Risk.** None significant. Pure config change, fully reversible via single-line YAML edit. Buffer composition shifts marginally (longer games), value head may have 5-10 iters of recalibration but loss was already trending down so unlikely to regress.
+
+**Files.** `configs/dominion.yaml: province_supply: 7 → 8`. Pod YAML synced via sed. Local committed for git history.
+
+---
+
 ## DEVLOG #172 — 2026-04-24: Early-terminate Dominion games when VP outcome is mathematically determined
 
 **Pathology.** At supply=7 with `disabled_basic_supply: [0, 3, 6, 16]`, 14% of self-play games were reaching `max_turns=50` instead of ending via pile-drain. Flat at 14% ± 1% across 500 iters (4873 → 5372), unmoved by Copper remask, Stage-1 full mask, Stage-2 Duchy unmask, ε=0.15 → 0.30, or any other intervention. Replay scans of those stuck games showed a consistent mechanism: the **trailing player buys 21-27 Golds and 0 Provinces in a 50-turn game**, with 250-300 `coins_wasted` proving they had $8+ hands constantly but chose Gold over Province at every decision. Winner typically reached 4-6 Provinces then stopped; pile never drained because neither player bought the last Province. Mean game-prov = 6.69 / 2 = **3.345 per player**, exact match to the plateau we'd been chasing.

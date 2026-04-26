@@ -459,6 +459,32 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         if (card_buys[i][1] > 0)
             set_channel(249 + i, std::min(1.0f, card_buys[i][1] / 4.0f));
     }
+
+    // DEVLOG #176: deck/discard split + opp in_play + trash visibility.
+    // Until this PR, the network had Ch 0-30 (my full deck = deck+hand+discard+in_play)
+    // but no way to distinguish my deck-only from my discard-only. Two strategically
+    // distinct states (e.g. "3 Golds on top of deck" vs "3 Golds in discard") had
+    // identical tensors → state aliasing prevented learning per-state nuance like
+    // "don't play Smithy when good cards are already on top of my deck."
+    auto encode_counts = [&](int base_ch, const std::vector<int8_t>& cards, float divisor) {
+        int counts[DOM_NUM_CARD_TYPES] = {};
+        for (auto c : cards) counts[c]++;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            if (counts[i] > 0) set_channel(base_ch + i, counts[i] / divisor);
+        }
+    };
+
+    // Ch 280-310: My deck-only (face-down deck) — counts / 12
+    encode_counts(280, me.deck, 12.0f);
+
+    // Ch 311-341: My discard-only — counts / 12
+    encode_counts(311, me.discard, 12.0f);
+
+    // Ch 342-372: Opp in-play (publicly visible during their turn) — counts / 5
+    encode_counts(342, opp.in_play, 5.0f);
+
+    // Ch 373-403: Trash composition (public to all players) — counts / 12
+    encode_counts(373, trash, 12.0f);
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {
@@ -531,7 +557,7 @@ int DominionGame::initial_supply_count(int8_t card_id, bool is_kingdom) {
         case CARD_GOLD:     return 30;
         case CARD_ESTATE:   return 8;   // 2-player
         case CARD_DUCHY:    return 8;
-        case CARD_PROVINCE: return 3;   // Low count = depletes fast with sparse Province buying
+        case CARD_PROVINCE: return 8;   // Standard 2-player count; curriculum overrides via set_province_supply
         case CARD_CURSE:    return 10;  // (num_players-1)*10
         default:
             if (is_kingdom) {
@@ -580,10 +606,12 @@ std::unique_ptr<GameState> DominionGame::create_initial_state(std::mt19937& rng)
         s->supply[cid] = initial_supply_count(cid, true);
     }
 
-    // Override province supply count (default 8, use 7 to reduce draws)
-    if (province_supply_ != 8) {
-        s->supply[CARD_PROVINCE] = province_supply_;
-    }
+    // Override province supply count to whatever the curriculum sets.
+    // BUG FIX: previously gated `if (province_supply_ != 8)` which silently
+    // *skipped* the override when curriculum requested 8 — but the default in
+    // initial_supply_count was 3, not 8, so setting `province_supply: 8` left
+    // the supply at 3. Now unconditional. (DEVLOG #174.)
+    s->supply[CARD_PROVINCE] = province_supply_;
 
     // Disable basic supply cards for curriculum
     for (auto cid : disabled_basic_supply_) {

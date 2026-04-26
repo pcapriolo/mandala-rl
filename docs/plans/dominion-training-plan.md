@@ -4,13 +4,23 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 4 — Silver/Gold/Province + Copper/Estate/Duchy re-enabled, supply=7 |
-| **Province Supply** | 7 |
-| **Disabled** | Curse(6), Gardens(16), all action cards |
-| **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
-| **Last Updated** | 2026-04-19 |
+| **Phase** | 5 — Silver/Gold/Province + Duchy + Smithy, Copper/Estate masked, supply=8 |
+| **Province Supply** | 8 |
+| **Kingdom** | `[21]` (Smithy only, forced via `forced_kingdom_cards`) |
+| **Disabled** | Copper(0), Estate(3), Curse(6), Gardens(16) |
+| **Reference** | `iter_4785` pin or `iter_6020` pin (check live YAML); per-reference mask `[0, 3, 4, 6, 16, 21]` — reference refuses Smithy |
+| **Force rates** | `action_play_force_rate: 0.2` bootstrap per DEVLOG #175. `action_buy_force_rate: 0.0`. |
+| **Strength signal** | Metric-based gates only; new metric: `action_plays > 0` (network learning to play Smithy) |
+| **Last Updated** | 2026-04-25 |
 
 ### Recent changes
+- 2026-04-25: **`action_play_force_rate: 0.0 → 0.2` (DEVLOG #175).** Bootstrap Smithy plays. Network was trained on Phase 0-4 with no action cards, so policy prior on PLAY[Smithy] is ≈0 by construction — Smithy gets bought (1.5% via dirichlet) but never played. Force-play hot-reload kicks in at ~20% of action-phase decisions where Smithy is in hand. Reversible, no code change.
+- 2026-04-25 (earlier): **Phase 5 transition.** `max_action_cards: 0 → 1`, `forced_kingdom_cards: [] → [21]`, `opponent_disabled_supply` extended with Smithy id. Reference pin moved to a Phase-5-aware checkpoint. supply=8 retained.
+- 2026-04-25: **`province_supply: 7 → 8` (DEVLOG #173).** Calibration test. After 116 iters of DEVLOG #172's `early_terminate_decided=true`, mean prov fell 3.36 → 3.27 (cleaner training signal but metric tradeoff: outcome_determined cuts off games before winner buys their last prov). Theoretical max under supply=7 is 3.5; we were at 96% of max. Bumping to supply=8 raises max to 4.0 and tests whether 3.36 was a *policy* limit or a *supply* limit. **If prov rises to 3.65-3.85**, policy is competent and we advance to action cards (Smithy / Phase 5). **If prov stays near 3.30-3.45**, policy is the limit and the loser-blind-spot (DEVLOG #172) is the bind regardless of supply size.
+- 2026-04-25: **Pruned 370 of 484 stale checkpoints; freed 18.5 GB.** Disk hit 100% mid-deploy. Kept every 50th iter + 5 known reference pins (2200, 3175, 3600, 4220, 4785) + `model_latest.pt`. `prune_old_checkpoints: false` left in YAML for now — periodic manual prunes preferred over automatic. Watchdog restarted training cleanly from `model_latest.pt` (iter 5551).
+- 2026-04-24: **DEVLOG #172 — Early-terminate Dominion games when VP outcome is determined.** Game-rule-level termination: end games when `|vp_lead| > supply_VP_remaining`. Targets the 14% stuck-at-turn-50 pathology (loser refuses Province, buys 21-27 Golds with $11 hands). C++ change requiring full restart and ~33-iter buffer rebuild. Termination distribution post-deploy: 71% province_empty / 19% outcome_determined / 10% turn_cap / 0% three_piles. Value loss trended down (0.25 → 0.22), value-head pred std improved (0.77 → 0.78), but mean prov fell from 3.36 → 3.27 because outcome_determined ends games before winner buys their last prov.
+- 2026-04-24: **DEVLOG #171 — Dirichlet ε 0.15 → 0.30** to force current-agent exploration of newly-unmasked Duchy. 146-iter window: ~0.5-0.9% of games have Duchy buys, buyer winrate ~17% (vs 50% baseline → asymmetric signal flowing). Prov flat at 3.36, no change to ceiling — confirmed Duchy isn't the prov bottleneck.
+- 2026-04-24: **DEVLOG #170 — Per-reference policy masking.** Stage 1 (full Phase-3 mask `[0, 3, 4, 6, 16]`) → Stage 2 (Duchy unmasked globally, reference still refuses it via per-reference policy mask). Asymmetric signal mechanism for breaking dead-card contamination in symmetric self-play.
 - 2026-04-22: **Reference ladder step 3 — pin iter 3175 → 3600.** 524 iters post step-2, live agent matched 3175's window prov 3.09 (no improvement). Iter 3600 single-iter 3.24 prov / 67.0 argmax / 30.9 turns / 0.12 est — beats 3175 on prov (+0.06), argmax (+5.5), turns (-2.4); est marginal regression (+0.02). 5-iter window confirms 3598/3599/3600 = 3.20/3.30/3.24 prov sustained peak. See DEVLOG #166.
 - 2026-04-21: **Reference ladder step 2 — pin iter 3075 → 3175.** 130 iters post step-1 swap, policy plateaued at avg_provinces 3.08 (gate 3.45). Selection criterion corrected from windowed mean to single-iter: the reference IS one checkpoint's weights, so its strength is its single-iter play. Among saved checkpoints, iter 3175 dominates single-iter (prov 3.18, argmax 61.5, est 0.10 — at Phase 4 gate), window 3.09 confirms stable peak. Pin retained (min==max). See DEVLOG #164.
 - 2026-04-20: **Introduced Rule #7 — reference-play every phase.** Diagnostics confirmed that self-play alone converges to a fixed point below the prior phase's actual strength (Phase 4 stuck at ~45% mcts_province_argmax_pct vs Phase 3 peak of 58%, with avg_provinces 2.35 vs Phase 3 peak 3.48). More MCTS sims (800→1600) didn't help; swapping MCTS leaf eval from score head to value head didn't help. The bottleneck is genuinely that self-play training outcomes don't separate Province from Gold at mid-game $8+ — both "win sometimes" against similarly-confused self. Fix: every phase plays 20% of games vs the prior phase's peak checkpoint. Asymmetric outcomes teach the value head the Q-gap it was missing. Not a crutch (no forced actions). Retroactively applied to current Phase 4 against iter 2200 baseline. See DEVLOG #163.
@@ -139,8 +149,8 @@ province_supply: 7
 
 ## Phase 4: Re-enable Copper/Estate/Duchy (CURRENT)
 
-**Supply:** Gold, Silver, Copper, Estate, Duchy, Province — `province_supply: 7`
-**Disabled:** Curse(6), Gardens(16), all action cards
+**Supply (as of 2026-04-25):** Gold, Silver, Duchy, Province — `province_supply: 8`. Copper and Estate are masked via `disabled_basic_supply: [0, 3, 6, 16]` (Copper, Estate, Curse, Gardens). Duchy is supply-available; the reference (`iter_4785`) refuses it per-policy via DEVLOG #170. The province bump 7→8 is a calibration test (DEVLOG #173) and may be reverted depending on whether mean prov tracks the new 4.0 ceiling.
+**Disabled:** Copper(0), Estate(3), Curse(6), Gardens(16), all action cards
 **Goal:** Policy must preserve Phase 3's Province-buying mastery while correctly treating the re-enabled supply cards: ignore Copper-in-supply (anti-economy), ignore Estate-in-supply (dead 1-VP buy), treat Duchy as a potential marginal endgame VP grab. Starting deck stays 7 Copper + 3 Estate — the network has always seen those in hand; this transition is purely a supply-availability change.
 
 **Why Curse and Gardens held:** neither has a natural buyer in this supply set. Curse has cost 0 and value -1 — only bought if forced by an attack card (none in this phase). Gardens (1 VP per 10 cards) rewards big-deck engines, which don't exist without action cards. Enabling them would add argmax noise in the policy head without any learning signal. They graduate with Phase 5 (Smithy) when engine-style play starts to matter.
