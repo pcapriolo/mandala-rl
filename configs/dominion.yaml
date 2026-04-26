@@ -32,7 +32,7 @@ opponent_iter_max: 6020
 num_iterations: 3000
 batch_size: 256
 epochs_per_iteration: 1
-learning_rate: 2.7e-6
+learning_rate: 1.0e-5
 weight_decay: 0.0001
 lr_milestones: []
 lr_gamma: 0.3
