@@ -459,6 +459,32 @@ void DominionState::to_tensor(std::vector<float>& out) const {
         if (card_buys[i][1] > 0)
             set_channel(249 + i, std::min(1.0f, card_buys[i][1] / 4.0f));
     }
+
+    // DEVLOG #176: deck/discard split + opp in_play + trash visibility.
+    // Until this PR, the network had Ch 0-30 (my full deck = deck+hand+discard+in_play)
+    // but no way to distinguish my deck-only from my discard-only. Two strategically
+    // distinct states (e.g. "3 Golds on top of deck" vs "3 Golds in discard") had
+    // identical tensors → state aliasing prevented learning per-state nuance like
+    // "don't play Smithy when good cards are already on top of my deck."
+    auto encode_counts = [&](int base_ch, const std::vector<int8_t>& cards, float divisor) {
+        int counts[DOM_NUM_CARD_TYPES] = {};
+        for (auto c : cards) counts[c]++;
+        for (int i = 0; i < DOM_NUM_CARD_TYPES; i++) {
+            if (counts[i] > 0) set_channel(base_ch + i, counts[i] / divisor);
+        }
+    };
+
+    // Ch 280-310: My deck-only (face-down deck) — counts / 12
+    encode_counts(280, me.deck, 12.0f);
+
+    // Ch 311-341: My discard-only — counts / 12
+    encode_counts(311, me.discard, 12.0f);
+
+    // Ch 342-372: Opp in-play (publicly visible during their turn) — counts / 5
+    encode_counts(342, opp.in_play, 5.0f);
+
+    // Ch 373-403: Trash composition (public to all players) — counts / 12
+    encode_counts(373, trash, 12.0f);
 }
 
 std::unique_ptr<GameState> DominionState::get_canonical() const {

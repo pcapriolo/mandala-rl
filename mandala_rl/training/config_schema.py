@@ -38,7 +38,7 @@ HOT_CONFIG: dict[str, Any] = {"hot": True, "target": "config"}
 @dataclass
 class DominionConfig:
     # --- network (restart-only: architecture) ---
-    input_channels: int = field(default=280, metadata=STATIC)
+    input_channels: int = field(default=404, metadata=STATIC)
     num_actions: int = field(default=131, metadata=STATIC)
     num_res_blocks: int = field(default=10, metadata=STATIC)
     channels: int = field(default=128, metadata=STATIC)

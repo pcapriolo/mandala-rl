@@ -826,7 +826,13 @@ class TestTensorAndCanonical:
     def test_tensor_shape(self):
         game, state = make_game()
         tensor = state.to_tensor()
-        assert tensor.shape == (151, 8, 8)
+        # NOTE: this tests the Python reference engine in dominion/game/state.py,
+        # which has its own to_tensor() at 280 channels. The C++ engine used for
+        # training is at 404 channels per DEVLOG #176; the Python engine has not
+        # been updated to match (parallel implementation, used only for local
+        # debugging / web UI). Update both together if Python is ever used for
+        # training inference.
+        assert tensor.shape == (280, 8, 8)
         assert tensor.dtype == np.float32
 
     def test_canonical_form_player0(self):

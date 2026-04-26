@@ -1,5 +1,5 @@
 # network
-input_channels: 280
+input_channels: 404
 num_actions: 131
 num_res_blocks: 10
 channels: 128

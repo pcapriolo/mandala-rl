@@ -8,7 +8,7 @@
 // --- Constants ---
 static constexpr int DOM_NUM_CARD_TYPES = 31;  // IDs 0-30
 static constexpr int DOM_NUM_ACTIONS = 131;
-static constexpr int DOM_TENSOR_CHANNELS = 280;
+static constexpr int DOM_TENSOR_CHANNELS = 404;
 
 // Action offsets
 static constexpr int DOM_END_ACTIONS = 0;

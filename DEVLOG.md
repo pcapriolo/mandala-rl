@@ -48,6 +48,71 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #176 — 2026-04-25: State-encoding upgrade — expose deck/discard split + opp in_play + trash (280 → 404 channels)
+
+**Pathology.** While diagnosing why Smithy plays weren't producing policy improvement (DEVLOG #175 follow-up), audit of the state encoding revealed two strategically distinct game states could collapse to the *same input tensor*:
+
+- State A: Smithy in hand + 4 Golds. Deck (face-down): 3 Golds. Discard: 7 Coppers + 5 Estates.
+- State B: Smithy in hand + 4 Golds. Deck (face-down): 3 Estates. Discard: 5 Silvers + 4 Coppers + 3 Golds.
+
+In both states the *full deck composition* (Ch 0-30: deck + hand + discard + in_play combined) is identical. Hand-only (Ch 31-61) and in_play-only (Ch 62-92) channels are also identical. The network sees the same tensor.
+
+But the *optimal action differs*: in A, don't play Smithy (the 3 Golds will draw next turn anyway); in B, play Smithy (drawing 3 Estates clears the deck without losing tempo). Without a way to see deck-only vs discard-only counts, the network's best policy is the *averaged* play probability across the two — which is wrong for both individually.
+
+**Audit findings — what's already encoded vs what's legally available:**
+
+| Info | Already encoded? |
+|------|------------------|
+| My full deck (Ch 0-30) | ✓ |
+| My hand (Ch 31-61) | ✓ |
+| My in-play (Ch 62-92) | ✓ |
+| My deck-only counts | ✗ |
+| My discard-only counts | ✗ |
+| Opp full deck (Ch 156-186) | ✓ (deductive — public buys/trash history) |
+| Opp discard (Ch 187-217) | ✓ (publicly visible) |
+| Opp in_play | ✗ (publicly visible during their turn) |
+| Trash composition | ✗ (publicly visible to all) |
+
+**Fix.** Append 4 new 31-channel ranges (124 channels total). Network grows 280 → 404 input channels.
+
+```
+Ch 280-310 (31): my deck-only counts (face-down deck, divisor=12)
+Ch 311-341 (31): my discard-only counts (divisor=12)
+Ch 342-372 (31): opp in_play counts (divisor=5)
+Ch 373-403 (31): trash composition (divisor=12)
+```
+
+Channel placement preserves all existing 0-279 features (no remap → no learned-feature loss).
+
+**Migration is automatic.** Both checkpoint and replay buffer migration paths already exist in the codebase (used in prior input-channel changes 156→218):
+- `trainer.py:1253-1262` pads `conv_input.weight` with zero columns for new channels — old learned weights are preserved exactly in `[:, :280, :, :]`, new channels start at zero (no effect).
+- `replay_buffer.py:_migrate_if_needed` pads cached state tensors with trailing zero-channels at load. Old (state, policy, value) targets remain valid because zero inputs × zero weights = zero contribution.
+
+After ~33 iters of new self-play, the buffer cycles to all-404-channel entries and gradient flows to the new input weights. Network starts learning to use the new info.
+
+**What this enables (immediate):** Network can finally distinguish "good cards on top of deck" from "good cards in discard" — directly addresses the Smithy play-decision nuance from DEVLOG #175 conversation. Trash visibility helps with deck-quality reasoning. Opp in_play composition shows what they just played this turn (was invisible).
+
+**What's still missing (deferred):** Deck *order* info (Sentry/Harbinger/Bureaucrat reveal-and-place effects). Defer to the PR that adds the first deck-manipulation kingdom card — at that point we'll add `known_top_cards_p0/p1` state tracking, card-effect updates, and channel encoding in one logical change.
+
+**Files.** 5 modified, 1 new test file.
+- `cpp/dominion_game.h`: `DOM_TENSOR_CHANNELS: 280 → 404`.
+- `cpp/dominion_game.cpp`: 4 new channel-encoding blocks + `encode_counts` lambda helper (DRY's the 5 callsites).
+- `mandala_rl/training/config_schema.py`: `input_channels: 280 → 404`.
+- `configs/dominion.yaml`: `input_channels: 280 → 404`.
+- `tests/test_state_encoding_404ch.py` (new): 7 cases — tensor shape, value ranges, deck/hand/in_play/discard sum invariant, empty-state expectations, schema/YAML consistency.
+- `tests/test_dominion.py`: shape assertion updated 151 → 404 (was already stale from prior refactors; test was failing before this PR for unrelated reasons).
+
+**Deploy plan.** Rebuild C++ on pod, restart training. `model_latest.pt` (iter ~6519) loads via existing migration: conv_input grows 280 → 404 input dim, new 124 weight columns zero-init. Buffer migrates on load; old 280-ch state tensors get padded to 404. ~33-iter buffer rebuild for fresh data with real values in new channels.
+
+**Falsification.**
+- **Success:** Training resumes cleanly. After ~50 iters, buffer is mostly new-format. Smithy play decisions start to differentiate by state context (rate varies by hand+deck composition, not flat). Prov holds at ≥3.5.
+- **Null:** New channels carry info but value head doesn't learn to use them in any visible time horizon — would suggest LR=2.7e-6 is too low to absorb the new gradient signal. Increase LR or train longer.
+- **Regression:** Migration bug zeroes existing weights. Caught immediately by training collapsing to random-policy behavior. Revert `model_latest.pt` from a pre-migration snapshot.
+
+**Risk.** Low. Migration path is well-tested (prior 156→218 channel migration used the same code). Network architecture is unchanged except for first-layer input dim. Compute increase: first conv +44% params (322K → 463K) which is ~3% of total network compute. Negligible.
+
+---
+
 ## DEVLOG #175 — 2026-04-25: `action_play_force_rate: 0.0 → 0.2` to bootstrap Smithy plays (Phase 5)
 
 **Context.** Phase 5 deployed: `forced_kingdom_cards: [21]` (Smithy), `max_action_cards: 1`, supply=8. After several iters, replay scan showed:
