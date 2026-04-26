@@ -1291,7 +1291,15 @@ class Trainer:
         if self._warmup_target > 0:
             print(f"[WARMUP] Resuming warmup: target {self._warmup_target} examples")
 
-        # Try loading buffer from separate file first, then legacy embedded buffer
+        # Try loading buffer from separate file first, then legacy embedded buffer.
+        # Set target sizes so buffer can migrate old-format examples (zero-pad
+        # state tensors and beliefs to match current network architecture).
+        # DEVLOG #176: this wires up the previously-dead set_target_sizes path —
+        # without it, loading a 280-channel buffer into a 404-channel network
+        # produced inhomogeneous-batch ValueError on first training step.
+        target_input_channels = self.config.get('input_channels', 280)
+        target_belief_size = self.config.get('belief_size', 31)
+        self.replay_buffer.set_target_sizes(target_input_channels, target_belief_size)
         buffer_path = Path(filepath).parent / 'buffer_latest.pkl'
         if 'replay_buffer' in checkpoint:
             self.replay_buffer.load_data(checkpoint['replay_buffer'])
