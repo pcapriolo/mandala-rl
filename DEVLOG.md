@@ -48,6 +48,35 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #175 — 2026-04-25: `action_play_force_rate: 0.0 → 0.2` to bootstrap Smithy plays (Phase 5)
+
+**Context.** Phase 5 deployed: `forced_kingdom_cards: [21]` (Smithy), `max_action_cards: 1`, supply=8. After several iters, replay scan showed:
+- Smithy buys: ~1.5% of games (90 buys per ~5000 games via dirichlet noise on BUY[21])
+- Smithy plays: **0** in every sampled game. `action_plays = [0, 0]`.
+
+The bot buys Smithy occasionally and never plays it. Smithy goes into the deck and sits there as a dead $4 card.
+
+**Root cause: zero-prior bootstrap problem.** The policy network was trained on Phase 0-4 with `max_action_cards: 0` for ~6000 iters. During that time, `valid[PLAY[Smithy]] = 0` always (no action cards in supply or hand). MCTS visit counts on PLAY indices were always 0, so the policy was trained to output **zero prior** on those output indices. Now in Phase 5 with Smithy actually in hand, the policy still outputs ~0 prior on PLAY[21]. With ε=0.30 dirichlet noise, the noise contribution is ~0.30/131 ≈ 0.002 — far below what 800 MCTS sims will visit. Result: PLAY[21] gets 0 visits, END_ACTIONS wins, Smithy never played.
+
+**This is not a bug.** Tracking attribution verified correct at `cpp/dominion_game.cpp:888` (`s.action_plays[s.current_player_]++`) and `:1602` (`s.action_buys[p]++`). State encoding handles POV correctly via `get_canonical()`. The policy network simply has no learned prior on action-play indices because it never saw them as valid during training.
+
+**Fix.** Hot-reload `action_play_force_rate: 0.0 → 0.2`. The mechanism already exists in `cpp/batched_mcts.cpp:438-476`: when set > 0, with that probability the action distribution is overridden to uniform over playable action cards (prioritizing +action cards before terminals). Designed exactly for this bootstrap. With 20% force-play, when current agent has Smithy in hand, ~20% of action-phase decisions force-play it. Network sees PLAY[Smithy] trajectories. Outcome differential teaches value head whether playing was good or bad. Policy distills via MCTS visit counts.
+
+**Why 0.2 and not higher.** A small bootstrap signal is enough. We want the network to *explore* action plays, not be *forced* into them. After ~30 iters of force-play, the policy prior on PLAY[Smithy] should be non-zero, after which MCTS + value-head can reason about *when* to play Smithy (the strategic nuance: don't play if you already have $8 and good cards on top of your deck, etc.). Plan to taper toward 0.05 or 0.0 after policy converges.
+
+**What the bot can and can't learn.** State encoding has full deck composition (Ch 0-30), hand-only (Ch 31-61), in-play (Ch 62-92), supply (Ch 93-123). It does NOT separate deck-only from discard-only counts — so the bot can't directly reason about "the 3 cards still in my deck are specifically Golds." It infers statistically. World-class Smithy play requires the deck/discard split (input_channels: 280 → 342) which is a from-scratch architecture upgrade. Not in scope here. This bootstrap fix is a necessary first step regardless.
+
+**Falsification.** 30-iter window:
+- **Success:** `action_plays > 0` per game appears in replay summaries within 5-10 iters. By iter +30, policy has nonzero learned prior on PLAY[Smithy] even at force_rate=0.0 (test by hot-reloading 0.2 → 0.0 briefly).
+- **Null:** `action_plays` stays at 0 even with force_rate=0.2. Means the mechanism isn't firing — investigate. Possible causes: forced action_probs gets overwritten downstream, or the action phase isn't being entered at all (deck doesn't draw Smithy because it's stuck in discard).
+- **Regression:** policy collapses (prov < 3.0) because being forced to play Smithy at bad times tanks game outcomes. Lower to 0.1 or revert to 0.0.
+
+**Files.** `configs/dominion.yaml: action_play_force_rate: 0.0 → 0.2`. Pod synced via sed. No code change.
+
+**`action_buy_force_rate`: still 0.0.** Smithy buys are happening at ~1.5% via dirichlet, which is enough to seed the buffer with "deck has Smithy" states. Force-buy isn't necessary to bootstrap; the play side was the binding constraint.
+
+---
+
 ## DEVLOG #174 — 2026-04-25: Fix C++ bug — `province_supply: 8` silently set supply to 3
 
 **Bug.** Setting `province_supply: 8` in YAML produced games with **supply = 3**, not 8.

@@ -4,14 +4,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 4 — Silver/Gold/Province + Duchy enabled, Copper/Estate masked, supply=8 (calibration test) |
-| **Province Supply** | 8 (was 7 — bumped per DEVLOG #173 to test if 3.36 plateau is policy or supply ceiling) |
-| **Disabled** | Copper(0), Estate(3), Curse(6), Gardens(16), all action cards |
-| **Reference** | `iter_4785` pin (Stage-1 master), per-reference Duchy mask active per DEVLOG #170 |
-| **Strength signal** | Metric-based gates only (no win rate — self-play makes it meaningless) |
+| **Phase** | 5 — Silver/Gold/Province + Duchy + Smithy, Copper/Estate masked, supply=8 |
+| **Province Supply** | 8 |
+| **Kingdom** | `[21]` (Smithy only, forced via `forced_kingdom_cards`) |
+| **Disabled** | Copper(0), Estate(3), Curse(6), Gardens(16) |
+| **Reference** | `iter_4785` pin or `iter_6020` pin (check live YAML); per-reference mask `[0, 3, 4, 6, 16, 21]` — reference refuses Smithy |
+| **Force rates** | `action_play_force_rate: 0.2` bootstrap per DEVLOG #175. `action_buy_force_rate: 0.0`. |
+| **Strength signal** | Metric-based gates only; new metric: `action_plays > 0` (network learning to play Smithy) |
 | **Last Updated** | 2026-04-25 |
 
 ### Recent changes
+- 2026-04-25: **`action_play_force_rate: 0.0 → 0.2` (DEVLOG #175).** Bootstrap Smithy plays. Network was trained on Phase 0-4 with no action cards, so policy prior on PLAY[Smithy] is ≈0 by construction — Smithy gets bought (1.5% via dirichlet) but never played. Force-play hot-reload kicks in at ~20% of action-phase decisions where Smithy is in hand. Reversible, no code change.
+- 2026-04-25 (earlier): **Phase 5 transition.** `max_action_cards: 0 → 1`, `forced_kingdom_cards: [] → [21]`, `opponent_disabled_supply` extended with Smithy id. Reference pin moved to a Phase-5-aware checkpoint. supply=8 retained.
 - 2026-04-25: **`province_supply: 7 → 8` (DEVLOG #173).** Calibration test. After 116 iters of DEVLOG #172's `early_terminate_decided=true`, mean prov fell 3.36 → 3.27 (cleaner training signal but metric tradeoff: outcome_determined cuts off games before winner buys their last prov). Theoretical max under supply=7 is 3.5; we were at 96% of max. Bumping to supply=8 raises max to 4.0 and tests whether 3.36 was a *policy* limit or a *supply* limit. **If prov rises to 3.65-3.85**, policy is competent and we advance to action cards (Smithy / Phase 5). **If prov stays near 3.30-3.45**, policy is the limit and the loser-blind-spot (DEVLOG #172) is the bind regardless of supply size.
 - 2026-04-25: **Pruned 370 of 484 stale checkpoints; freed 18.5 GB.** Disk hit 100% mid-deploy. Kept every 50th iter + 5 known reference pins (2200, 3175, 3600, 4220, 4785) + `model_latest.pt`. `prune_old_checkpoints: false` left in YAML for now — periodic manual prunes preferred over automatic. Watchdog restarted training cleanly from `model_latest.pt` (iter 5551).
 - 2026-04-24: **DEVLOG #172 — Early-terminate Dominion games when VP outcome is determined.** Game-rule-level termination: end games when `|vp_lead| > supply_VP_remaining`. Targets the 14% stuck-at-turn-50 pathology (loser refuses Province, buys 21-27 Golds with $11 hands). C++ change requiring full restart and ~33-iter buffer rebuild. Termination distribution post-deploy: 71% province_empty / 19% outcome_determined / 10% turn_cap / 0% three_piles. Value loss trended down (0.25 → 0.22), value-head pred std improved (0.77 → 0.78), but mean prov fell from 3.36 → 3.27 because outcome_determined ends games before winner buys their last prov.
