@@ -4,7 +4,7 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
-## DEVLOG #175 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
+## DEVLOG #177 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
 
 **Context.** Supply=8 calibration (DEVLOG #173 + #174 fix) ran for ~50 iters with the policy plateauing at avg_prov 3.61, single-iter 3.67 at iter 6020. That's 90% of the new theoretical max (4.0) but still leaves a structural ~0.4-prov gap from the loser-blind-spot pathology. The shift in termination distribution at supply=8 (`outcome_determined` 19% → 37%) confirmed the policy is responsive to supply changes but the pathology amplifies with more provinces. Pure supply scaling can't dissolve symmetric self-play tie-out — we need new gradient signal from action-card decisions.
 
