@@ -14,7 +14,7 @@ dirichlet_alpha: 0.15
 dirichlet_epsilon: 0.15
 action_explore_boost: 0.0
 action_buy_force_rate: 0.0
-action_play_force_rate: 0.2
+action_play_force_rate: 0.0
 mcts_leaf_eval_source: score
 
 # self-play
@@ -32,7 +32,7 @@ opponent_iter_max: 6020
 num_iterations: 3000
 batch_size: 256
 epochs_per_iteration: 1
-learning_rate: 1.0e-5
+learning_rate: 2.7e-6
 weight_decay: 0.0001
 lr_milestones: []
 lr_gamma: 0.3

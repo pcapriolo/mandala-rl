@@ -4,6 +4,59 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #178 — 2026-04-26: `action_buy_force_rate: 0.0 → 0.05` to bootstrap Smithy *buying* (Phase 5 second-half fix)
+
+**Pathology.** After 85 iters at LR=1e-5 with 404-channel encoding and `action_play_force_rate: 0.2` active (DEVLOG #175), Smithy adoption was *strikingly* low:
+
+```
+Per-player Smithy buys per game: 0.006
+Player-games with any Smithy: 0.59% (100 of 17,000)
+ALL 100 bought exactly 1 — zero player-games bought 2+
+```
+
+A competent Smithy-engine player should average 2-4 Smithys in deck = ~0.1+ per-player-per-game buy rate. We were **500x below** that.
+
+**Root cause: force-play doesn't force buying.** `action_play_force_rate` only activates when Smithy is *in hand* during action phase. If the policy never *buys* Smithy, the force-play mechanism never gets to fire. Buying Smithy was still 100% policy-prior + dirichlet-noise driven, and the policy prior on BUY[Smithy] (action index 55 = `34 + 21`) is ~0 for the same bootstrap reason as PLAY[Smithy] — the network trained on Phase 0-4 with `max_action_cards: 0` for ~6000 iters, so the buy-kingdom-action policy outputs were trained to zero.
+
+The 1% organic Smithy buy rate was pure dirichlet noise spikes, not learning. And those flukes never repeated within a game (all 100 bought exactly 1, zero bought 2+).
+
+**Fix.** Hot-reload `action_buy_force_rate: 0.0 → 0.05`. The mechanism is already implemented in `cpp/batched_mcts.cpp:479-502`: with that probability, force-buy a uniform-random affordable kingdom action card. With ~30 buy decisions per game and 5% force rate, expect ~1.5 forced Smithy buys per player per game — landing in the expected 1-3 range.
+
+Combined effect with `action_play_force_rate: 0.2`:
+1. Bot buys Smithy ~1.5×/game (forced) — into deck
+2. Smithy gets drawn → 20% force-played → +3 cards drawn → policy sees engine effect
+3. Outcome differential teaches value head whether Smithy-engine wins or loses
+4. Policy distillation from MCTS visits eventually internalizes Smithy as net-positive (or not)
+
+**Why we missed this initially.** DEVLOG #175 only flipped the play-side bootstrap, assuming the buy-side would follow naturally from "occasional dirichlet noise lets bot try Smithy a few times, sees it's good, buys more." That assumption was wrong — the buy prior is too far from zero to recover via dirichlet alone, and a single Smithy bought once doesn't generate enough engine-deck training signal to shift the value head's "Smithy is worth buying" assessment. The play-side and buy-side are separate priors, both at zero, both needing direct bootstrap.
+
+**Risk.** Low. Reversible via single-line YAML hot-reload. With 5% force-buy rate and ~30 buy decisions/game, only 1-2 forced buys per game per player — modest deck pollution if Smithy turns out to be bad in this kingdom. We can taper after the policy starts internalizing.
+
+**Falsification.**
+- **Success:** Within 5-10 iters, per-player Smithy buy rate climbs from 0.006 to 1.0-1.5 (force-driven). Within 50-100 iters, organic policy-driven buys appear (test: lower force-rate to 0 briefly, see if buys persist).
+- **Null:** Network sees Smithy buys but value head doesn't differentiate Smithy-deck from no-Smithy outcomes (kingdom too narrow, Smithy doesn't help enough). Smithy stays as forced-only.
+- **Regression:** prov drops below 3.4 due to Smithy purchases displacing economy buys. Hot-reload back to 0.0.
+
+**Files.** `configs/dominion.yaml: action_buy_force_rate: 0.0 → 0.05`. Pod synced via sed.
+
+**Outcome (2026-04-27): engine-mania collapse — reverted.** The combined bootstrap (`action_buy_force_rate: 0.05` + `action_play_force_rate: 0.2` + LR `1e-5`) drove the bot into runaway Smithy engines over ~200 iters:
+
+```
+                    iter 6580 → iter 6785
+Smithy buys/player  0.9      → 3.8
+Smithy plays/player 0.98     → 27.3
+avg_provinces       3.48     → 1.43
+turn_cap rate       12%      → 95%
+```
+
+The "Regression" falsification criterion (prov < 3.4) tripped decisively. Value head learned to overcommit: forced Smithy buys + forced Smithy plays generated trajectories where engine-stuffed decks ran out of Province-buys, hit `max_turns: 50`, and produced noisy outcome signal that reinforced *more* Smithy buying rather than less. The 5% force-buy rate compounded with 20% force-play to lock the policy into a degenerate engine-mania attractor.
+
+**Recovery (Option B, full revert).** Restored `model_iter_6750` (clean pre-collapse checkpoint), wiped corrupted replay buffer, hot-reloaded all three knobs back to safe values (`action_buy_force_rate: 0`, `action_play_force_rate: 0`, `learning_rate: 2.7e-6`). Bot returned to pre-Smithy Big-Money baseline (prov 3.5-3.6) within 7 iters. No Smithy plays, no engines.
+
+**Lesson.** Bootstrap force rates need to be *much* smaller when stacking buy + play, and LR amplifies the feedback loop. Future retry should use `action_buy_force_rate: ~0.01` + `action_play_force_rate: ~0.05` (5–10× smaller) and hold LR at 2.7e-6 until the policy shows organic Smithy adoption — only then consider a careful LR bump. Combined force rates at high LR create a value-head feedback loop that can't self-correct.
+
+---
+
 ## DEVLOG #177 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
 
 **Context.** Supply=8 calibration (DEVLOG #173 + #174 fix) ran for ~50 iters with the policy plateauing at avg_prov 3.61, single-iter 3.67 at iter 6020. That's 90% of the new theoretical max (4.0) but still leaves a structural ~0.4-prov gap from the loser-blind-spot pathology. The shift in termination distribution at supply=8 (`outcome_determined` 19% → 37%) confirmed the policy is responsive to supply changes but the pathology amplifies with more provinces. Pure supply scaling can't dissolve symmetric self-play tie-out — we need new gradient signal from action-card decisions.
