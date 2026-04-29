@@ -111,7 +111,7 @@
                     <th>Len</th>
                     <th>Turns</th>
                     <th>Draw%</th>
-                    <th>MCTS Prov%</th>
+                    <th>WR vs Ref</th>
                 </tr>
             </thead>
             <tbody id="iter-table"></tbody>
@@ -373,7 +373,7 @@ async function refresh() {
         <td>${d.avg_len.toFixed(0)}</td>
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
-        <td>${(d.mcts_province_pct || 0).toFixed(1)}%</td>
+        <td>${d.p0_wr != null ? (d.p0_wr * 100).toFixed(1) + '%' : '-'}</td>
     </tr>`}).join('');
 }
 
