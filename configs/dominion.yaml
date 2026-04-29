@@ -14,7 +14,7 @@ dirichlet_alpha: 0.15
 dirichlet_epsilon: 0.30
 action_explore_boost: 0.0
 action_buy_force_rate: 0.005
-action_play_force_rate: 0.05
+action_play_force_rate: 1.0
 mcts_leaf_eval_source: score
 
 # self-play
@@ -24,7 +24,7 @@ leaves_per_game: 8
 temperature: 1.0
 temperature_threshold: 25
 explore_epsilon: 0.0
-opponent_diversity_ratio: 0.2
+opponent_diversity_ratio: 1.0
 opponent_iter_min: 6020
 opponent_iter_max: 6020
 
