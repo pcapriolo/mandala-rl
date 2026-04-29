@@ -4,6 +4,80 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #178 — 2026-04-29: Opponent loader silently broken since #176 + Phase 5 recovery (100% ref-play, 100% force-play)
+
+**Pathology — apparent.** Supply=8 master at iter 6020 had `avg_prov 3.57`, `argmax 62.3`. After ~1500 iters since DEVLOG #177's Phase 5 entry, the policy stabilized at `avg_prov 2.87`, `argmax 44.3` over iters 7920-7941 — **0.7 prov below the master**, with no upward trend across 190+ iters. Smithy buys ~0.67/game but `action_utilization ~7-8%` — bot buys Smithy and rarely plays it. Strict-superset expectation said Phase 5 should at worst leave Big-Money unchanged; we instead degraded both Province discipline and overall scoring.
+
+**Root cause — the asymmetric reference-play has not been running since iter ~6519.** The opponent loader at `trainer.py:1097-1100` explicitly raised `RuntimeError` on `conv_input.weight` shape mismatch, while the *main* checkpoint loader at `trainer.py:1253-1262` does a zero-pad migration. The two paths diverged. After DEVLOG #176 expanded `input_channels: 280 → 404`, every attempt to load `model_iter_6020.pt` (saved at 280 channels) threw, was caught silently at line 1104-1106, and returned `None`. The opponent-games block at `trainer.py:499-520` then silently skipped.
+
+For ~1500 iters the training log printed `Warning: Failed to load opponent .../model_iter_6020.pt: Shape mismatch ...` once per iteration. Visible but not alarming-looking, missed in review. Win-rate splits remained ~50/50 (pure self-play variance), `Playing N games vs iter_6020 opponent` log line never appeared. Effective `opponent_diversity_ratio` was **0.0**, not 0.2.
+
+This means DEVLOG #170's per-reference policy mask, DEVLOG #171's ε bump for Duchy exploration, and DEVLOG #177's Phase 5 Smithy-mask asymmetric design have all been silently no-ops since the channel expansion. The Phase 5 regression is fully explained by pure symmetric self-play with Smithy in supply and no asymmetric corrective pressure.
+
+**Fix — opponent loader migration.** `trainer.py:_load_opponent_network` updated to mirror the main loader's migration logic:
+
+```python
+# Migrate input channels (zero-pad new channels) — was: raise RuntimeError
+if 'conv_input.weight' in saved_state and 'conv_input.weight' in model_state:
+    old_in = saved_state['conv_input.weight'].shape[1]
+    new_in = model_state['conv_input.weight'].shape[1]
+    if old_in != new_in:
+        if old_in > new_in:
+            raise RuntimeError(f"Cannot shrink conv_input from {old_in} to {new_in}")
+        new_w = torch.zeros_like(model_state['conv_input.weight'])
+        new_w[:, :old_in, :, :] = saved_state['conv_input.weight']
+        saved_state['conv_input.weight'] = new_w
+# Belief-head reinit on size mismatch
+for key in ['fc_belief.weight', 'fc_belief.bias']:
+    if key in saved_state and key in model_state:
+        if saved_state[key].shape != model_state[key].shape:
+            saved_state[key] = model_state[key].clone()
+```
+
+Effect: the opponent's first-conv weights for new channels (280-403) start at zero — same migration the main net got at iter 6519 — and the rest of the opponent's learned weights load normally. No retraining of the reference needed.
+
+**Concurrent intervention — two-key hot-reload.**
+
+| Key | From | To | Schema |
+|-----|------|----|--------|
+| `opponent_diversity_ratio` | `0.2` | `1.0` | HOT_CONFIG |
+| `action_play_force_rate` | `0.05` | `1.0` | HOT_WORKER |
+
+Once the loader fix is live, every game is played vs iter_6020 with the Smithy-mask asymmetry from DEVLOG #177. `action_play_force_rate: 1.0` (`cpp/batched_mcts.cpp:438-476`) zeros `action_probs` and uniform-samples over playable action cards: with Smithy the only kingdom card, bot plays Smithy 100% of the time it's in hand. `action_utilization` should jump from ~0.07 → ~1.0 within 1-2 iters.
+
+**Why all three together.** The loader fix activates the existing asymmetric design. 100% ratio means every game carries the asymmetric signal (was supposed to be 20%, was actually 0%). 100% force-play converts every bot-side Smithy purchase into a played Smithy, so trajectories show the actual outcome consequence of buying Smithy — value head finally has a gradient on the buy decision. The combination targets all three broken axes simultaneously rather than fixing one and waiting to see.
+
+**Risks accepted.**
+- **Distillation ceiling at iter 6020.** Bot can't surpass iter 6020 except via Smithy — fine, we want to recover the master's discipline + add productive Smithy use.
+- **Single-opponent overfit.** Bot specializes against iter 6020 specifically. Acceptable for recovery; tunable later via a separate explicit edit.
+- **Forced Smithy at suboptimal times.** Edge case: $8 already in hand, drawing more could pull Estates. But Smithy is +3 cards no-discard — drawing rarely strictly worse. Value head learns through asymmetric outcomes whether the *buy* was worth it given the play is forced.
+- **Dirichlet × disciplined-ref interaction.** ε=0.30 noise vs disciplined Big-Money ref → exploration trajectories punished hard → policy entropy could over-collapse. Watch policy_loss for sharp drop.
+- **Buffer composition shift.** Buffer becomes 100% ref-game data over ~33 iters.
+
+**Falsification (50-iter window after restart).**
+- *Recovery.* `avg_prov` rises toward 3.5+, `argmax` toward 60+, `action_utilization` ~1.0.
+- *Discipline-only recovery.* argmax recovers, prov rises, but `avg_action_buys` drops toward 0 → forced-play made Smithy's true cost visible; bot correctly stops buying it. Phase 5 redesign needed from a clean baseline.
+- *Stuck.* argmax stays at 44, prov stays at 2.87 even with utilization mechanically at 1.0 → damage is in the weights; rollback to iter 6020 weights justified.
+- *Collapse.* prov < 2.5 OR draw_rate > 0.10 OR policy_loss → 0 → immediate revert.
+
+**Rollback.** Single hot-reload reverts both keys (`0.2` / `0.05`). Loader fix is benign — it can stay regardless. Buffer self-mixes within ~33 iters of any change.
+
+**Verification (post-restart).**
+1. Log shows `Migrating opponent input channels: 280 → 404 (zero-pad)` (printed once per iter when reference is loaded).
+2. Log shows `Playing N games vs iter_6020 opponent` (was absent for 1500 iters).
+3. Log shows `Config reload: opponent_diversity_ratio 0.2 → 1.0` and `Config reload: action_play_force_rate 0.05 → 1.0` at next iter boundary.
+4. Within 5 iters: `action_utilization` in `data/dominion/losses.jsonl` jumps from ~0.07 → ~0.95+.
+5. Per-iter win splits skew (bot vs iter_6020 — expect bot to lose more often initially, then improve as discipline returns).
+
+**No automatic follow-ups.** Per DEVLOG #161, both values stay at 1.0 until a future explicit YAML edit changes them.
+
+**Files.**
+- `mandala_rl/training/trainer.py` — `_load_opponent_network` migration logic.
+- `configs/dominion.yaml` — two-key edit (`opponent_diversity_ratio`, `action_play_force_rate`).
+- Pod synced; trainer restarted to pick up code change.
+
+---
+
 ## DEVLOG #177 — 2026-04-25: Phase 5 — introduce Smithy via reference-asymmetric kingdom
 
 **Context.** Supply=8 calibration (DEVLOG #173 + #174 fix) ran for ~50 iters with the policy plateauing at avg_prov 3.61, single-iter 3.67 at iter 6020. That's 90% of the new theoretical max (4.0) but still leaves a structural ~0.4-prov gap from the loser-blind-spot pathology. The shift in termination distribution at supply=8 (`outcome_determined` 19% → 37%) confirmed the policy is responsive to supply changes but the pathology amplifies with more provinces. Pure supply scaling can't dissolve symmetric self-play tie-out — we need new gradient signal from action-card decisions.

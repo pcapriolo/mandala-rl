@@ -1091,13 +1091,27 @@ class Trainer:
                 factored_policy=net_cfg.get('factored_policy', False),
             ).to(self.device)
             data = torch.load(path, map_location=self.device, weights_only=False)
-            # Handle architecture mismatches — old checkpoints may have different sizes
+            # Handle architecture mismatches — old checkpoints may have different sizes.
+            # Migration must mirror the main-loader logic (input-channel zero-pad,
+            # belief-head reinit) — previously this path raised on mismatch and
+            # silently dropped the reference for ~1500 iters after DEVLOG #176.
             saved_state = data['model_state_dict']
             model_state = opponent.state_dict()
-            for key in ['conv_input.weight', 'fc_belief.weight', 'fc_belief.bias']:
+            if 'conv_input.weight' in saved_state and 'conv_input.weight' in model_state:
+                old_in = saved_state['conv_input.weight'].shape[1]
+                new_in = model_state['conv_input.weight'].shape[1]
+                if old_in != new_in:
+                    if old_in > new_in:
+                        raise RuntimeError(f"Cannot shrink conv_input from {old_in} to {new_in}")
+                    print(f"Migrating opponent input channels: {old_in} → {new_in} (zero-pad)")
+                    new_w = torch.zeros_like(model_state['conv_input.weight'])
+                    new_w[:, :old_in, :, :] = saved_state['conv_input.weight']
+                    saved_state['conv_input.weight'] = new_w
+            for key in ['fc_belief.weight', 'fc_belief.bias']:
                 if key in saved_state and key in model_state:
                     if saved_state[key].shape != model_state[key].shape:
-                        raise RuntimeError(f"Shape mismatch for {key}: saved {saved_state[key].shape} vs expected {model_state[key].shape}")
+                        print(f"Migrating opponent {key}: {saved_state[key].shape} → {model_state[key].shape} (reinit)")
+                        saved_state[key] = model_state[key].clone()
             opponent.load_state_dict(saved_state)
             opponent.eval()
             return opponent
