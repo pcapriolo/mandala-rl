@@ -111,7 +111,7 @@
                     <th>Len</th>
                     <th>Turns</th>
                     <th>Draw%</th>
-                    <th>MCTS Prov%</th>
+                    <th>Bot vs Opp WR</th>
                     <th>Prov Argmax%</th>
                 </tr>
             </thead>
@@ -374,7 +374,7 @@ async function refresh() {
         <td>${d.avg_len.toFixed(0)}</td>
         <td>${d.avg_turns.toFixed(1)}</td>
         <td>${(d.draw_rate * 100).toFixed(0)}%</td>
-        <td>${(d.mcts_province_pct || 0).toFixed(1)}%</td>
+        <td>${d.bot_vs_opp_wr != null ? (d.bot_vs_opp_wr * 100).toFixed(1) + '%' : '-'}</td>
         <td>${(d.mcts_province_argmax_pct || 0).toFixed(1)}%</td>
     </tr>`}).join('');
 }
