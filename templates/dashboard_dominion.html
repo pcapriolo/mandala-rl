@@ -282,7 +282,7 @@ async function refresh() {
     // Quality chart
     updateChart(qualityChart, labels, [
         makeDataset('Avg Score', '#27ae60', iters.map(d => d.avg_score)),
-        makeDataset('P0 Win Rate', '#e67e22', iters.map(d => d.p0_wr)),
+        makeDataset('Bot vs Opp WR', '#e67e22', iters.map(d => d.bot_vs_opp_wr)),
     ]);
 
     // Buys chart
