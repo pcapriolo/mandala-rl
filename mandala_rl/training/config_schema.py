@@ -138,6 +138,13 @@ class DominionConfig:
     forced_kingdom_cards: list[int] = field(
         default_factory=list, metadata=HOT_WORKER
     )
+    # Per-card additive prior bump on BUY[card_id] actions at the MCTS root.
+    # Boosts MCTS visits to specified branches so Q can be estimated from real
+    # rollouts; the recorded policy target is the MCTS visit distribution
+    # (on-policy). YAML form: `exploration_priors: {21: 0.10}` (Smithy +0.10).
+    exploration_priors: dict[int, float] = field(
+        default_factory=dict, metadata=HOT_WORKER
+    )
     big_money_force_rate: float = field(default=0.0, metadata=HOT_WORKER)
     draw_penalty: float = field(default=0.0, metadata=HOT_WORKER)
     drop_draws: bool = field(default=True, metadata=HOT_WORKER)

@@ -4,6 +4,58 @@ Technical changelog for the Mandala RL project. Each entry captures a significan
 
 ---
 
+## DEVLOG #179 — 2026-04-30: Targeted exploration priors on BUY actions (replace `action_buy_force_rate`)
+
+**Context.** Phase 5 (Smithy-only kingdom, supply=8, vs disciplined iter_6020) plateaued at `avg_prov 3.40 / argmax 53 / bot_vs_opp_wr 0.523` for 200+ iters after the DEVLOG #178 recovery dose landed. The 2pp WR edge over the disciplined-BM reference is statistically real (~5σ over 100 iters) but conditional analysis shows it is uncorrelated with Smithy buys (Pearson r = −0.06 between iter-level `avg_action_buys` and `bot_vs_opp_wr`; bucketed WR is flat 0.51–0.52 across Smithy-buy intensities). The bot's edge comes from BM micro-improvements (404-ch encoding, longer training), not from engine play. With Smithy bought in only ~7% of games, the value head's `V | Smithy-in-deck` estimate is starved of data.
+
+**Why `action_buy_force_rate` is the wrong tool.** The mechanism at `cpp/batched_mcts.cpp:479-502` overwrites `action_probs` to uniform mass over buyable kingdom action cards whenever it fires. Three structural problems:
+
+1. **Context-blind.** At $8 with Province available, force fires and replaces the Province buy with the kingdom action card. Strategy-shredding.
+2. **Doesn't scale.** As the kingdom expands, `buyable_actions` grows. Force rate `r` distributes `r/k` per-card exploration, with `k` rising to ~10 in Phase 7. Per-card statistical power falls while the strategy-distortion cost stays constant.
+3. **Supervised override of the policy target.** The forced `action_probs` is recorded as the policy training target — supervised injection that conflicts with what MCTS visits would have produced from the value head. Removes the on-policy invariant.
+
+**Mechanism — additive prior bump at MCTS root.** New config key `exploration_priors: dict[int, float]` (card_id → boost). Applied in `BatchedMCTS::set_root_policies` *before* `add_dirichlet_noise`, only at `DOM_PHASE_BUY` and only when the boosted action is valid. Adds the boost to the network's policy prior for that BUY[card_id], renormalizes, then continues the existing pipeline (Dirichlet noise blend, root expand). MCTS then uses this boosted prior to drive visit selection via PUCT; the recorded policy target is the resulting MCTS visit distribution — **on-policy, no supervised override**. The boost biases exploration without dictating the decision; if Q(BUY[card_id]) emerges high from real rollouts, visits skew, policy follows. Self-correcting. Mirrors the pattern of the existing `action_explore_boost` at `cpp/batched_mcts.cpp:148-168` (which boosts PLAY-action priors multiplicatively).
+
+**YAML.**
+
+```yaml
+action_buy_force_rate: 0.0          # was 0.005 — disabled
+exploration_priors: {21: 0.10}      # +0.10 prior bump on BUY[Smithy] at root
+```
+
+`action_play_force_rate: 1.0` retained — force-play enforces the near-tautology "play action cards in hand" and is internalizable in principle (the value head agrees with the forced behavior because Smithy plays produce more cards in hand → higher V on resulting states).
+
+**Why this is the right shape for future phases.** `exploration_priors` is per-card, so Phase 6's added kingdom cards each get their own targeted boost rather than splitting a uniform pool. As a card is mastered (high real visit count), drop its bonus to 0 — the boost is a curriculum lever, not a permanent crutch. The mechanism is silent (no policy-target override), so removing the boost doesn't trigger a collapse the way force-rate removals do.
+
+**Files.**
+
+- `cpp/batched_mcts.h` — `<unordered_map>` include; new constructor param `std::unordered_map<int, double> exploration_priors`; member `exploration_priors_`.
+- `cpp/batched_mcts.cpp` — constructor wiring; new BUY-prior-bump block in `set_root_policies` between the existing `action_explore_boost` block (line ~168) and `add_dirichlet_noise` call (line ~171).
+- `cpp/bindings.cpp` — pybind11 `py::init<...>` template extended; `py::arg("exploration_priors") = std::unordered_map<int, double>{}`.
+- `mandala_rl/training/config_schema.py` — `exploration_priors: dict[int, float]` field in `DominionConfig`, declared `HOT_WORKER`.
+- `mandala_rl/selfplay/worker.py` — `__init__` arg + attribute + pass-through at both `mcts_cpp.BatchedMCTS(...)` call sites.
+- `mandala_rl/training/trainer.py` — pass `config.get('exploration_priors', {})` to `SelfPlayWorker`.
+- `configs/dominion.yaml` — `action_buy_force_rate: 0.0`, add `exploration_priors: {21: 0.10}`.
+
+**Hot-reload.** `exploration_priors` is `HOT_WORKER`. The schema's `reload_into` updates the worker attribute via `setattr`; `BatchedMCTS` is reconstructed every `play_games_batched` call, picking up the new value at the next iter boundary. The C++ rebuild for the new constructor signature is the one part that requires a restart.
+
+**Falsification (50–80 iter window after deploy).**
+
+- *Success.* `avg_action_buys` rises to 0.5–2.0/game, `bot_vs_opp_wr` climbs above 0.55, `avg_provinces` toward 3.5+. Once WR > 0.55 sustained, drop `exploration_priors: {}` and watch for collapse — if WR holds, the policy has internalized via the value-driven path.
+- *Real-but-bounded.* `avg_action_buys` rises (5–20/game) but WR stays at 0.51–0.53. Means `V|Smithy ≈ V|no-Smithy` in this kingdom — Smithy genuinely doesn't help against disciplined BM here. Phase 5 single-card kingdom is structurally a flawed setup; advance to Phase 6 with a richer kingdom.
+- *No effect.* `avg_action_buys` stays at ~0.07 even with +0.10. MCTS visits aren't translating to policy shifts (network policy too confident, Dirichlet ε too low). Try `{21: 0.20}` or bump `dirichlet_epsilon`.
+- *Collapse.* `avg_provinces < 2.5` or `draw_rate > 0.10` for 3 consecutive iters. Roll back via `exploration_priors: {}` (single hot-reload).
+
+**Rollback.** YAML edit `exploration_priors: {}`. The C++ guard `!exploration_priors_.empty()` makes the block a no-op when the map is empty. No buffer surgery, no checkpoint changes.
+
+**Verification.**
+1. `python3 -c "import mcts_cpp; help(mcts_cpp.BatchedMCTS.__init__)"` shows `exploration_priors` arg in the signature.
+2. Smoke-test `BatchedMCTS(... exploration_priors={21: 0.10})` constructs cleanly. ✓ (run locally pre-deploy)
+3. `Config reload: exploration_priors {} → {21: 0.1}` line appears in `/root/train_dom.log` at first iter boundary after YAML edit.
+4. Within ~5 iters: `avg_action_buys` should at least double (0.07 → ≥0.15) — direct evidence that MCTS is visiting BUY[Smithy] more often.
+
+---
+
 ## DEVLOG #178 — 2026-04-29: Opponent loader silently broken since #176 + Phase 5 recovery (100% ref-play, 100% force-play)
 
 **Pathology — apparent.** Supply=8 master at iter 6020 had `avg_prov 3.57`, `argmax 62.3`. After ~1500 iters since DEVLOG #177's Phase 5 entry, the policy stabilized at `avg_prov 2.87`, `argmax 44.3` over iters 7920-7941 — **0.7 prov below the master**, with no upward trend across 190+ iters. Smithy buys ~0.67/game but `action_utilization ~7-8%` — bot buys Smithy and rarely plays it. Strict-superset expectation said Phase 5 should at worst leave Big-Money unchanged; we instead degraded both Province discipline and overall scoring.

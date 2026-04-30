@@ -22,7 +22,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
                          std::vector<int> disabled_basic_supply,
                          int province_supply,
                          int max_turns,
-                         bool early_terminate_decided)
+                         bool early_terminate_decided,
+                         std::unordered_map<int, double> exploration_priors)
     : game_type_(game_type), num_simulations_(num_simulations), c_puct_(c_puct),
       dirichlet_alpha_(dirichlet_alpha), dirichlet_epsilon_(dirichlet_epsilon),
       temperature_(temperature), temperature_threshold_(temperature_threshold),
@@ -33,7 +34,8 @@ BatchedMCTS::BatchedMCTS(const std::string& game_type, int seed,
       big_money_force_rate_(big_money_force_rate),
       forced_kingdom_cards_(forced_kingdom_cards),
       disabled_basic_supply_(disabled_basic_supply), province_supply_(province_supply),
-      max_turns_(max_turns), early_terminate_decided_(early_terminate_decided), rng_(seed)
+      max_turns_(max_turns), early_terminate_decided_(early_terminate_decided),
+      exploration_priors_(std::move(exploration_priors)), rng_(seed)
 {
     if (game_type == "mandala") {
         game_ = std::make_unique<MandalaGame>();
@@ -158,6 +160,35 @@ void BatchedMCTS::set_root_policies(py::array_t<float> policies) {
                     }
                 }
                 if (any_boosted) {
+                    float sum = 0.0f;
+                    for (int a = 0; a < num_actions; a++) sum += policy[a];
+                    if (sum > 0.0f) {
+                        for (int a = 0; a < num_actions; a++) policy[a] /= sum;
+                    }
+                }
+            }
+        }
+
+        // Per-card additive prior bump on BUY actions at root. Boosts MCTS
+        // visits to specified BUY[card_id] branches so Q can be estimated
+        // from real rollouts. Recorded policy target = MCTS visit distribution
+        // (on-policy); no supervised override of action_probs.
+        if (!exploration_priors_.empty() && game_type_ == "dominion") {
+            auto* ds = dynamic_cast<DominionState*>(g.state.get());
+            if (ds && ds->phase == DOM_PHASE_BUY && !ds->pending.active()) {
+                std::vector<float> valid;
+                game_->get_valid_moves(*g.state, valid);
+                bool any_added = false;
+                for (const auto& kv : exploration_priors_) {
+                    int action = DOM_BUY_OFFSET + kv.first;
+                    if (action >= 0 && action < num_actions
+                        && action < static_cast<int>(valid.size())
+                        && valid[action] > 0.0f && kv.second > 0.0) {
+                        policy[action] += static_cast<float>(kv.second);
+                        any_added = true;
+                    }
+                }
+                if (any_added) {
                     float sum = 0.0f;
                     for (int a = 0; a < num_actions; a++) sum += policy[a];
                     if (sum > 0.0f) {

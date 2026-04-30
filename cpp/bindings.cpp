@@ -1,6 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include <unordered_map>
 #include "batched_mcts.h"
 
 namespace py = pybind11;
@@ -9,7 +10,7 @@ PYBIND11_MODULE(mcts_cpp, m) {
     m.doc() = "C++ MCTS engine for Mandala, Lost Cities, and Dominion";
 
     py::class_<BatchedMCTS>(m, "BatchedMCTS")
-        .def(py::init<const std::string&, int, int, double, double, double, double, int, double, int, double, double, double, int, double, std::vector<int>, std::vector<int>, int, int, bool>(),
+        .def(py::init<const std::string&, int, int, double, double, double, double, int, double, int, double, double, double, int, double, std::vector<int>, std::vector<int>, int, int, bool, std::unordered_map<int, double>>(),
              py::arg("game_type"),
              py::arg("seed"),
              py::arg("num_simulations") = 800,
@@ -29,7 +30,8 @@ PYBIND11_MODULE(mcts_cpp, m) {
              py::arg("disabled_basic_supply") = std::vector<int>{},
              py::arg("province_supply") = 8,
              py::arg("max_turns") = 0,
-             py::arg("early_terminate_decided") = false)
+             py::arg("early_terminate_decided") = false,
+             py::arg("exploration_priors") = std::unordered_map<int, double>{})
         .def("init_games", &BatchedMCTS::init_games)
         .def("begin_move", &BatchedMCTS::begin_move)
         .def("set_root_policies", &BatchedMCTS::set_root_policies)

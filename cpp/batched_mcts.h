@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <unordered_map>
 
 namespace py = pybind11;
 
@@ -26,7 +27,8 @@ public:
                 std::vector<int> disabled_basic_supply = {},
                 int province_supply = 8,
                 int max_turns = 0,
-                bool early_terminate_decided = false);
+                bool early_terminate_decided = false,
+                std::unordered_map<int, double> exploration_priors = {});
 
     void init_games(int num_games);
 
@@ -96,6 +98,7 @@ private:
     int province_supply_ = 8;
     int max_turns_ = 0;  // 0 = no limit; when set, caps on get_turn_number() not sub-actions
     bool early_terminate_decided_ = false;  // DEVLOG #172: end games when VP outcome is mathematically decided
+    std::unordered_map<int, double> exploration_priors_;
     std::mt19937 rng_;
     std::vector<PerGame> games_;
     std::vector<int> active_indices_;  // indices of non-finished games

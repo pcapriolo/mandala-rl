@@ -63,6 +63,7 @@ class SelfPlayWorker:
         mcts_leaf_eval_source: str = "score",
         opponent_disabled_supply: list = None,
         early_terminate_decided: bool = False,
+        exploration_priors: dict = None,
     ):
         self.game = game
         self.network = network.to(device)
@@ -100,6 +101,9 @@ class SelfPlayWorker:
         # Read by BatchedMCTS constructor each time self-play is invoked, so
         # hot-reload takes effect at the next play_games_batched call boundary.
         self.early_terminate_decided = early_terminate_decided
+        # Per-card additive prior bump on BUY[card_id] at MCTS root.
+        # Read on each BatchedMCTS construction; hot-reloads naturally.
+        self.exploration_priors = exploration_priors or {}
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -195,6 +199,7 @@ class SelfPlayWorker:
             province_supply=self.province_supply,
             max_turns=self.max_turns,
             early_terminate_decided=self.early_terminate_decided,
+            exploration_priors=self.exploration_priors,
         )
         mgr.init_games(num_games)
 
@@ -290,6 +295,7 @@ class SelfPlayWorker:
             province_supply=self.province_supply,
             max_turns=self.max_turns,
             early_terminate_decided=self.early_terminate_decided,
+            exploration_priors=self.exploration_priors,
         )
         mgr.init_games(num_games)
 
