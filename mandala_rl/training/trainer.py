@@ -734,6 +734,29 @@ class Trainer:
             'force_rate': round(self._get_force_rate(), 2),
         }
 
+        # Bot vs reference WR (opponent-diversity games only). Tagged by
+        # worker.play_games_vs_opponent via record.bot_is_p0. Self-play
+        # games carry None and are excluded.
+        opp_games = [g for g in games if getattr(g, 'bot_is_p0', None) is not None]
+        if opp_games:
+            opp_n = len(opp_games)
+            p0_subset = [g for g in opp_games if g.bot_is_p0]
+            p1_subset = [g for g in opp_games if not g.bot_is_p0]
+            bot_wins = sum(1 for g in opp_games
+                           if (g.bot_is_p0 and g.outcome > 0)
+                           or (not g.bot_is_p0 and g.outcome < 0))
+            p0_wins_opp = sum(1 for g in p0_subset if g.outcome > 0)
+            p1_wins_opp = sum(1 for g in p1_subset if g.outcome < 0)
+            self._game_quality['bot_vs_opp_wr'] = round(bot_wins / opp_n, 3)
+            if p0_subset:
+                self._game_quality['bot_as_p0_wr'] = round(
+                    p0_wins_opp / len(p0_subset), 3)
+            if p1_subset:
+                self._game_quality['bot_as_p1_wr'] = round(
+                    p1_wins_opp / len(p1_subset), 3)
+            self.writer.add_scalar('GameQuality/BotVsOppWR',
+                                   bot_wins / opp_n, self.iteration)
+
         # Game-specific assessment
         assessment = []
         warnings = []

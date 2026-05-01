@@ -24,6 +24,11 @@ class SelfPlayGame:
         self.score_p0: int = 0     # Player 0's raw score
         self.score_p1: int = 0     # Player 1's raw score
         self.summary: dict = {}   # Game quality stats from C++ engine
+        # For opponent-diversity games: which side the bot played. Even
+        # game_idx → bot is P0, odd → P1 (worker._build_two_model_map). None
+        # for self-play games — distinguishes opp games from self-play in
+        # the aggregate WR computation downstream.
+        self.bot_is_p0 = None
 
     def __len__(self):
         return len(self.states)
@@ -348,6 +353,9 @@ class SelfPlayWorker:
                 if len(game_data) > 6:
                     record.belief_labels = [np.array(b, dtype=np.float32) for b in game_data[6]]
                 record.summary = dict(mgr.get_game_summary(idx))
+                # Tag opponent-diversity game with which side the bot played.
+                # Mirrors _build_two_model_map: even game_idx → bot is P0.
+                record.bot_is_p0 = (idx % 2 == 0)
                 completed.append(record)
 
                 game_num = len(completed)
