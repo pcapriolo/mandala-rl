@@ -67,7 +67,7 @@ opponent_disabled_supply: [0, 3, 4, 6, 16]
 province_supply: 8
 max_action_cards: 1
 forced_kingdom_cards: [21]
-exploration_priors: {21: 0.10}
+exploration_priors: {21: 0.05}
 big_money_force_rate: 0.0
 draw_penalty: 0.0
 drop_draws: true
