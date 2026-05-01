@@ -24,6 +24,11 @@ class SelfPlayGame:
         self.score_p0: int = 0     # Player 0's raw score
         self.score_p1: int = 0     # Player 1's raw score
         self.summary: dict = {}   # Game quality stats from C++ engine
+        # For opponent-diversity games: which side the bot played. Even
+        # game_idx → bot is P0, odd → P1 (worker._build_two_model_map). None
+        # for self-play games — distinguishes opp games from self-play in
+        # the aggregate WR computation downstream.
+        self.bot_is_p0 = None
 
     def __len__(self):
         return len(self.states)
@@ -63,6 +68,7 @@ class SelfPlayWorker:
         mcts_leaf_eval_source: str = "score",
         opponent_disabled_supply: list = None,
         early_terminate_decided: bool = False,
+        exploration_priors: dict = None,
     ):
         self.game = game
         self.network = network.to(device)
@@ -100,6 +106,9 @@ class SelfPlayWorker:
         # Read by BatchedMCTS constructor each time self-play is invoked, so
         # hot-reload takes effect at the next play_games_batched call boundary.
         self.early_terminate_decided = early_terminate_decided
+        # Per-card additive prior bump on BUY[card_id] at MCTS root.
+        # Read on each BatchedMCTS construction; hot-reloads naturally.
+        self.exploration_priors = exploration_priors or {}
 
         # Detect game type for C++ engine
         if network.num_actions in (108, 150):
@@ -195,6 +204,7 @@ class SelfPlayWorker:
             province_supply=self.province_supply,
             max_turns=self.max_turns,
             early_terminate_decided=self.early_terminate_decided,
+            exploration_priors=self.exploration_priors,
         )
         mgr.init_games(num_games)
 
@@ -290,6 +300,7 @@ class SelfPlayWorker:
             province_supply=self.province_supply,
             max_turns=self.max_turns,
             early_terminate_decided=self.early_terminate_decided,
+            exploration_priors=self.exploration_priors,
         )
         mgr.init_games(num_games)
 
@@ -342,6 +353,9 @@ class SelfPlayWorker:
                 if len(game_data) > 6:
                     record.belief_labels = [np.array(b, dtype=np.float32) for b in game_data[6]]
                 record.summary = dict(mgr.get_game_summary(idx))
+                # Tag opponent-diversity game with which side the bot played.
+                # Mirrors _build_two_model_map: even game_idx → bot is P0.
+                record.bot_is_p0 = (idx % 2 == 0)
                 completed.append(record)
 
                 game_num = len(completed)
